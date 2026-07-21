@@ -2685,7 +2685,7 @@ body.is-resizing-console { cursor: ns-resize; user-select: none; }
   gap: 7px;
 }
 .session-dialog-card input {
-  background: var(--surface-main, #faf9f7);
+  background: var(--surface-panel, #faf9f7);
   border: 1px solid var(--border-color, #ded9d3);
   border-radius: 7px;
   color: var(--text-primary, #302d2a);
@@ -2702,7 +2702,7 @@ body.is-resizing-console { cursor: ns-resize; user-select: none; }
   justify-content: flex-end;
 }
 .session-dialog-card footer button {
-  background: var(--surface-raised, #fff);
+  background: var(--surface-panel, #fff);
   border: 1px solid var(--border-color, #ded9d3);
   border-radius: 7px;
   color: var(--text-primary, #302d2a);
@@ -2716,6 +2716,25 @@ body.is-resizing-console { cursor: ns-resize; user-select: none; }
 }
 .session-dialog-card footer .danger-button {
   color: var(--danger, #b14a38);
+}
+:root[data-theme="dark"] .session-dialog-backdrop {
+  background: rgb(0 0 0 / 44%);
+}
+:root[data-theme="dark"] .session-dialog-card {
+  box-shadow: 0 22px 58px rgb(0 0 0 / 42%);
+}
+:root[data-theme="dark"] .session-dialog-card input {
+  background: var(--surface-app);
+  border-color: var(--border-strong);
+}
+:root[data-theme="dark"] .session-dialog-card footer button {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+:root[data-theme="dark"] .session-dialog-card footer .primary-button {
+  background: #665747;
+  border-color: #776756;
+  color: #fff;
 }
 .file-context-menu button {
   align-items: center;
