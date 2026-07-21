@@ -183,8 +183,6 @@ Platform test scripts:
 script\test-windows.bat
 ~~~
 
-Normal Linux development does not require cross-building the Windows package.
-
 ## Repository layout
 
 ~~~text
@@ -404,8 +402,6 @@ node node_modules/electron/install.js
 ~~~bat
 script\test-windows.bat
 ~~~
-
-日常 Linux 开发不要求交叉构建 Windows 安装包。
 
 ## 仓库结构
 
