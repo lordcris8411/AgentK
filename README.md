@@ -210,6 +210,16 @@ AgentK/
 
 Agent K launches external Pi processes with the current user's permissions. UI execution approval is not an operating-system sandbox. Use a container or virtual machine for untrusted code. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
+## Roadmap
+
+The following items are planned and are not part of the current release:
+
+- [ ] **One-click local AI distribution:** bundle llama.cpp and Pi, support self-contained packaging, download local models from ModelScope or Hugging Face, and run them in place without a separate inference-service setup.
+- [ ] **A broader Skill and Extension ecosystem:** ship more built-in Skills and Extensions, and add in-app discovery for Skill Hub and other compatible resource catalogs.
+- [ ] **File-format SDK:** provide extension points for implementing parsers, previews, and editors for specialized file formats.
+- [ ] **Integrated code debugging:** add debugging workflows for C/C++, Python, and JavaScript/TypeScript, including GDB and MSVC debugger support.
+- [ ] **macOS release:** add a supported macOS application, packaging pipeline, and platform integration.
+
 ## Contributing
 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
@@ -421,6 +431,16 @@ AgentK/
 ## 安全说明
 
 Agent K 会以当前用户权限启动外部 Pi 进程。界面的执行确认不是操作系统级沙箱；处理不受信任的代码时，请使用容器或虚拟机。漏洞报告方式见 [SECURITY.md](SECURITY.md)。
+
+## Roadmap
+
+以下内容属于后续规划，尚未包含在当前版本中：
+
+- [ ] **一键式本地 AI 发行包：** 内置 llama.cpp 与 Pi，支持一键式完整打包；可从 ModelScope 或 Hugging Face 下载本地大模型，并在原位置直接运行，无需额外配置推理服务。
+- [ ] **更丰富的 Skill 与 Extension 生态：** 内置更多 Skills 和 Extensions，并在应用内浏览 Skill Hub 等兼容的 Skill 站点与资源目录。
+- [ ] **文件格式 SDK：** 提供扩展接口，用于为特定文件格式实现解析、预览和编辑功能。
+- [ ] **集成代码调试：** 支持 C/C++、Python、JavaScript/TypeScript 的调试工作流，包括 GDB 与 MSVC 调试器。
+- [ ] **macOS 版本：** 提供正式支持的 macOS 应用、打包流程和平台集成。
 
 ## 参与贡献
 
