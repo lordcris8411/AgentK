@@ -432,6 +432,16 @@ export function SettingsDialog({
                   </select>
                 </div>
                 <div className="settings-section">
+                  <label htmlFor="settings-pi-executable">{t("piExecutable")}</label>
+                  <p className="settings-inline-description">{t("piExecutableDescription")}</p>
+                  <input
+                    id="settings-pi-executable"
+                    onChange={(event) => void update({ piExecutable: event.target.value })}
+                    placeholder={t("piExecutablePlaceholder")}
+                    value={settings.piExecutable}
+                  />
+                </div>
+                <div className="settings-section">
                   <label>{t("workerPoolSize")}</label>
                   <p className="settings-inline-description">{t("workerPoolDescription")}</p>
                   <div className="segmented-control">

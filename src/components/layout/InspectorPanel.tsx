@@ -18,6 +18,7 @@ import { applyAgentKTheme, defineAgentKTheme } from "../../lib/monacoTheme";
 import { registerResponsiveMonacoEditor } from "../../lib/responsiveMonaco";
 import { platform } from "../../lib/platform";
 import { MediaPreview, type PreviewKind } from "./MediaPreview";
+import { ProjectConsole } from "./ProjectConsole";
 import {
   ReviewPanel,
   type ReviewCall,
@@ -585,7 +586,7 @@ export function InspectorPanel({
   review?: ReviewCall[];
   onCloseReview(): void;
 }) {
-  const { settings, resolvedTheme, t } = useSettings();
+  const { settings, resolvedTheme, t, update: updateSettings } = useSettings();
   const en = settings.locale === "en-US";
   const editorTheme = resolvedTheme === "dark" ? "agent-k-dark" : "agent-k-light";
   const [tree, setTree] = useState<FileEntry>();
@@ -1560,6 +1561,24 @@ export function InspectorPanel({
                     {t("revertFile")}
                   </button>
                   <button
+                    aria-pressed={settings.editorWordWrap}
+                    className={settings.editorWordWrap ? "is-active" : undefined}
+                    onClick={() =>
+                      void updateSettings({
+                        editorWordWrap: !settings.editorWordWrap,
+                      }).catch((cause) => onError(`无法保存自动换行设置：${String(cause)}`))
+                    }
+                    title={
+                      en
+                        ? "Toggle word wrap"
+                        : "切换自动换行"
+                    }
+                    type="button"
+                  >
+                    <i aria-hidden="true" className="fa-solid fa-text-width" />
+                    {en ? "Wrap" : "自动换行"}
+                  </button>
+                  <button
                     className="primary"
                     disabled={current.content === current.saved}
                     onClick={() => void save()}
@@ -1726,6 +1745,7 @@ export function InspectorPanel({
                     handleMouseWheel: true,
                   },
                   smoothScrolling: true,
+                  wordWrap: settings.editorWordWrap ? "on" : "off",
                 }}
                 path={
                   root
@@ -1742,6 +1762,7 @@ export function InspectorPanel({
           )}
         </section>
       </div>
+      <ProjectConsole onError={onError} root={root} />
       {contextMenu && (
         <div
           className="file-context-menu"
@@ -1829,7 +1850,7 @@ export function InspectorPanel({
             type="button"
           >
             <i className="fa-solid fa-terminal" />
-            在控制台中打开目录
+            在外部控制台中打开目录
           </button>
         </div>
       )}

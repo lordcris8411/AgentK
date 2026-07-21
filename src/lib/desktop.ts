@@ -30,7 +30,9 @@ export type ClientSettings = {
   locale: "zh-CN" | "en-US";
   permissionMode: "ask" | "full";
   browserId: string;
+  piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
+  editorWordWrap: boolean;
   leftPanelWidth: number;
   rightPanelWidth: number;
   leftPanelHidden: boolean;
@@ -56,6 +58,11 @@ export type RuntimeInfo = {
   piVersion: string;
   operatingSystem: string;
   architecture: string;
+};
+export type ConsoleCompletion = {
+  text: string;
+  replacementIndex: number;
+  replacementLength: number;
 };
 
 export type PiResource = {
@@ -200,6 +207,14 @@ export const desktop = {
     invoke<void>("trash_path", { root, path }),
   openTerminal: (root: string, path: string) =>
     invoke<void>("open_terminal_at", { root, path }),
+  startProjectConsole: (root: string) =>
+    invoke<string>("start_project_console", { root }),
+  writeProjectConsole: (id: string, data: string) =>
+    invoke<void>("write_project_console", { id, data }),
+  completeProjectConsole: (root: string, input: string) =>
+    invoke<Array<ConsoleCompletion | string>>("complete_project_console", { root, input }),
+  stopProjectConsole: (id: string) =>
+    invoke<void>("stop_project_console", { id }),
   openInFileManager: (root: string, path = "") =>
     invoke<void>("open_in_file_manager", { root, path }),
   search: (root: string, query: string) =>

@@ -601,7 +601,7 @@ button:disabled {
   position: absolute;
   top: 5px;
   transform: rotate(45deg);
-  width: 13px;
+  width: 9px;
 }
 .window-icon-close::after {
   transform: rotate(-45deg);
@@ -632,9 +632,7 @@ button:disabled {
   transition: background 0.14s;
 }
 .panel-resizer:hover::after,
-body.is-resizing .panel-resizer::after {
-  background: #d9d4ce;
-}
+body.is-resizing .panel-resizer::after { background: transparent; }
 body.is-resizing {
   cursor: col-resize;
   user-select: none;
@@ -660,9 +658,7 @@ body.is-resizing-panels :is(.app-sidebar, .app-workspace, .app-inspector-slot) {
   will-change: transform;
   z-index: 140;
 }
-body.is-resizing .panel-resize-preview {
-  opacity: 0.82;
-}
+body.is-resizing .panel-resize-preview { opacity: 0; }
 .app-sidebar {
   background: #f6f4f1;
   border-right: 1px solid #e5e2dd;
@@ -2509,6 +2505,67 @@ body.is-resizing-panels .composer {
   min-height: 0;
   overflow: hidden;
 }
+.project-console {
+  background: var(--surface-panel, #f6f4f1);
+  border-top: 1px solid var(--border-color, #e4e0db);
+  color: var(--text-primary, #302d2a);
+  display: flex;
+  flex: 0 0 220px;
+  flex-direction: column;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  min-height: 0;
+}
+.project-console.is-collapsed { flex-basis: 34px; }
+.project-console-resizer {
+  cursor: ns-resize;
+  height: 6px;
+  margin-top: -3px;
+  position: relative;
+  z-index: 2;
+}
+.project-console-resizer::after {
+  background: transparent;
+  content: "";
+  height: 1px;
+  inset: 2px 0 auto;
+  position: absolute;
+}
+.project-console-resizer:hover::after,
+body.is-resizing-console .project-console-resizer::after { background: var(--border-strong, #bcb4ac); }
+body.is-resizing-console { cursor: ns-resize; user-select: none; }
+.project-console > header {
+  align-items: center;
+  display: flex;
+  flex: 0 0 34px;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 10px;
+}
+.project-console > header > span { font-family: inherit; font-size: 12px; font-weight: 650; white-space: nowrap; }
+.project-console > header > small { color: var(--text-muted, #8c857e); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-console > header > button { background: transparent; border: 0; color: var(--text-secondary, #6f6963); cursor: pointer; font-size: 11px; margin-left: auto; padding: 6px; }
+.project-console > header > button:hover { color: var(--text-primary, #302d2a); }
+.project-console-output {
+  background: var(--surface-raised, #fff);
+  border: 1px solid var(--border-color, #e4e0db);
+  border-radius: 6px;
+  color: var(--text-primary, #302d2a);
+  flex: 1 1 0;
+  font: 12px/1.55 inherit;
+  margin: 0 8px;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.project-console-output:focus { border-color: var(--border-strong, #bcb4ac); outline: none; }
+.project-console-output .is-command { color: var(--accent, #a95624); }
+.project-console-output .is-error { color: var(--danger, #b14a38); }
+.project-console-output .is-status { color: var(--text-muted, #8c857e); }
+.project-console-input { color: var(--text-primary, #302d2a); }
+.project-console-input i { animation: project-console-cursor 1s steps(1) infinite; background: var(--text-primary, #302d2a); display: inline-block; height: 1.1em; margin-left: 1px; vertical-align: -0.2em; width: 7px; }
+@keyframes project-console-cursor { 50% { opacity: 0; } }
 .file-explorer {
   box-sizing: border-box;
   color: #615c56;
@@ -2972,6 +3029,11 @@ body.is-tree-dragging * {
 }
 .editor-floating-actions button:hover:not(:disabled) {
   background: var(--surface-hover, #efebe6);
+  color: var(--text-primary, #302d2a);
+}
+.editor-floating-actions button.is-active {
+  background: var(--surface-active, #e8e4df);
+  border-color: var(--border-strong, #cfc8c0);
   color: var(--text-primary, #302d2a);
 }
 .editor-floating-actions button.primary {
@@ -3600,7 +3662,7 @@ body.is-tree-dragging * {
   right: 3px;
   top: 4px;
   transition: opacity 140ms ease;
-  width: 9px;
+  width: 13px;
   z-index: 6;
 }
 .conversation-scrollbar.is-visible {
@@ -4114,6 +4176,9 @@ body.is-tree-dragging * {
   overflow: hidden;
 }
 .extension-statuses > span {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
   max-width: 210px;
   overflow: hidden;
   text-overflow: ellipsis;

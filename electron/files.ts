@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import { randomBytes } from "node:crypto";
 import {
   appendFile,
@@ -39,6 +39,8 @@ import {
 } from "./utils.js";
 
 const MIME_TYPES: Record<string, string> = {
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
   ".css": "text/css; charset=utf-8",
   ".gif": "image/gif",
   ".html": "text/html; charset=utf-8",
@@ -168,6 +170,44 @@ type PreviewState = {
   root: string;
   overrides: Map<string, Buffer>;
 };
+
+function previewRelativePath(
+  request: IncomingMessage,
+  url: URL,
+  state: PreviewState,
+): string | undefined {
+  const prefix = `/${state.token}/`;
+  if (url.pathname.startsWith(prefix))
+    return decodeURIComponent(url.pathname.slice(prefix.length));
+
+  // Root-relative URLs in a preview (for example /assets/logo.png) do not
+  // contain the capability token. Accept them only when they were requested
+  // by the current tokenized preview page, then resolve them from its workspace.
+  const referer = request.headers.referer;
+  if (typeof referer !== "string") return undefined;
+  try {
+    const source = new URL(referer);
+    if (
+      source.hostname !== "127.0.0.1" ||
+      source.port !== String(state.port) ||
+      !source.pathname.startsWith(prefix)
+    ) return undefined;
+    return decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+  } catch {
+    return undefined;
+  }
+}
+
+function previewHtml(body: Buffer, token: string): Buffer {
+  const prefix = `/${token}/`;
+  const rewritten = body.toString("utf8").replace(
+    /(\b(?:src|href|poster)\s*=\s*["'])\/(?!\/)/gi,
+    `$1${prefix}`,
+  );
+  return Buffer.from(
+    `${rewritten}<script>document.addEventListener('contextmenu',event=>event.preventDefault(),{capture:true})</script>`,
+  );
+}
 
 export class FileService {
   private readonly appDataPath: string;
@@ -486,12 +526,11 @@ export class FileService {
           return;
         }
         const url = new URL(request.url ?? "/", "http://127.0.0.1");
-        const prefix = `/${state.token}/`;
-        if (!url.pathname.startsWith(prefix)) {
+        const relativePath = previewRelativePath(request, url, state);
+        if (relativePath === undefined) {
           response.writeHead(404).end("Not found");
           return;
         }
-        const relativePath = decodeURIComponent(url.pathname.slice(prefix.length));
         if (isAbsolute(relativePath) || relativePath.split("/").includes("..")) {
           response.writeHead(403).end("Forbidden");
           return;
@@ -502,8 +541,7 @@ export class FileService {
         if (!isPathInside(state.root, canonical)) throw new Error("Forbidden");
         let body = state.overrides.get(relative(state.root, canonical)) ?? await readFile(canonical);
         const contentType = MIME_TYPES[extname(canonical).toLowerCase()] ?? "application/octet-stream";
-        if (contentType.startsWith("text/html"))
-          body = Buffer.concat([body, Buffer.from("<script>document.addEventListener('contextmenu',event=>event.preventDefault(),{capture:true})</script>")]);
+        if (contentType.startsWith("text/html")) body = previewHtml(body, state.token);
         response.writeHead(200, {
           "Access-Control-Allow-Origin": "*",
           "Cache-Control": "no-store",

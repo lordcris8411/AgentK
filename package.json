@@ -64,6 +64,7 @@
   "build": {
     "appId": "com.lordcris8411.agentk",
     "productName": "Agent K",
+    "beforePack": "./script/prepare-pi-runtime.mjs",
     "asar": true,
     "directories": {
       "output": "release"
@@ -78,6 +79,14 @@
       "package.json"
     ],
     "extraResources": [
+      {
+        "from": "extensions",
+        "to": "extensions"
+      },
+      {
+        "from": ".pi-runtime",
+        "to": "pi-runtime"
+      },
       {
         "from": "skills",
         "to": "skills"

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
@@ -39,14 +39,45 @@ const compile = run(bin("tsc"), ["-p", "tsconfig.electron.json"]);
 const compileCode = await new Promise((resolve) => compile.once("exit", resolve));
 if (compileCode !== 0) process.exit(Number(compileCode) || 1);
 
-const vite = run(bin("vite"), ["--host", "127.0.0.1"]);
+// Vite enables interactive shortcuts by putting inherited stdin into raw mode.
+// If it is terminated together with Electron on Windows, that mode can leak
+// back to PowerShell (Backspace then prints as ^H). It only needs stdout and
+// stderr for this launcher, so deliberately give it no console input handle.
+const vite = run(bin("vite"), ["--host", "127.0.0.1"], {
+  stdio: ["ignore", "inherit", "inherit"],
+});
 let electron;
+function stopChild(child) {
+  if (!child || child.exitCode !== null) return;
+  // On Windows, npm's .cmd launchers add a cmd.exe parent. Killing only that
+  // parent leaves Vite's node.exe child alive and keeps port 1420 occupied.
+  if (windows && child.pid) {
+    spawnSync("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    return;
+  }
+  child.kill("SIGTERM");
+}
 const stop = () => {
-  if (electron && electron.exitCode === null) electron.kill("SIGTERM");
-  if (vite.exitCode === null) vite.kill("SIGTERM");
+  stopChild(electron);
+  stopChild(vite);
 };
-process.once("SIGINT", stop);
-process.once("SIGTERM", stop);
+const restoreTerminal = () => {
+  if (!process.stdin.isTTY) return;
+  try {
+    process.stdin.setRawMode(false);
+  } catch {
+    // Another process may already have released the console input handle.
+  }
+};
+const cleanup = () => {
+  stop();
+  restoreTerminal();
+};
+process.once("SIGINT", cleanup);
+process.once("SIGTERM", cleanup);
 
 try {
   await waitForVite(vite);
@@ -57,10 +88,10 @@ try {
   delete env.ELECTRON_RUN_AS_NODE;
   electron = run(bin("electron"), ["."], { env });
   const code = await new Promise((resolve) => electron.once("exit", resolve));
-  stop();
   process.exitCode = Number(code) || 0;
 } catch (cause) {
-  stop();
   console.error(cause instanceof Error ? cause.message : String(cause));
   process.exitCode = 1;
+} finally {
+  cleanup();
 }

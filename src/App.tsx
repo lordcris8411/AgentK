@@ -387,6 +387,11 @@ export function App() {
         typeof event.runtimeId === "string" ? event.runtimeId : undefined;
       const sessionPath =
         typeof event.sessionFile === "string" ? event.sessionFile : undefined;
+      const activePathForRuntime =
+        !sessionPath && runtimeId && activeRef.current?.runtimeId === runtimeId
+          ? activeRef.current.path
+          : undefined;
+      const eventSessionPath = sessionPath ?? activePathForRuntime;
       if (runtimeId && sessionPath) {
         for (const [path, mappedRuntime] of runtimeIds.current) {
           if (mappedRuntime === runtimeId && path !== sessionPath)
@@ -394,8 +399,8 @@ export function App() {
         }
         runtimeIds.current.set(sessionPath, runtimeId);
       }
-      if (event.type === "agent_start" && sessionPath) {
-        setRunningPaths((current) => new Set(current).add(sessionPath));
+      if (event.type === "agent_start" && eventSessionPath) {
+        setRunningPaths((current) => new Set(current).add(eventSessionPath));
       }
       if (
         (event.type === "agent_settled" || event.type === "bridge_closed") &&

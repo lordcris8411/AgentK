@@ -173,6 +173,7 @@ export async function getPiResources(
   appDataPath: string,
   pool: RpcPool,
   cwd: string,
+  bundledExtensionsDirectory: string,
   bundledSkillsDirectory: string,
   runtimeId?: string,
 ): Promise<PiResource[]> {
@@ -181,6 +182,12 @@ export async function getPiResources(
   );
   const loaded = new Set(active.map((resource) => `${resource.kind}\0${resource.path}`));
   await discoverTopLevel(active, cwd);
+  await discoverExtensions(
+    active,
+    bundledExtensionsDirectory,
+    "user",
+    bundledExtensionsDirectory,
+  );
   await discoverSkills(
     active,
     bundledSkillsDirectory,

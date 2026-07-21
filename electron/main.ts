@@ -289,12 +289,17 @@ async function start(): Promise<void> {
   registerIpc();
   backend = new DesktopBackend({
     appDataPath: app.getPath("userData"),
+    bundledExtensionsSource: app.isPackaged
+      ? join(process.resourcesPath, "extensions")
+      : projectPath("extensions"),
     bundledSkillsSource: app.isPackaged
       ? join(process.resourcesPath, "skills")
       : projectPath("skills"),
+    bundledPiCli: app.isPackaged
+      ? join(process.resourcesPath, "pi-runtime", "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js")
+      : projectPath("node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js"),
     cachePath: join(app.getPath("userData"), "cache"),
     permissionExtensionSource: projectPath("agent-k-permissions.ts"),
-    piExecutable: process.env.AGENT_K_PI_EXECUTABLE ?? "pi",
     emit: (event) => mainWindow?.webContents.send("agent-k:pi-event", event),
     updateSplash,
     finishSplash,
