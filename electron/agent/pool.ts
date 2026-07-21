@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import type { JsonObject, WorkerPoolStatus } from "../types.js";
+import type { PiLaunch } from "../pi-runtime.js";
 import { asObject, asString, errorMessage, homeDirectory, randomId } from "../utils.js";
 import { RpcBridge } from "./rpc.js";
 
@@ -18,8 +19,9 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
 
 export interface RpcPoolOptions {
   appDataPath: string;
+  bundledExtensionsDirectory: string;
   bundledSkillsDirectory: string;
-  executable: string;
+  launch: PiLaunch;
   minimum: number;
   permissionExtensionSource: string;
   emit(event: JsonObject): void;

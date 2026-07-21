@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -13,12 +14,14 @@ export type Locale = "zh-CN" | "en-US";
 export type ThemeMode = "light" | "dark" | "system";
 
 const fallback: ClientSettings = {
-  version: 3,
+  version: 5,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
   browserId: "default",
+  piExecutable: "",
   workerPoolSize: 4,
+  editorWordWrap: false,
   leftPanelWidth: 304,
   rightPanelWidth: 420,
   leftPanelHidden: false,
@@ -49,6 +52,9 @@ const dictionaries = {
     systemTheme: "跟随系统",
     language: "界面语言",
     browser: "打开链接的浏览器",
+    piExecutable: "Pi 可执行文件路径",
+    piExecutableDescription: "留空时依次使用环境变量、系统 PATH 中的 Pi，最后使用内置 Pi。修改后重启 Agent K 生效。",
+    piExecutablePlaceholder: "自动检测（推荐）",
     workerPoolSize: "常驻 Pi 进程",
     workerPoolDescription: "保持 2–4 个 Pi 进程待命；忙时会自动扩容，空闲后回收到此数量。",
     defaultBrowser: "系统默认浏览器",
@@ -149,6 +155,9 @@ const dictionaries = {
     systemTheme: "System",
     language: "Interface language",
     browser: "Browser for links",
+    piExecutable: "Pi executable path",
+    piExecutableDescription: "When empty, Agent K uses the environment variable, Pi on PATH, then the bundled Pi. Restart Agent K after changing it.",
+    piExecutablePlaceholder: "Auto-detect (recommended)",
     workerPoolSize: "Warm Pi processes",
     workerPoolDescription: "Keep 2–4 Pi processes ready. The pool grows while busy and returns to this size when idle.",
     defaultBrowser: "System default browser",
@@ -257,6 +266,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   });
   const [ready, setReady] = useState(false);
+  const settingsRef = useRef(settings);
+  const settingsRevision = useRef(0);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
@@ -295,8 +307,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     void desktop
       .getSettings()
       .then((loaded) => {
-        if (!disposed) {
+        // A user action can occur before the native settings bridge responds.
+        // Never replace such a newer value with this initial, older snapshot.
+        if (!disposed && settingsRevision.current === 0) {
           const next = { ...fallback, ...loaded };
+          settingsRef.current = next;
           setSettings(next);
           localStorage.setItem("agent-k-settings", JSON.stringify(next));
         }
@@ -313,25 +328,37 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
   const update = useCallback(
     async (patch: Partial<ClientSettings>) => {
-      const next = { ...settings, ...patch };
+      const previous = settingsRef.current;
+      const next = { ...previous, ...patch };
+      const revision = ++settingsRevision.current;
+      settingsRef.current = next;
       setSettings(next);
       localStorage.setItem("agent-k-settings", JSON.stringify(next));
       const poolChanged =
         patch.workerPoolSize !== undefined &&
-        patch.workerPoolSize !== settings.workerPoolSize;
+        patch.workerPoolSize !== previous.workerPoolSize;
+      const persist = saveQueue.current
+        .catch(() => undefined)
+        .then(async () => {
+          if (poolChanged) await desktop.resizeWorkerPool(next.workerPoolSize);
+          await desktop.saveSettings(next);
+        });
+      saveQueue.current = persist;
       try {
-        if (poolChanged) await desktop.resizeWorkerPool(next.workerPoolSize);
-        const saved = await desktop.saveSettings(next);
-        setSettings(saved);
+        await persist;
       } catch (error) {
-        if (poolChanged)
-          void desktop.resizeWorkerPool(settings.workerPoolSize).catch(() => undefined);
-        setSettings(settings);
-        localStorage.setItem("agent-k-settings", JSON.stringify(settings));
+        // Do not let an older failed request undo a setting changed afterwards.
+        if (settingsRevision.current === revision) {
+          settingsRef.current = previous;
+          setSettings(previous);
+          localStorage.setItem("agent-k-settings", JSON.stringify(previous));
+          if (poolChanged)
+            void desktop.resizeWorkerPool(previous.workerPoolSize).catch(() => undefined);
+        }
         throw error;
       }
     },
-    [settings],
+    [],
   );
   const value = useMemo<SettingsContextValue>(
     () => ({

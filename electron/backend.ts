@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { cp } from "node:fs/promises";
 import { join } from "node:path";
 import type { JsonObject, PiResourceChange } from "./types.js";
 import { RpcPool } from "./agent/pool.js";
+import { resolvePiLaunch, type PiLaunch } from "./pi-runtime.js";
 import { FileService } from "./files.js";
 import {
   deleteModelProvider,
@@ -22,43 +23,60 @@ import {
   type ProviderDraft,
 } from "./settings.js";
 import { applyPiResourceChanges, getPiResources } from "./resources.js";
-import { asArray, asObject, asString, atomicWrite, errorMessage } from "./utils.js";
+import { asArray, asObject, asString, atomicWrite, errorMessage, randomId } from "./utils.js";
 
 export interface DesktopBackendOptions {
   appDataPath: string;
+  bundledExtensionsSource: string;
   bundledSkillsSource: string;
+  bundledPiCli: string;
   cachePath: string;
   permissionExtensionSource: string;
-  piExecutable: string;
   emit(event: JsonObject): void;
   updateSplash(message: string, current: number, total: number, theme: string): void;
   finishSplash(): void;
 }
 
+type ProjectConsoleProcess = {
+  child: ChildProcess;
+  stderrDecoder: TextDecoder;
+  stdoutDecoder: TextDecoder;
+};
+
 export class DesktopBackend {
   private readonly options: DesktopBackendOptions;
   private readonly files: FileService;
+  private readonly bundledExtensionsDirectory: string;
   private readonly bundledSkillsDirectory: string;
+  private piLaunch?: PiLaunch;
   private pool?: RpcPool;
+  private readonly projectConsoles = new Map<string, ProjectConsoleProcess>();
 
   constructor(options: DesktopBackendOptions) {
     this.options = options;
     this.files = new FileService(options.appDataPath, options.cachePath);
+    this.bundledExtensionsDirectory = join(options.appDataPath, "bundled-extensions");
     this.bundledSkillsDirectory = join(options.appDataPath, "bundled-skills");
   }
 
   async initialize(): Promise<void> {
     await this.files.initialize();
     await migrateMisclassifiedVllm();
+    await cp(this.options.bundledExtensionsSource, this.bundledExtensionsDirectory, {
+      recursive: true,
+      force: true,
+    });
     await cp(this.options.bundledSkillsSource, this.bundledSkillsDirectory, {
       recursive: true,
       force: true,
     });
     const settings = await loadClientSettings(this.options.appDataPath);
+    this.piLaunch = resolvePiLaunch(settings.piExecutable, this.options.bundledPiCli);
     this.pool = new RpcPool({
       appDataPath: this.options.appDataPath,
+      bundledExtensionsDirectory: this.bundledExtensionsDirectory,
       bundledSkillsDirectory: this.bundledSkillsDirectory,
-      executable: this.options.piExecutable,
+      launch: this.piLaunch,
       minimum: settings.workerPoolSize,
       permissionExtensionSource: this.options.permissionExtensionSource,
       emit: this.options.emit,
@@ -94,7 +112,7 @@ export class DesktopBackend {
       case "logout_provider":
         return logoutProvider(requiredString(args.providerId, "providerId"));
       case "open_provider_login":
-        return openProviderLogin(requiredString(args.providerId, "providerId"), this.options.piExecutable);
+        return openProviderLogin(requiredString(args.providerId, "providerId"), this.requirePiLaunch());
       case "reload_pi_runtimes":
         return pool.reload();
       case "get_pi_resources":
@@ -102,6 +120,7 @@ export class DesktopBackend {
           this.options.appDataPath,
           pool,
           requiredString(args.cwd, "cwd"),
+          this.bundledExtensionsDirectory,
           this.bundledSkillsDirectory,
           optionalString(args.runtimeId),
         );
@@ -201,6 +220,20 @@ export class DesktopBackend {
         return this.files.trash(requiredString(args.root, "root"), requiredString(args.path, "path"));
       case "open_terminal_at":
         return this.files.openTerminal(requiredString(args.root, "root"), requiredString(args.path, "path"));
+      case "start_project_console":
+        return this.startProjectConsole(requiredString(args.root, "root"));
+      case "write_project_console":
+        return this.writeProjectConsole(
+          requiredString(args.id, "id"),
+          requiredString(args.data, "data"),
+        );
+      case "complete_project_console":
+        return this.completeProjectConsole(
+          requiredString(args.root, "root"),
+          requiredString(args.input, "input"),
+        );
+      case "stop_project_console":
+        return this.stopProjectConsole(requiredString(args.id, "id"));
       case "open_in_file_manager":
         return this.files.openInFileManager(requiredString(args.root, "root"), requiredString(args.path, "path"));
       case "search_files":
@@ -213,8 +246,134 @@ export class DesktopBackend {
   }
 
   shutdown(): void {
+    for (const id of this.projectConsoles.keys()) this.stopProjectConsole(id);
     this.pool?.shutdown();
     this.files.shutdown();
+  }
+
+  private startProjectConsole(root: string): string {
+    const id = randomId();
+    const isWindows = process.platform === "win32";
+    const executable = isWindows ? "powershell.exe" : "/bin/sh";
+    const args = isWindows
+      ? [
+          "-NoLogo",
+          "-NoProfile",
+          "-NoExit",
+          "-Command",
+          "[Console]::InputEncoding=[Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding",
+        ]
+      : ["-i"];
+    const child = spawn(executable, args, {
+      cwd: root,
+      env: { ...process.env, LANG: "zh_CN.UTF-8", LC_ALL: "zh_CN.UTF-8" },
+      stdio: "pipe",
+      windowsHide: true,
+    });
+    const consoleProcess = {
+      child,
+      stderrDecoder: new TextDecoder("utf-8"),
+      stdoutDecoder: new TextDecoder("utf-8"),
+    };
+    this.projectConsoles.set(id, consoleProcess);
+    const output = (stream: "stdout" | "stderr", chunk: Buffer) => {
+      const decoder = stream === "stdout" ? consoleProcess.stdoutDecoder : consoleProcess.stderrDecoder;
+      this.options.emit({ id, stream, text: decoder.decode(chunk, { stream: true }), type: "project_console_output" });
+    };
+    child.stdout?.on("data", (chunk: Buffer) => output("stdout", chunk));
+    child.stderr?.on("data", (chunk: Buffer) => output("stderr", chunk));
+    let finished = false;
+    const finish = (code: number | null, signal?: string) => {
+      if (finished) return;
+      finished = true;
+      this.projectConsoles.delete(id);
+      this.options.emit({ code, id, signal, type: "project_console_exit" });
+    };
+    child.once("error", (error) => {
+      this.options.emit({ id, stream: "stderr", text: `${error.message}\n`, type: "project_console_output" });
+      finish(null);
+    });
+    child.once("close", (code, signal) => finish(code, signal ?? undefined));
+    return id;
+  }
+
+  private writeProjectConsole(id: string, data: string): void {
+    if (data.length > 32_000) throw new Error("Console input is too long");
+    const consoleProcess = this.projectConsoles.get(id);
+    if (!consoleProcess?.child.stdin?.writable) throw new Error("Console is not running");
+    consoleProcess.child.stdin.write(data, "utf8");
+  }
+
+  private async completeProjectConsole(
+    root: string,
+    input: string,
+  ): Promise<Array<{ text: string; replacementIndex: number; replacementLength: number }>> {
+    if (input.length > 32_000) throw new Error("Console input is too long");
+    if (process.platform !== "win32") return [];
+    const script = [
+      "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)",
+      "$line=$env:AGENT_K_CONSOLE_COMPLETION",
+      "$result=TabExpansion2 -inputScript $line -cursorColumn $line.Length",
+      "$result.CompletionMatches | ForEach-Object { [PSCustomObject]@{ text=$_.CompletionText; replacementIndex=$result.ReplacementIndex; replacementLength=$result.ReplacementLength } } | ConvertTo-Json -Compress",
+    ].join("; ");
+    return new Promise<Array<{ text: string; replacementIndex: number; replacementLength: number }>>((resolve, reject) => {
+      const child = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
+        cwd: root,
+        env: { ...process.env, AGENT_K_CONSOLE_COMPLETION: input },
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+      child.once("error", reject);
+      child.once("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(stderr.trim() || "Console completion failed"));
+          return;
+        }
+        try {
+          const parsed: unknown = JSON.parse(stdout.trim() || "[]");
+          const values = Array.isArray(parsed) ? parsed : [parsed];
+          resolve(
+            values.flatMap((item) => {
+              if (!item || typeof item !== "object") return [];
+              const value = item as Record<string, unknown>;
+              return typeof value.text === "string" &&
+                typeof value.replacementIndex === "number" &&
+                Number.isInteger(value.replacementIndex) &&
+                typeof value.replacementLength === "number" &&
+                Number.isInteger(value.replacementLength)
+                ? [{
+                    text: value.text,
+                    replacementIndex: value.replacementIndex,
+                    replacementLength: value.replacementLength,
+                  }]
+                : [];
+            }),
+          );
+        } catch {
+          resolve([]);
+        }
+      });
+    });
+  }
+
+  private stopProjectConsole(id: string): void {
+    const consoleProcess = this.projectConsoles.get(id);
+    if (!consoleProcess) return;
+    const { child } = consoleProcess;
+    if (process.platform === "win32" && child.pid) {
+      const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      killer.unref();
+      return;
+    }
+    child.kill("SIGTERM");
   }
 
   private requirePool(): RpcPool {
@@ -222,12 +381,19 @@ export class DesktopBackend {
     return this.pool;
   }
 
+  private requirePiLaunch(): PiLaunch {
+    if (!this.piLaunch) throw new Error("Pi runtime is not initialized");
+    return this.piLaunch;
+  }
+
   private async runtimeInfo(): Promise<JsonObject> {
+    const launch = this.requirePiLaunch();
     const piVersion = await new Promise<string>((resolveVersion) => {
-      const child = spawn(this.options.piExecutable, ["--version"], {
+      const child = spawn(launch.executable, [...launch.args, "--version"], {
         shell: process.platform === "win32",
         stdio: ["ignore", "pipe", "ignore"],
         windowsHide: true,
+        env: { ...process.env, ...launch.environment },
       });
       let output = "";
       child.stdout.on("data", (chunk: Buffer) => {

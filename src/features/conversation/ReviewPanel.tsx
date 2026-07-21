@@ -11,6 +11,14 @@ function pathOf(call: ReviewCall) {
   return [call.args.path, call.args.filePath, call.args.file_path, call.args.to].find((value): value is string => typeof value === "string") ?? "文件";
 }
 
+function pathIsInProject(root: string | undefined, path: string): boolean {
+  if (!root) return false;
+  if (!/^(?:[A-Za-z]:[\\/]|\/)/.test(path)) return true;
+  const normalizedRoot = root.replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase();
+  const normalizedPath = path.replaceAll("/", "\\").toLowerCase();
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}\\`);
+}
+
 function versionsFor(call: ReviewCall) {
   if (typeof call.args.aggregateOriginal === "string" && typeof call.args.aggregateModified === "string") return { original: call.args.aggregateOriginal, modified: call.args.aggregateModified };
   if (call.name === "write") return { original: "", modified: typeof call.args.content === "string" ? call.args.content : "" };
@@ -29,9 +37,12 @@ export function ReviewPanel({ calls, root, onClose, onError }: { calls: ReviewCa
   const [selected, setSelected] = useState(0);
   const [reverted, setReverted] = useState<Set<number>>(() => new Set());
   const call = calls[selected];
+  const canUndo = Boolean(
+    root && call?.name === "edit" && pathIsInProject(root, pathOf(call)),
+  );
   const versions = useMemo(() => call ? versionsFor(call) : { original: "", modified: "" }, [call]);
   const undoEdit = async () => {
-    if (!root || !call || call.name !== "edit") return;
+    if (!root || !call || call.name !== "edit" || !pathIsInProject(root, pathOf(call))) return;
     try {
       const path = pathOf(call);
       let current = await desktop.read(root, path);
@@ -49,5 +60,5 @@ export function ReviewPanel({ calls, root, onClose, onError }: { calls: ReviewCa
     const unregister = registerResponsiveMonacoEditor(editor);
     editor.onDidDispose(unregister);
   };
-  return <section aria-label="审阅变更" className="review-panel"><header><div><p>审阅</p><h2>已编辑 {calls.length} 个文件</h2></div><button aria-label="关闭审阅" onClick={onClose} type="button">×</button></header><div className="review-body"><nav>{calls.map((entry, index) => <button className={index === selected ? "active" : ""} key={`${entry.name}-${pathOf(entry)}-${index}`} onClick={() => setSelected(index)} type="button"><span>{entry.name === "write" ? "新建" : "编辑"}</span>{pathOf(entry).split(/[\\/]/).pop()}</button>)}</nav><main>{call && <><div className="review-file-header"><strong>{pathOf(call)}</strong>{call.name === "edit" && <button disabled={reverted.has(selected) || !root} onClick={() => void undoEdit()} type="button">{reverted.has(selected) ? "已撤销" : "撤销此编辑"}</button>}</div><div className={call.name === "write" ? "review-editor is-write" : "review-editor"}>{call.name === "write" ? <Editor beforeMount={defineAgentKTheme} height="100%" language={languageFor(pathOf(call))} onMount={registerLayout} options={{ automaticLayout: false, inertialScroll: true, minimap: { enabled: false }, mouseWheelScrollSensitivity: 1.5, readOnly: true, scrollbar: { alwaysConsumeMouseWheel: false, handleMouseWheel: true }, scrollBeyondLastLine: false, smoothScrolling: true, wordWrap: "on" }} theme={editorTheme} value={versions.modified} /> : <DiffEditor beforeMount={defineAgentKTheme} height="100%" language={languageFor(pathOf(call))} modified={versions.modified} onMount={registerLayout} options={{ automaticLayout: false, diffWordWrap: "on", inertialScroll: true, minimap: { enabled: false }, mouseWheelScrollSensitivity: 1.5, readOnly: true, renderSideBySide: false, scrollbar: { alwaysConsumeMouseWheel: false, handleMouseWheel: true }, scrollBeyondLastLine: false, smoothScrolling: true, wordWrap: "on" }} original={versions.original} theme={editorTheme} />}</div>{call.name === "write" && <p className="review-note">整文件写入可在此审阅；为避免覆盖后续修改，首版不提供自动撤销。</p>}</>}</main></div></section>;
+  return <section aria-label="审阅变更" className="review-panel"><header><div><p>审阅</p><h2>已编辑 {calls.length} 个文件</h2></div><button aria-label="关闭审阅" onClick={onClose} type="button">×</button></header><div className="review-body"><nav>{calls.map((entry, index) => <button className={index === selected ? "active" : ""} key={`${entry.name}-${pathOf(entry)}-${index}`} onClick={() => setSelected(index)} type="button"><span>{entry.name === "write" ? "新建" : "编辑"}</span>{pathOf(entry).split(/[\\/]/).pop()}</button>)}</nav><main>{call && <><div className="review-file-header"><strong>{pathOf(call)}</strong>{call.name === "edit" && (canUndo ? <button disabled={reverted.has(selected)} onClick={() => void undoEdit()} type="button">{reverted.has(selected) ? "已撤销" : "撤销此编辑"}</button> : <span className="review-note">外部资源仅支持审阅</span>)}</div><div className={call.name === "write" ? "review-editor is-write" : "review-editor"}>{call.name === "write" ? <Editor beforeMount={defineAgentKTheme} height="100%" language={languageFor(pathOf(call))} onMount={registerLayout} options={{ automaticLayout: false, inertialScroll: true, minimap: { enabled: false }, mouseWheelScrollSensitivity: 1.5, readOnly: true, scrollbar: { alwaysConsumeMouseWheel: false, handleMouseWheel: true }, scrollBeyondLastLine: false, smoothScrolling: true, wordWrap: "on" }} theme={editorTheme} value={versions.modified} /> : <DiffEditor beforeMount={defineAgentKTheme} height="100%" language={languageFor(pathOf(call))} modified={versions.modified} onMount={registerLayout} options={{ automaticLayout: false, diffWordWrap: "on", inertialScroll: true, minimap: { enabled: false }, mouseWheelScrollSensitivity: 1.5, readOnly: true, renderSideBySide: false, scrollbar: { alwaysConsumeMouseWheel: false, handleMouseWheel: true }, scrollBeyondLastLine: false, smoothScrolling: true, wordWrap: "on" }} original={versions.original} theme={editorTheme} />}</div>{call.name === "write" && <p className="review-note">整文件写入可在此审阅；为避免覆盖后续修改，首版不提供自动撤销。</p>}</>}</main></div></section>;
 }

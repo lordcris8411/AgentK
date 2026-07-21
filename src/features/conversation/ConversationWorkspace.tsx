@@ -865,6 +865,7 @@ function activityDuration(
   entries: TimelineEntry[],
   index: number,
   liveNow?: number,
+  liveStartedAt?: number,
 ) {
   const before = entries
     .slice(0, index)
@@ -875,7 +876,11 @@ function activityDuration(
     .find(
       (entry) => entry.type === "message" && entry.item.role === "assistant",
     );
-  if (before?.type !== "message" || !before.item.occurredAt) return;
+  if (before?.type !== "message" || !before.item.occurredAt) {
+    if (liveNow !== undefined && liveStartedAt !== undefined)
+      return Math.max(0, liveNow - liveStartedAt);
+    return;
+  }
   if (after?.type === "message" && after.item.occurredAt)
     return Math.max(0, after.item.occurredAt - before.item.occurredAt);
   if (liveNow !== undefined)
@@ -1239,6 +1244,7 @@ export function ConversationWorkspace({
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [composerDragActive, setComposerDragActive] = useState(false);
   const [running, setRunning] = useState(false);
+  const [runStartedAt, setRunStartedAt] = useState<number>();
   const [stopping, setStopping] = useState(false);
   const [liveNow, setLiveNow] = useState(() => Date.now());
   const [submitting, setSubmitting] = useState(false);
@@ -1737,7 +1743,10 @@ export function ConversationWorkspace({
         const activeRuntimeId = activeRuntimeIdRef.current;
         if (!activeRuntimeId || event.runtimeId !== activeRuntimeId) return;
         const type = String(event.type ?? "");
-        if (type === "agent_start") setRunning(true);
+        if (type === "agent_start") {
+          setRunning(true);
+          setRunStartedAt(Date.now());
+        }
         if (type === "agent_settled") {
           // Pi may settle without a final message_end event.  Treat either event as
           // the completion boundary for the streamed thinking block.
@@ -1747,8 +1756,14 @@ export function ConversationWorkspace({
             ),
           );
           setRunning(false);
+          setRunStartedAt(undefined);
           setSubmitting(false);
           streamingId.current = undefined;
+        }
+        if (type === "session_info_changed" && typeof event.name === "string") {
+          window.dispatchEvent(new CustomEvent("agent-k-session-name", {
+            detail: { name: event.name },
+          }));
         }
         if (type === "extension_error") {
           const detail = String(event.error ?? "Unknown extension error");
@@ -1759,6 +1774,7 @@ export function ConversationWorkspace({
         }
         if (type === "bridge_closed") {
           setRunning(false);
+          setRunStartedAt(undefined);
           setSubmitting(false);
           setStopping(false);
           streamingId.current = undefined;
@@ -2045,11 +2061,27 @@ export function ConversationWorkspace({
   useEffect(() => {
     const list = messageListRef.current;
     if (!list) return;
-    const observer = new ResizeObserver(() => scheduleScrollMetrics(list));
+    const observer = new ResizeObserver(() => {
+      // Expanding a thought/details block changes a message's height, not the
+      // scroll container's border box. Keep both the scroll position and the
+      // custom thumb in sync with that internal resize.
+      if (stickToBottom.current) {
+        list.scrollTop = list.scrollHeight;
+        setShowJumpToLatest(false);
+      }
+      scheduleScrollMetrics(list);
+    });
+    const observeMessages = () => {
+      for (const child of list.children) observer.observe(child);
+    };
     observer.observe(list);
+    observeMessages();
+    const mutations = new MutationObserver(observeMessages);
+    mutations.observe(list, { childList: true });
     scheduleScrollMetrics(list);
     return () => {
       observer.disconnect();
+      mutations.disconnect();
       if (scrollMetricsFrame.current !== undefined) {
         window.cancelAnimationFrame(scrollMetricsFrame.current);
         scrollMetricsFrame.current = undefined;
@@ -2574,6 +2606,7 @@ export function ConversationWorkspace({
       <div className="message-scroll-region">
         <section
           className="message-list"
+          data-native-wheel
           onScroll={(event) => {
             const element = event.currentTarget;
             const isAtBottom =
@@ -2601,6 +2634,7 @@ export function ConversationWorkspace({
                     entries,
                     index,
                     isLiveActivity ? liveNow : undefined,
+                    isLiveActivity ? runStartedAt : undefined,
                   )}
                   items={entry.items}
                   key={`activity-${entry.items[0]?.id ?? index}`}
@@ -2734,7 +2768,11 @@ export function ConversationWorkspace({
               0,
               Math.min(1, (event.clientY - drag.top) / drag.trackHeight),
             );
-            scrollbarDragTarget.current = ratio * drag.maxScroll;
+            // Streaming tool output can grow while the thumb is held. The
+            // maximum captured on pointer-down would then only reach the old
+            // halfway point, even when the pointer is at the bottom.
+            scrollbarDragTarget.current =
+              ratio * Math.max(0, list.scrollHeight - list.clientHeight);
             if (scrollbarDragFrame.current !== undefined) return;
             scrollbarDragFrame.current = window.requestAnimationFrame(() => {
               scrollbarDragFrame.current = undefined;
@@ -3149,6 +3187,9 @@ export function ConversationWorkspace({
             <div className="extension-statuses" aria-live="polite">
               {statuses.map((status) => (
                 <span key={status.key} title={plainUiText(status.text)}>
+                  {status.key === "agent-k-plan" && status.text.includes("executing") && (
+                    <i aria-hidden="true" className="fa-solid fa-spinner session-running-spinner" />
+                  )}
                   <AnsiText text={status.text} />
                 </span>
               ))}

@@ -8,7 +8,6 @@
 
 import type {
   ExtensionAPI,
-  ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
@@ -23,6 +22,7 @@ const MAX_MODEL_REPAIRS = 2;
 type PlanState = {
   planFilePath: string | null;
   isPlanMode: boolean;
+  isExecuting: boolean;
   repairAttempts: number;
 };
 
@@ -155,19 +155,22 @@ function executionPrompt(content: string): string {
 }
 
 export default function kPlan(pi: ExtensionAPI): void {
-  let state: PlanState = { planFilePath: null, isPlanMode: false, repairAttempts: 0 };
-  let commandContext: ExtensionCommandContext | null = null;
+  let state: PlanState = { planFilePath: null, isPlanMode: false, isExecuting: false, repairAttempts: 0 };
   let reviewOpen = false;
 
   const persist = () => pi.appendEntry(STATE_TYPE, state);
   const updateStatus = (ctx: ExtensionContext) => {
     ctx.ui.setStatus(
       STATE_TYPE,
-      state.isPlanMode ? ctx.ui.theme.fg("warning", "K's Plan: planning") : undefined,
+      state.isPlanMode
+        ? ctx.ui.theme.fg("warning", "K's Plan: planning")
+        : state.isExecuting
+          ? ctx.ui.theme.fg("accent", "K's Plan: executing")
+          : undefined,
     );
   };
   const leavePlanMode = (ctx: ExtensionContext) => {
-    state = { ...state, isPlanMode: false, repairAttempts: 0 };
+    state = { ...state, isPlanMode: false, isExecuting: false, repairAttempts: 0 };
     updateStatus(ctx);
     persist();
   };
@@ -208,23 +211,11 @@ export default function kPlan(pi: ExtensionAPI): void {
   }
 
   async function executePlan(ctx: ExtensionContext, content: string, title: string | null): Promise<void> {
-    leavePlanMode(ctx);
-    if (!commandContext) {
-      if (title) pi.setSessionName(`Plan: ${title}`);
-      pi.sendUserMessage(executionPrompt(content), { deliverAs: "followUp" });
-      return;
-    }
-    const parentSession = ctx.sessionManager.getSessionFile();
-    const result = await commandContext.newSession({
-      parentSession,
-      setup: async (sessionManager) => {
-        if (title) sessionManager.appendSessionInfo(`Plan: ${title}`);
-      },
-      withSession: async (replacementCtx) => {
-        await replacementCtx.sendUserMessage(executionPrompt(content), { deliverAs: "followUp" });
-      },
-    });
-    if (result.cancelled) ctx.ui.notify("K's Plan execution was cancelled.", "warning");
+    state = { ...state, isPlanMode: false, isExecuting: true, repairAttempts: 0 };
+    updateStatus(ctx);
+    persist();
+    if (title) pi.setSessionName(`Plan: ${title}`);
+    pi.sendUserMessage(executionPrompt(content), { deliverAs: "followUp" });
   }
 
   async function review(ctx: ExtensionContext): Promise<void> {
@@ -286,13 +277,13 @@ export default function kPlan(pi: ExtensionAPI): void {
         ctx.ui.notify("Usage: /plan <description of what to build>", "warning");
         return;
       }
-      commandContext = ctx;
       const sessionId = deriveSessionId(ctx.sessionManager.getSessionFile());
       const planDirectory = join(homedir(), ".pi", "agent", "plans", sessionId);
       await mkdir(planDirectory, { recursive: true });
       state = {
         planFilePath: join(planDirectory, "plan.md"),
         isPlanMode: true,
+        isExecuting: false,
         repairAttempts: 0,
       };
       updateStatus(ctx);
@@ -321,6 +312,12 @@ export default function kPlan(pi: ExtensionAPI): void {
   });
 
   pi.on("agent_end", async (_event, ctx) => {
+    if (state.isExecuting) {
+      state = { ...state, isExecuting: false };
+      updateStatus(ctx);
+      persist();
+      return;
+    }
     if (!state.isPlanMode || !state.planFilePath || !ctx.hasUI) return;
     try {
       await access(state.planFilePath);
@@ -347,6 +344,7 @@ export default function kPlan(pi: ExtensionAPI): void {
     state = {
       planFilePath: lastState?.data?.planFilePath ?? null,
       isPlanMode: lastState?.data?.isPlanMode ?? false,
+      isExecuting: lastState?.data?.isExecuting ?? false,
       repairAttempts: lastState?.data?.repairAttempts ?? 0,
     };
     updateStatus(ctx);

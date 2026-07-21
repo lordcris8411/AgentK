@@ -1,7 +1,9 @@
 node_modules/
 dist/
 .electron-dist/
+.pi-runtime/
 release/
+release-verify/
 .reference/
 *.log
 .env

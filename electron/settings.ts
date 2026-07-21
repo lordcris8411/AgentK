@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { shell } from "electron";
+import type { PiLaunch } from "./pi-runtime.js";
 import type { ClientSettings, JsonObject } from "./types.js";
 import {
   asArray,
@@ -25,12 +26,14 @@ export interface ProviderDraft {
 }
 
 const DEFAULT_SETTINGS: ClientSettings = {
-  version: 3,
+  version: 5,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
   browserId: "default",
+  piExecutable: "",
   workerPoolSize: 4,
+  editorWordWrap: false,
   leftPanelWidth: 304,
   rightPanelWidth: 420,
   leftPanelHidden: false,
@@ -59,8 +62,12 @@ export function parseClientSettings(value: unknown): ClientSettings {
   if (["ask", "full"].includes(String(source.permissionMode)))
     settings.permissionMode = source.permissionMode as ClientSettings["permissionMode"];
   if (safeBrowserId(source.browserId)) settings.browserId = source.browserId;
+  if (typeof source.piExecutable === "string" && source.piExecutable.length <= 4096)
+    settings.piExecutable = source.piExecutable.trim();
   if ([2, 3, 4].includes(Number(source.workerPoolSize)))
     settings.workerPoolSize = Number(source.workerPoolSize) as 2 | 3 | 4;
+  if (typeof source.editorWordWrap === "boolean")
+    settings.editorWordWrap = source.editorWordWrap;
   if (Number(source.leftPanelWidth) >= 240 && Number(source.leftPanelWidth) <= 2400)
     settings.leftPanelWidth = Number(source.leftPanelWidth);
   if (Number(source.rightPanelWidth) >= 420 && Number(source.rightPanelWidth) <= 3200)
@@ -75,7 +82,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.windowHeight = Number(source.windowHeight);
   if (typeof source.windowMaximized === "boolean")
     settings.windowMaximized = source.windowMaximized;
-  settings.version = Math.max(3, Number(source.version) || 3);
+  settings.version = Math.max(5, Number(source.version) || 5);
   return settings;
 }
 
@@ -96,7 +103,9 @@ export async function saveClientSettings(
     settings.locale === original.locale &&
     settings.permissionMode === original.permissionMode &&
     settings.browserId === original.browserId &&
+    settings.piExecutable === original.piExecutable &&
     settings.workerPoolSize === original.workerPoolSize &&
+    settings.editorWordWrap === original.editorWordWrap &&
     settings.leftPanelWidth === original.leftPanelWidth &&
     settings.rightPanelWidth === original.rightPanelWidth &&
     settings.leftPanelHidden === original.leftPanelHidden &&
@@ -419,13 +428,13 @@ export async function discoverLocalModels(baseUrl: string, ollama: boolean): Pro
     .filter((item): item is string => Boolean(item)))].sort();
 }
 
-export function openProviderLogin(providerId: string, executable: string): void {
+export function openProviderLogin(providerId: string, launch: PiLaunch): void {
   const id = providerId.trim();
   if (!validProviderId(id)) throw new Error("Invalid provider ID");
   const cwd = piAgentDirectory();
   const command = process.platform === "win32"
-    ? { executable, args: [] as string[] }
-    : { executable: "sh", args: ["-lc", `printf '\\nAgent K: enter /login ${id} in Pi to authenticate.\\n\\n'; exec \"$1\"`, "agent-k-login", executable] };
+    ? { executable: launch.executable, args: [...launch.args] }
+    : { executable: "sh", args: ["-lc", `printf '\\nAgent K: enter /login ${id} in Pi to authenticate.\\n\\n'; exec \"$1\"`, "agent-k-login", launch.executable, ...launch.args] };
   const candidates: Array<{ executable: string; args: string[] }> = process.platform === "win32"
     ? [command]
     : [
@@ -449,6 +458,7 @@ export function openProviderLogin(providerId: string, executable: string): void 
         shell: process.platform === "win32",
         stdio: "ignore",
         windowsHide: false,
+        env: { ...process.env, ...launch.environment },
       });
       child.unref();
       return;

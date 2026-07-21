@@ -6,7 +6,9 @@ export interface ClientSettings {
   locale: "zh-CN" | "en-US";
   permissionMode: "ask" | "full";
   browserId: string;
+  piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
+  editorWordWrap: boolean;
   leftPanelWidth: number;
   rightPanelWidth: number;
   leftPanelHidden: boolean;
