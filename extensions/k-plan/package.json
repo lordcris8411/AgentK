@@ -1,0 +1,18 @@
+{
+  "name": "@agent-k/k-plan",
+  "version": "0.1.0",
+  "description": "K's Plan - strict plan creation, review, repair, and execution for Pi",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.10"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
