@@ -1,8 +1,4 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
@@ -11,6 +7,7 @@ import remarkMath from "remark-math";
 import type { SessionSummary } from "../../lib/desktop";
 import { desktop } from "../../lib/desktop";
 import { stopDampedScrolling } from "../../lib/dampedScrolling";
+import { desktopWindow, platform } from "../../lib/platform";
 import type { ReviewCall } from "./ReviewPanel";
 import { useSettings } from "../settings/SettingsContext";
 import {
@@ -29,12 +26,21 @@ type ModelOption = {
 type SlashCommand = {
   name: string;
   description?: string;
-  source: "extension" | "prompt" | "skill";
+  source: "builtin" | "extension" | "prompt" | "skill";
   sourceInfo?: {
     path?: string;
     source?: string;
     scope?: string;
   };
+};
+type CommandPicker = {
+  kind: "fork" | "tree";
+  options: Array<{ entryId: string; text: string }>;
+};
+type MessageContextMenu = {
+  item: Item;
+  x: number;
+  y: number;
 };
 type ImageContent = {
   type: "image";
@@ -996,7 +1002,7 @@ function ActivityRow({ item }: { item: Item }) {
     </>
   );
 }
-function ActivityGroup({
+const ActivityGroup = memo(function ActivityGroup({
   items,
   open,
   durationMs,
@@ -1054,7 +1060,134 @@ function ActivityGroup({
       </details>
     </article>
   );
-}
+});
+
+const ConversationMessage = memo(function ConversationMessage({
+  en,
+  item,
+  onContextMenu,
+  onError,
+}: {
+  en: boolean;
+  item: Item;
+  onContextMenu(event: React.MouseEvent, item: Item): void;
+  onError(message: string | undefined): void;
+}) {
+  const browserId = useSettings().settings.browserId;
+  return (
+    <article
+      className={`message message-${item.role}`}
+      id={`message-${item.id}`}
+      onContextMenu={item.role === "user" ? (event) => onContextMenu(event, item) : undefined}
+    >
+      <div className="message-content">
+        {((item.images?.length ?? 0) > 0 ||
+          (item.localImageUrls?.length ?? 0) > 0) && (
+          <div className="message-images">
+            {(item.images ?? []).map((image, imageIndex) => (
+              <img
+                alt={en ? `Attached image ${imageIndex + 1}` : `附件图片 ${imageIndex + 1}`}
+                key={`${item.id}-image-${imageIndex}`}
+                loading="lazy"
+                src={`data:${image.mimeType};base64,${image.data}`}
+              />
+            ))}
+            {(item.localImageUrls ?? []).map((url, imageIndex) => (
+              <img
+                alt={en ? `Attached image ${imageIndex + 1}` : `附件图片 ${imageIndex + 1}`}
+                key={`${item.id}-local-image-${imageIndex}`}
+                src={url}
+              />
+            ))}
+          </div>
+        )}
+        {(item.localFiles?.length ?? 0) > 0 && (
+          <div className="message-files">
+            {item.localFiles?.map((file, fileIndex) => (
+              <span key={`${item.id}-file-${fileIndex}`}>
+                <i
+                  aria-hidden="true"
+                  className={
+                    file.kind === "document"
+                      ? "fa-regular fa-file-lines"
+                      : "fa-regular fa-file-code"
+                  }
+                />
+                {file.name}
+              </span>
+            ))}
+          </div>
+        )}
+        {item.thinking && (
+          <ActivityRow item={{ ...item, content: "", toolCalls: [] }} />
+        )}
+        {item.content && (
+          <ReactMarkdown
+            components={{
+              a: ({ children, href, ...props }) => {
+                if (href?.startsWith("#agent-k-file=")) {
+                  const parameters = new URLSearchParams(href.slice(1));
+                  const path = parameters.get("agent-k-file");
+                  const line = Number(parameters.get("line"));
+                  return (
+                    <a
+                      {...props}
+                      className="file-line-reference"
+                      href={href}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        if (!path || !Number.isFinite(line)) return;
+                        window.dispatchEvent(
+                          new CustomEvent("agent-k-open-file-line", {
+                            detail: { line, path },
+                          }),
+                        );
+                      }}
+                    >
+                      <i aria-hidden="true" className="fa-regular fa-file-code" />
+                      {children}
+                    </a>
+                  );
+                }
+                if (href && /^https?:\/\//i.test(href)) {
+                  return (
+                    <a
+                      {...props}
+                      href={href}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void desktop
+                          .openExternalUrl(href, browserId)
+                          .catch((cause) => onError(String(cause)));
+                      }}
+                    >
+                      {children}
+                    </a>
+                  );
+                }
+                return <a {...props} href={href}>{children}</a>;
+              },
+            }}
+            rehypePlugins={[rehypeKatex]}
+            remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
+          >
+            {linkifyFileReferences(item.content)}
+          </ReactMarkdown>
+        )}
+      </div>
+      {item.role === "user" && item.occurredAt ? (
+        <footer className="user-message-time">
+          <time
+            dateTime={new Date(item.occurredAt).toISOString()}
+            title={new Date(item.occurredAt).toLocaleString()}
+          >
+            {formatMessageTime(item.occurredAt)}
+          </time>
+        </footer>
+      ) : null}
+    </article>
+  );
+});
 export function ConversationWorkspace({
   session,
   connected,
@@ -1102,7 +1235,7 @@ export function ConversationWorkspace({
   // (usually runtime-less draft) session and accept events from every worker.
   const activeRuntimeIdRef = useRef(session?.runtimeId);
   activeRuntimeIdRef.current = session?.runtimeId;
-  const [draft, setDraft] = useState("");
+  const [draft, setDraftState] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [composerDragActive, setComposerDragActive] = useState(false);
   const [running, setRunning] = useState(false);
@@ -1116,6 +1249,11 @@ export function ConversationWorkspace({
   const [modelMenu, setModelMenu] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
+  const [commandRevision, setCommandRevision] = useState(0);
+  const [commandPicker, setCommandPicker] = useState<CommandPicker>();
+  const [messageContextMenu, setMessageContextMenu] = useState<MessageContextMenu>();
+  const [pendingMessageDelete, setPendingMessageDelete] = useState<Item>();
+  const [deletingMessage, setDeletingMessage] = useState(false);
   const [slashSelection, setSlashSelection] = useState(0);
   const [dismissedSlashDraft, setDismissedSlashDraft] = useState<string>();
   const [switchingModel, setSwitchingModel] = useState(false);
@@ -1127,6 +1265,8 @@ export function ConversationWorkspace({
   const messageListRef = useRef<HTMLElement | null>(null);
   const scrollbarRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
+  const draftValueRef = useRef("");
+  const draftCommitTimer = useRef<number | undefined>(undefined);
   const slashMenuRef = useRef<HTMLDivElement | null>(null);
   const modelControlRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
@@ -1140,6 +1280,37 @@ export function ConversationWorkspace({
   } | undefined>(undefined);
   const scrollbarDragFrame = useRef<number | undefined>(undefined);
   const scrollbarDragTarget = useRef(0);
+  const commitDraft = useCallback((value: string) => {
+    if (draftCommitTimer.current !== undefined) {
+      window.clearTimeout(draftCommitTimer.current);
+      draftCommitTimer.current = undefined;
+    }
+    draftValueRef.current = value;
+    setDraftState(value);
+  }, []);
+  const openMessageContextMenu = useCallback((event: React.MouseEvent, item: Item) => {
+    event.preventDefault();
+    setMessageContextMenu({ item, x: event.clientX, y: event.clientY });
+  }, []);
+  const queueDraftCommit = useCallback((value: string) => {
+    draftValueRef.current = value;
+    if (draftCommitTimer.current !== undefined)
+      window.clearTimeout(draftCommitTimer.current);
+    // contentEditable already painted the keystroke. Delay the expensive
+    // conversation render until typing pauses so the renderer main thread
+    // remains available to the native editor and IME.
+    draftCommitTimer.current = window.setTimeout(() => {
+      draftCommitTimer.current = undefined;
+      setDraftState(draftValueRef.current);
+    }, 350);
+  }, []);
+  useEffect(
+    () => () => {
+      if (draftCommitTimer.current !== undefined)
+        window.clearTimeout(draftCommitTimer.current);
+    },
+    [],
+  );
   useEffect(() => {
     if (!running) return;
     setLiveNow(Date.now());
@@ -1147,9 +1318,27 @@ export function ConversationWorkspace({
     return () => window.clearInterval(timer);
   }, [running]);
   useEffect(() => {
+    const refresh = () => setCommandRevision((revision) => revision + 1);
+    window.addEventListener("agent-k-resources-changed", refresh);
+    return () => window.removeEventListener("agent-k-resources-changed", refresh);
+  }, []);
+  const builtinCommands = useMemo<SlashCommand[]>(() => [
+    { name: "settings", description: en ? "Open Agent K settings" : "打开 Agent K 设置", source: "builtin" },
+    { name: "skills", description: en ? "Manage Pi skills" : "管理 Pi Skills", source: "builtin" },
+    { name: "extensions", description: en ? "Manage Pi extensions" : "管理 Pi Extensions", source: "builtin" },
+    { name: "model", description: en ? "Select or change the current model" : "选择或切换当前模型", source: "builtin" },
+    { name: "compact", description: en ? "Compact the current session context" : "压缩当前会话上下文", source: "builtin" },
+    { name: "new", description: en ? "Start a new Pi session" : "新建 Pi 会话", source: "builtin" },
+    { name: "fork", description: en ? "Fork from a previous user message" : "从历史问题创建分支", source: "builtin" },
+    { name: "tree", description: en ? "Navigate the session tree" : "导航会话树", source: "builtin" },
+    { name: "name", description: en ? "Set the session name" : "设置会话名称", source: "builtin" },
+    { name: "session", description: en ? "Show session information and statistics" : "显示会话信息与统计", source: "builtin" },
+    { name: "reload", description: en ? "Reload Pi resources and configuration" : "重新加载 Pi 资源和配置", source: "builtin" },
+  ], [en]);
+  useEffect(() => {
     let cancelled = false;
-    if (!connected) {
-      setSlashCommands([]);
+    if (!connected || !session?.runtimeId) {
+      setSlashCommands(builtinCommands);
       setSlashCommandsLoading(false);
       return;
     }
@@ -1159,16 +1348,17 @@ export function ConversationWorkspace({
       .then((result) => {
         if (cancelled) return;
         const commands = (result as { commands?: SlashCommand[] }).commands ?? [];
-        setSlashCommands(
-          commands.filter(
+        setSlashCommands([
+          ...builtinCommands,
+          ...commands.filter(
             (command) =>
               Boolean(command?.name) &&
               ["extension", "prompt", "skill"].includes(command.source),
           ),
-        );
+        ]);
       })
       .catch(() => {
-        if (!cancelled) setSlashCommands([]);
+        if (!cancelled) setSlashCommands(builtinCommands);
       })
       .finally(() => {
         if (!cancelled) setSlashCommandsLoading(false);
@@ -1176,7 +1366,7 @@ export function ConversationWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [connected, session?.path, session?.runtimeId]);
+  }, [builtinCommands, commandRevision, connected, session?.path, session?.runtimeId]);
   const slashMatch = /^\/([^\s]*)$/.exec(draft);
   const filteredSlashCommands = slashMatch
     ? filterSlashCommands(slashCommands, slashMatch[1])
@@ -1267,7 +1457,7 @@ export function ConversationWorkspace({
   }, [session?.path, connected, initialMessages, onError, onHistoryReady]);
   useEffect(() => {
     let cancelled = false;
-    if (!connected) {
+    if (!connected || !session?.runtimeId) {
       setModelName(en ? "Connecting…" : "正在连接…");
       setAvailableModels([]);
       setCurrentModelKey("");
@@ -1323,7 +1513,7 @@ export function ConversationWorkspace({
       cancelled = true;
       window.removeEventListener("agent-k-model-changed", refreshModelName);
     };
-  }, [connected, en, session?.path]);
+  }, [connected, en, session?.runtimeId]);
   useEffect(() => {
     if (!modelMenu) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
@@ -1393,7 +1583,7 @@ export function ConversationWorkspace({
           kind,
           name: fileName(path),
           path,
-          previewUrl: kind === "image" ? convertFileSrc(path) : undefined,
+          previewUrl: kind === "image" ? platform.fileUrl(path) : undefined,
         };
       });
       setAttachments((current) => [...current, ...next]);
@@ -1405,7 +1595,7 @@ export function ConversationWorkspace({
     }
   };
   const chooseImages = async () => {
-    const selected = await open({
+    const selected = await platform.openDialog({
       filters: [
         {
           name: en ? "Images" : "图片",
@@ -1442,36 +1632,40 @@ export function ConversationWorkspace({
     }
   };
   useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
     const overComposer = (position: { x: number; y: number }) => {
-      const scale = window.devicePixelRatio || 1;
       return Boolean(
         document
-          .elementFromPoint(position.x / scale, position.y / scale)
+          .elementFromPoint(position.x, position.y)
           ?.closest(".composer"),
       );
     };
-    void getCurrentWebview()
-      .onDragDropEvent((event) => {
-        if (disposed) return;
-        if (event.payload.type === "leave") {
-          setComposerDragActive(false);
-          return;
-        }
-        const isOver = overComposer(event.payload.position);
-        setComposerDragActive(isOver);
-        if (event.payload.type !== "drop" || !isOver) return;
-        setComposerDragActive(false);
-        addAttachmentPaths(event.payload.paths);
-      })
-      .then((dispose) => {
-        if (disposed) dispose();
-        else unlisten = dispose;
-      });
+    const dragOver = (event: DragEvent) => {
+      if (!event.dataTransfer?.types.includes("Files")) return;
+      const isOver = overComposer({ x: event.clientX, y: event.clientY });
+      setComposerDragActive(isOver);
+      if (isOver) event.preventDefault();
+    };
+    const dragLeave = (event: DragEvent) => {
+      if (!event.relatedTarget) setComposerDragActive(false);
+    };
+    const drop = (event: DragEvent) => {
+      const isOver = overComposer({ x: event.clientX, y: event.clientY });
+      if (!isOver || !event.dataTransfer?.files.length) return;
+      event.preventDefault();
+      setComposerDragActive(false);
+      addAttachmentPaths(
+        Array.from(event.dataTransfer.files)
+          .map(platform.pathForFile)
+          .filter(Boolean),
+      );
+    };
+    window.addEventListener("dragover", dragOver);
+    window.addEventListener("dragleave", dragLeave);
+    window.addEventListener("drop", drop);
     return () => {
-      disposed = true;
-      unlisten?.();
+      window.removeEventListener("dragover", dragOver);
+      window.removeEventListener("dragleave", dragLeave);
+      window.removeEventListener("drop", drop);
     };
   }, [attachments.length, en, modelSupportsImages, session?.cwd]);
   useEffect(() => {
@@ -1490,7 +1684,8 @@ export function ConversationWorkspace({
       const path = detail.path.replaceAll("\\", "/");
       const editor = composerRef.current;
       if (!editor) {
-        setDraft((current) =>
+        const current = draftValueRef.current;
+        commitDraft(
           `${current}${current && !/\s$/.test(current) ? " " : ""}@${path}:${detail.line}`,
         );
         return;
@@ -1517,13 +1712,13 @@ export function ConversationWorkspace({
       range.collapse(true);
       selection?.removeAllRanges();
       selection?.addRange(range);
-      setDraft(serializeComposer(editor));
+      commitDraft(serializeComposer(editor));
       editor.focus();
     };
     window.addEventListener("agent-k-add-line-reference", addLineReference);
     return () =>
       window.removeEventListener("agent-k-add-line-reference", addLineReference);
-  }, []);
+  }, [commitDraft]);
   useEffect(() => {
     const editor = composerRef.current;
     if (editor && serializeComposer(editor) !== draft)
@@ -1531,9 +1726,9 @@ export function ConversationWorkspace({
   }, [draft]);
   useEffect(() => {
     if (!editorTextUpdate) return;
-    setDraft(editorTextUpdate.text);
+    commitDraft(editorTextUpdate.text);
     requestAnimationFrame(() => placeCaretAtEnd(composerRef.current));
-  }, [editorTextUpdate]);
+  }, [commitDraft, editorTextUpdate]);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
@@ -1827,7 +2022,7 @@ export function ConversationWorkspace({
   }, []);
   useEffect(() => {
     // Tool updates can replace several thousand lines in one render. Starting
-    // another smooth scroll for every update makes WebView2 keep multiple
+    // another smooth scroll for every update makes Chromium keep multiple
     // scrolling/compositing animations alive and occasionally leaves stale
     // white text layers behind. Coalesce updates to one paint and follow the
     // stream immediately; explicit user navigation can still use smooth
@@ -1865,11 +2060,147 @@ export function ConversationWorkspace({
       }
     };
   }, []);
+  const runBuiltinCommand = async (input: string): Promise<boolean> => {
+    const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(input.trim());
+    if (!match || !builtinCommands.some((command) => command.name === match[1]))
+      return false;
+    const [, name, rawArguments = ""] = match;
+    const argumentsText = rawArguments.trim();
+    if (["settings", "skills", "extensions"].includes(name)) {
+      const page = name === "skills" || name === "extensions" ? name : "models";
+      window.dispatchEvent(new CustomEvent("agent-k-open-settings", { detail: { page } }));
+      return true;
+    }
+    if (name === "model") {
+      if (!argumentsText) {
+        setModelMenu(true);
+        return true;
+      }
+      const [provider, ...modelParts] = argumentsText.split("/");
+      const modelId = modelParts.join("/");
+      if (!provider || !modelId)
+        throw new Error(en ? "Use /model provider/model" : "请使用 /model provider/model");
+      await desktop.command({ type: "set_model", provider, modelId }, session?.runtimeId);
+      window.dispatchEvent(new Event("agent-k-model-changed"));
+      return true;
+    }
+    if (name === "compact") {
+      await desktop.command({
+        type: "compact",
+        ...(argumentsText ? { customInstructions: argumentsText } : {}),
+      }, session?.runtimeId);
+      pushNotification(en ? "Session context compacted" : "会话上下文已压缩");
+      return true;
+    }
+    if (name === "new") {
+      await cancelExtensionUi();
+      clearSessionUi();
+      await desktop.command({ type: "new_session" }, session?.runtimeId);
+      setItems([]);
+      window.dispatchEvent(new CustomEvent("agent-k-session-name", {
+        detail: { name: "New session" },
+      }));
+      return true;
+    }
+    if (name === "name") {
+      if (!argumentsText)
+        throw new Error(en ? "Use /name <session name>" : "请使用 /name <会话名称>");
+      await desktop.command({ type: "set_session_name", name: argumentsText }, session?.runtimeId);
+      window.dispatchEvent(new CustomEvent("agent-k-session-name", {
+        detail: { name: argumentsText },
+      }));
+      return true;
+    }
+    if (name === "session") {
+      const stats = await desktop.command({ type: "get_session_stats" }, session?.runtimeId);
+      pushNotification(`${en ? "Session" : "会话"}: ${JSON.stringify(stats)}`, "info", {
+        read: true,
+        showToast: false,
+      });
+      pushNotification(en ? "Session statistics were added to notifications" : "会话统计已添加到通知中心");
+      return true;
+    }
+    if (name === "reload") {
+      await desktop.reloadPiRuntimes();
+      setCommandRevision((revision) => revision + 1);
+      window.dispatchEvent(new Event("agent-k-model-changed"));
+      pushNotification(en ? "Pi resources and configuration reloaded" : "Pi 资源和配置已重新加载");
+      return true;
+    }
+    if (name === "fork" || name === "tree") {
+      if (name === "tree") {
+        type TreeNode = {
+          entry?: {
+            id?: string;
+            type?: string;
+            message?: { role?: string; content?: unknown };
+          };
+          children?: TreeNode[];
+          label?: string;
+        };
+        const result = await desktop.command(
+          { type: "get_tree" },
+          session?.runtimeId,
+        ) as { tree?: TreeNode[] };
+        const options: Array<{ entryId: string; text: string }> = [];
+        const visit = (nodes: TreeNode[], depth: number) => {
+          for (const node of nodes) {
+            const entry = node.entry;
+            if (entry?.id && entry.type === "message" && entry.message?.role === "user") {
+              const content = entry.message.content;
+              const text = typeof content === "string"
+                ? content
+                : Array.isArray(content)
+                  ? content
+                      .filter((part): part is { type: string; text?: string } => typeof part === "object" && part !== null && "type" in part)
+                      .filter((part) => part.type === "text")
+                      .map((part) => part.text ?? "")
+                      .join("")
+                  : "";
+              options.push({
+                entryId: entry.id,
+                text: `${"  ".repeat(depth)}${depth ? "↳ " : ""}${node.label ? `[${node.label}] ` : ""}${text}`,
+              });
+            }
+            visit(node.children ?? [], depth + 1);
+          }
+        };
+        visit(result.tree ?? [], 0);
+        setCommandPicker({ kind: "tree", options });
+        return true;
+      }
+      const result = await desktop.command(
+        { type: "get_fork_messages" },
+        session?.runtimeId,
+      ) as { messages?: Array<{ entryId: string; text: string }> };
+      setCommandPicker({ kind: "fork", options: result.messages ?? [] });
+      return true;
+    }
+    return false;
+  };
+  const selectCommandBranch = async (entryId: string) => {
+    if (!session || running) return;
+    const kind = commandPicker?.kind;
+    setCommandPicker(undefined);
+    try {
+      await cancelExtensionUi();
+      clearSessionUi();
+      const result = await desktop.command({ type: "fork", entryId }, session.runtimeId) as {
+        cancelled?: boolean;
+      };
+      if (!result.cancelled)
+        pushNotification(kind === "fork"
+          ? (en ? "Fork created" : "已创建会话分支")
+          : (en ? "Session tree position changed" : "已切换会话树位置"));
+    } catch (cause) {
+      onError(String(cause));
+    }
+  };
   const submit = async (
     mode: "steer" | "queue" = "steer",
     draftOverride?: string,
   ) => {
-    const input = draftOverride ?? draft;
+    const input = draftOverride ?? draftValueRef.current;
     if (
       (!input.trim() && attachments.length === 0) ||
       !session ||
@@ -1877,6 +2208,20 @@ export function ConversationWorkspace({
       submitting
     )
       return;
+    if (input.trimStart().startsWith("/")) {
+      setSubmitting(true);
+      try {
+        if (await runBuiltinCommand(input)) {
+          commitDraft("");
+          return;
+        }
+      } catch (cause) {
+        onError(String(cause));
+        return;
+      } finally {
+        setSubmitting(false);
+      }
+    }
     if (attachments.some((attachment) => attachment.kind === "image") && !modelSupportsImages) {
       onError(
         en
@@ -1902,7 +2247,7 @@ export function ConversationWorkspace({
     try {
       const modelMessage = await beforeSend(value);
       if (modelMessage === false) return;
-      setDraft("");
+      commitDraft("");
       setAttachments([]);
       stickToBottom.current = true;
       setItems((current) => [
@@ -1944,7 +2289,7 @@ export function ConversationWorkspace({
     command: SlashCommand,
   ) => {
     const completed = `/${command.name} `;
-    setDraft(completed);
+    commitDraft(completed);
     setDismissedSlashDraft(completed);
     const editor = composerRef.current;
     if (editor) {
@@ -2035,12 +2380,84 @@ export function ConversationWorkspace({
       };
       setItems(toItems(page.messages ?? []));
       const editorText = navigation.text ?? query;
-      setDraft(editorText);
+      commitDraft(editorText);
       requestAnimationFrame(() => placeCaretAtEnd(composerRef.current));
     } catch (cause) {
       onError(`Revert 失败：${String(cause)}`);
     } finally {
       setReverting(undefined);
+    }
+  };
+  const deleteUserMessage = async () => {
+    const targetItem = pendingMessageDelete;
+    if (!targetItem || !session || running || submitting || deletingMessage) return;
+    setDeletingMessage(true);
+    try {
+      type SessionEntry = {
+        id: string;
+        parentId: string | null;
+        timestamp?: string;
+        type: string;
+        message?: Record<string, unknown>;
+      };
+      const result = await desktop.command(
+        { type: "get_entries" },
+        session.runtimeId,
+      ) as { entries?: SessionEntry[]; leafId?: string | null };
+      const entries = result.entries ?? [];
+      const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
+      const activePath: SessionEntry[] = [];
+      let cursor = result.leafId ? entriesById.get(result.leafId) : undefined;
+      while (cursor) {
+        activePath.push(cursor);
+        cursor = cursor.parentId ? entriesById.get(cursor.parentId) : undefined;
+      }
+      const userEntries = activePath.reverse().filter(
+        (entry) => entry.type === "message" && entry.message?.role === "user",
+      );
+      const targetTime = targetItem.occurredAt;
+      const matchingContent = userEntries.filter((entry) => {
+        const content = entry.message ? messageParts(entry.message).content : "";
+        return displayUserContent("user", content).trim() === targetItem.content.trim();
+      });
+      const candidates = matchingContent.length ? matchingContent : userEntries;
+      const targetEntry = targetTime === undefined
+        ? candidates.at(-1)
+        : candidates.reduce<SessionEntry | undefined>((closest, entry) => {
+            if (!closest) return entry;
+            const entryTime = Date.parse(entry.timestamp ?? "");
+            const closestTime = Date.parse(closest.timestamp ?? "");
+            if (!Number.isFinite(entryTime)) return closest;
+            if (!Number.isFinite(closestTime)) return entry;
+            return Math.abs(entryTime - targetTime) < Math.abs(closestTime - targetTime)
+              ? entry
+              : closest;
+          }, undefined);
+      if (!targetEntry) throw new Error(en ? "Unable to locate this message in the session tree" : "无法在会话树中定位这条消息");
+
+      await cancelExtensionUi();
+      clearSessionUi();
+      const navigation = await desktop.command(
+        { type: "fork", entryId: targetEntry.id },
+        session.runtimeId,
+      ) as { cancelled?: boolean };
+      if (navigation.cancelled) return;
+      const page = await desktop.command(
+        { type: "get_messages" },
+        session.runtimeId,
+      ) as { messages?: Array<Record<string, unknown>> };
+      setItems(toItems(page.messages ?? []));
+      commitDraft("");
+      setPendingMessageDelete(undefined);
+      pushNotification(
+        en
+          ? "Rewound to before this question. Use /tree to return to the previous branch."
+          : "已回退到该问题之前，可通过 /tree 返回原分支。",
+      );
+    } catch (cause) {
+      onError(`${en ? "Rewind failed" : "回退失败"}：${String(cause)}`);
+    } finally {
+      setDeletingMessage(false);
     }
   };
   const continueInNewSession = async (id: string, query: string) => {
@@ -2049,7 +2466,7 @@ export function ConversationWorkspace({
     try {
       const restoredQuery = await onContinueInNewSession(query);
       if (!restoredQuery) return;
-      setDraft(restoredQuery);
+      commitDraft(restoredQuery);
       requestAnimationFrame(() => placeCaretAtEnd(composerRef.current));
     } finally {
       setBranching(undefined);
@@ -2105,9 +2522,8 @@ export function ConversationWorkspace({
     return listed?.name ?? item.modelName ?? item.modelId ?? modelName;
   };
   const toggleWindowMaximize = async () => {
-    const appWindow = getCurrentWindow();
-    if (await appWindow.isMaximized()) await appWindow.unmaximize();
-    else await appWindow.maximize();
+    if (await desktopWindow.isMaximized()) await desktopWindow.unmaximize();
+    else await desktopWindow.maximize();
   };
   return (
     <div
@@ -2279,109 +2695,13 @@ export function ConversationWorkspace({
               );
             }
             return (
-              <article
-                className={`message message-${entry.item.role}`}
-                id={`message-${entry.item.id}`}
+              <ConversationMessage
+                en={en}
+                item={entry.item}
                 key={entry.item.id}
-              >
-                <div className="message-content">
-                  {((entry.item.images?.length ?? 0) > 0 ||
-                    (entry.item.localImageUrls?.length ?? 0) > 0) && (
-                    <div className="message-images">
-                      {(entry.item.images ?? []).map((image, imageIndex) => (
-                        <img
-                          alt={en ? `Attached image ${imageIndex + 1}` : `附件图片 ${imageIndex + 1}`}
-                          key={`${entry.item.id}-image-${imageIndex}`}
-                          loading="lazy"
-                          src={`data:${image.mimeType};base64,${image.data}`}
-                        />
-                      ))}
-                      {(entry.item.localImageUrls ?? []).map((url, imageIndex) => (
-                        <img
-                          alt={en ? `Attached image ${imageIndex + 1}` : `附件图片 ${imageIndex + 1}`}
-                          key={`${entry.item.id}-local-image-${imageIndex}`}
-                          src={url}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  {(entry.item.localFiles?.length ?? 0) > 0 && (
-                    <div className="message-files">
-                      {entry.item.localFiles?.map((file, fileIndex) => (
-                        <span key={`${entry.item.id}-file-${fileIndex}`}>
-                          <i
-                            aria-hidden="true"
-                            className={
-                              file.kind === "document"
-                                ? "fa-regular fa-file-lines"
-                                : "fa-regular fa-file-code"
-                            }
-                          />
-                          {file.name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  {entry.item.thinking && (
-                    <ActivityRow
-                      item={{ ...entry.item, content: "", toolCalls: [] }}
-                    />
-                  )}
-                  {entry.item.content && (
-                    <ReactMarkdown
-                      components={{
-                        a: ({ children, href, ...props }) => {
-                          if (href?.startsWith("#agent-k-file=")) {
-                            const parameters = new URLSearchParams(href.slice(1));
-                            const path = parameters.get("agent-k-file");
-                            const line = Number(parameters.get("line"));
-                            return (
-                              <a
-                                {...props}
-                                className="file-line-reference"
-                                href={href}
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  if (!path || !Number.isFinite(line)) return;
-                                  window.dispatchEvent(
-                                    new CustomEvent("agent-k-open-file-line", {
-                                      detail: { line, path },
-                                    }),
-                                  );
-                                }}
-                              >
-                                <i aria-hidden="true" className="fa-regular fa-file-code" />
-                                {children}
-                              </a>
-                            );
-                          }
-                          if (href && /^https?:\/\//i.test(href)) {
-                            return (
-                              <a
-                                {...props}
-                                href={href}
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  void desktop
-                                    .openExternalUrl(href, settings.browserId)
-                                    .catch((cause) => onError(String(cause)));
-                                }}
-                              >
-                                {children}
-                              </a>
-                            );
-                          }
-                          return <a {...props} href={href}>{children}</a>;
-                        },
-                      }}
-                      rehypePlugins={[rehypeKatex]}
-                      remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
-                    >
-                      {linkifyFileReferences(entry.item.content)}
-                    </ReactMarkdown>
-                  )}
-                </div>
-              </article>
+                onContextMenu={openMessageContextMenu}
+                onError={onError}
+              />
             );
           })}
         </section>
@@ -2445,6 +2765,107 @@ export function ConversationWorkspace({
           ↓ 回到最新
         </button>
       )}
+      {messageContextMenu && (
+        <div
+          className="message-context-layer"
+          onContextMenu={(event) => event.preventDefault()}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setMessageContextMenu(undefined);
+          }}
+        >
+          <div
+            className="file-context-menu message-context-menu"
+            style={{
+              left: Math.max(8, Math.min(messageContextMenu.x, window.innerWidth - 196)),
+              top: Math.max(8, Math.min(messageContextMenu.y, window.innerHeight - 92)),
+            }}
+          >
+            <button
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(messageContextMenu.item.content)
+                  .catch((cause) => onError(String(cause)));
+                setMessageContextMenu(undefined);
+              }}
+              type="button"
+            >
+              <i aria-hidden="true" className="fa-regular fa-copy" />
+              {en ? "Copy question" : "复制问题"}
+            </button>
+            <div className="file-context-separator" />
+            <button
+              className="message-context-delete"
+              disabled={running || submitting || deletingMessage}
+              onClick={() => {
+                setPendingMessageDelete(messageContextMenu.item);
+                setMessageContextMenu(undefined);
+              }}
+              type="button"
+            >
+              <i aria-hidden="true" className="fa-regular fa-trash-can" />
+              {en ? "Rewind to here" : "回退到这里"}
+            </button>
+          </div>
+        </div>
+      )}
+      {pendingMessageDelete && (
+        <div
+          className="session-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !deletingMessage)
+              setPendingMessageDelete(undefined);
+          }}
+        >
+          <section aria-modal="true" className="session-dialog-card" role="dialog">
+            <h2>{en ? "Rewind to here?" : "回退到这里？"}</h2>
+            <p>
+              {en
+                ? "The conversation will return to before this question. The current branch remains available through /tree. File changes will not be reverted."
+                : "对话将回退到该问题之前，当前分支仍可通过 /tree 找回；已经产生的文件改动不会被撤销。"}
+            </p>
+            <div className="message-delete-preview">{pendingMessageDelete.content}</div>
+            <footer>
+              <button
+                disabled={deletingMessage}
+                onClick={() => setPendingMessageDelete(undefined)}
+                type="button"
+              >
+                {en ? "Cancel" : "取消"}
+              </button>
+              <button
+                className="danger-button"
+                disabled={deletingMessage}
+                onClick={() => void deleteUserMessage()}
+                type="button"
+              >
+                {deletingMessage ? (en ? "Rewinding…" : "正在回退…") : (en ? "Rewind" : "回退")}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+      {commandPicker && (
+        <div className="command-picker-backdrop" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setCommandPicker(undefined);
+        }}>
+          <section aria-modal="true" className="command-picker" role="dialog">
+            <header>
+              <strong>{commandPicker.kind === "fork" ? (en ? "Fork session" : "创建会话分支") : (en ? "Session tree" : "会话树")}</strong>
+              <button aria-label={t("close")} onClick={() => setCommandPicker(undefined)} type="button">×</button>
+            </header>
+            <div>
+              {commandPicker.options.map((option) => (
+                <button key={option.entryId} onClick={() => void selectCommandBranch(option.entryId)} type="button">
+                  {option.text || option.entryId}
+                </button>
+              ))}
+              {commandPicker.options.length === 0 && (
+                <p>{en ? "No user messages are available." : "当前没有可导航的用户消息。"}</p>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
       <form
         className={composerDragActive ? "composer is-dragging" : "composer"}
         onDragEnter={(event) => {
@@ -2506,7 +2927,9 @@ export function ConversationWorkspace({
               ) : (
                 filteredSlashCommands.map((command, index) => {
                   const sourceLabel =
-                    command.source === "extension"
+                    command.source === "builtin"
+                      ? t("builtinCommand")
+                      : command.source === "extension"
                       ? t("extensionCommand")
                       : command.source === "prompt"
                         ? t("promptCommand")
@@ -2619,14 +3042,17 @@ export function ConversationWorkspace({
           onInput={(event) => {
             const value = serializeComposer(event.currentTarget);
             if (!value) event.currentTarget.replaceChildren();
-            if (value !== draft) setDismissedSlashDraft(undefined);
-            setDraft(value);
+            if (value !== draftValueRef.current) setDismissedSlashDraft(undefined);
+            // Slash-command filtering must remain immediate. Ordinary prose can
+            // stay in the DOM and synchronize after a short idle period.
+            if (/^\/[^\s]*$/.test(value)) commitDraft(value);
+            else queueDraftCommit(value);
           }}
           onKeyDown={(event) => {
             if (slashMenuVisible) {
               if (event.key === "Escape") {
                 event.preventDefault();
-                setDismissedSlashDraft(draft);
+                setDismissedSlashDraft(draftValueRef.current);
                 return;
               }
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -2675,7 +3101,7 @@ export function ConversationWorkspace({
               range.collapse(true);
               selection.removeAllRanges();
               selection.addRange(range);
-              setDraft(serializeComposer(event.currentTarget));
+              commitDraft(serializeComposer(event.currentTarget));
               return;
             }
             event.preventDefault();

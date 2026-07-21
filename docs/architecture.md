@@ -2,45 +2,43 @@
 
 ## Boundary
 
-The WebView never talks to Pi or the local file system directly. The Tauri backend owns a bounded pool of local Pi RPC child processes and exposes a narrow command/event API to the frontend.
+The sandboxed Chromium renderer never talks to Pi or the local file system directly. A context-isolated preload exposes a
+small typed API, while the Electron main process owns the bounded pool of external Pi RPC processes and all privileged desktop
+operations.
 
 ```text
-React UI <-> Tauri command/event bridge <-> pi --mode rpc <-> provider/tools/session
+React renderer <-> preload IPC <-> Electron main <-> pi --mode rpc <-> provider/tools/session
 ```
 
-This keeps credential persistence, shell execution, and the Pi JSONL protocol outside the browser security boundary. API
-keys entered in the UI cross only the typed Tauri IPC command and are never retained in browser storage or sent through Pi RPC.
+API keys cross only the IPC boundary and are never retained in browser storage or sent through Pi RPC. IPC handlers validate
+arguments and workspace file operations reject paths outside the active project.
 
 ## Modules
 
-- `features/conversation`: timeline, streaming messages, tool cards, composer.
-- `features/sessions`: session list, active task selection, branching UI.
-- `components/layout`: application shell and navigation primitives.
-- `lib/desktop.ts`: frontend port backed by Tauri commands and events.
-- `src-tauri/src/agent`: process management, strict LF JSONL framing, request correlation, and event forwarding.
+- `src/features/conversation`: timeline, streaming messages, tool cards, composer.
+- `src/features/sessions`: session list, active task selection, branching UI.
+- `src/components/layout`: application shell, editor, preview and navigation.
+- `src/lib/desktop.ts`: process-free renderer port backed by the preload bridge.
+- `electron/preload.cjs`: the only API exposed to the renderer.
+- `electron/agent`: Pi process management, LF-delimited JSONL framing, request correlation and event forwarding.
+- `electron/files.ts`: workspace-scoped file operations, session discovery and preview server.
+- `electron/settings.ts` / `electron/resources.ts`: settings, providers, credentials, Skills and Extensions.
+- `skills`: bundled Skills copied to stable application data and loaded through Pi's public `--skill` option.
 
-## Repository layout
+## Pi independence
 
-Pi is not part of this repository. The desktop launcher resolves `AGENT_K_PI_EXECUTABLE` and otherwise invokes `pi` from `PATH`.
-The child process is treated as an external service implementing Pi's public JSONL RPC protocol.
+Pi is not part of this repository. The desktop launcher resolves `AGENT_K_PI_EXECUTABLE` and otherwise invokes `pi` from
+`PATH`. The child is treated as an external service implementing Pi's public JSONL RPC protocol. `.reference/pi/` is ignored
+and excluded from every build input.
 
-The root npm workspace owns the desktop app and bundled AgentK extensions. Rust dependencies remain locked by
-`src-tauri/Cargo.lock`. A local `.reference/pi/` clone is excluded from version control and every build input.
-
-## Compatibility
-
-Core prompting, sessions, models, commands, and extension UI use the upstream RPC contract. New features must not be
-implemented by patching Pi source in this repository.
-
-Features that Pi does not expose through public RPC live in the Tauri adapter:
+Features not directly represented by one RPC command remain compatibility logic in the Electron main process:
 
 - local image paths are validated and converted to standard RPC `images` payloads;
 - `session_changed` is synthesized after public session commands by reading public `get_state`;
-- provider cards combine public `get_available_models` results with non-secret metadata from Pi's documented config files;
-- simple API keys use Pi's documented `auth.json` schema and Unix files are written with mode `0600`;
-- OAuth and structured multi-field authentication run in the official interactive Pi CLI, in a native terminal on Linux
-  or Windows;
-- provider refresh replaces idle Pi child processes in place, preserving runtime IDs and selected sessions.
+- provider cards combine `get_available_models` with non-secret metadata from Pi's config files;
+- simple API keys use Pi's `auth.json` schema and Unix credential files use mode `0600`;
+- OAuth and structured authentication run through the official interactive Pi CLI;
+- resource refresh replaces idle Pi children concurrently while preserving runtime IDs and sessions.
 
-The compatibility catalog contains display names and supported authentication choices only. Pi remains authoritative for
-models, credentials, provider behavior, and session data.
+Pi remains authoritative for models, credentials, provider behavior and session data. New features must not depend on a
+patched Pi source tree.

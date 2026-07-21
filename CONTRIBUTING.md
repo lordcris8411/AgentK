@@ -5,9 +5,9 @@ patched Pi source tree.
 
 ```bash
 npm ci --ignore-scripts
+npm run check:desktop
 npm run check
 npm test
-npm run check:desktop
 ```
 
 Keep pull requests focused and document any minimum Pi version or optional RPC capability they require.

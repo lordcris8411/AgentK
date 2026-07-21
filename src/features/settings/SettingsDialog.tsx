@@ -1,21 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getVersion } from "@tauri-apps/api/app";
 import {
   desktop,
   type BrowserOption,
   type ProviderCatalogItem,
   type ProviderDraft,
+  type PiResource,
+  type PiResourceChange,
   type RuntimeInfo,
 } from "../../lib/desktop";
 import { useSettings } from "./SettingsContext";
+import { platform } from "../../lib/platform";
 
-type Page = "models" | "appearance" | "agentSettings" | "permissions" | "about";
+export type SettingsPage = "models" | "appearance" | "agentSettings" | "skills" | "extensions" | "permissions" | "about";
 
 let aboutDataPromise: Promise<[string, RuntimeInfo]> | undefined;
 let browserDataPromise: Promise<BrowserOption[]> | undefined;
 
 function loadAboutData() {
-  aboutDataPromise ??= Promise.all([getVersion(), desktop.runtimeInfo()]).catch(
+  aboutDataPromise ??= Promise.all([platform.appVersion(), desktop.runtimeInfo()]).catch(
     (error) => {
       aboutDataPromise = undefined;
       throw error;
@@ -35,14 +37,24 @@ function loadBrowserData() {
 export function SettingsDialog({
   open,
   onClose,
+  initialPage = "models",
+  cwd,
+  runtimeId,
   sessionId,
 }: {
   open: boolean;
-  onClose(): void;
+  onClose(changes: PiResourceChange[]): void;
+  initialPage?: SettingsPage;
+  cwd?: string;
+  runtimeId?: string;
   sessionId?: string;
 }) {
   const { settings, update, t } = useSettings();
-  const [page, setPage] = useState<Page>("models");
+  const [page, setPage] = useState<SettingsPage>(initialPage);
+  const [resources, setResources] = useState<PiResource[]>([]);
+  const [resourceChanges, setResourceChanges] = useState<PiResourceChange[]>([]);
+  const [resourcesLocked, setResourcesLocked] = useState(false);
+  const resourceBaselineRef = useRef(new Map<string, boolean>());
   const [providers, setProviders] = useState<ProviderCatalogItem[]>([]);
   const [models, setModels] = useState<Array<{ provider: string; id: string; name?: string }>>([]);
   const [state, setState] = useState<{ model?: { provider: string; id: string }; thinkingLevel?: string }>({});
@@ -129,6 +141,55 @@ export function SettingsDialog({
   };
   useEffect(() => {
     if (!open) return;
+    setPage(initialPage);
+    setResourceChanges([]);
+    resourceBaselineRef.current.clear();
+  }, [initialPage, open]);
+  useEffect(() => {
+    if (!open || (page !== "skills" && page !== "extensions") || !runtimeId || !cwd) return;
+    setBusy(true);
+    setError(undefined);
+    void desktop.piResources(cwd, runtimeId)
+      .then((found) => {
+        const pending = new Map(resourceChanges.map((change) => [
+          `${change.resource.kind}:${change.resource.path}`,
+          change.enabled,
+        ]));
+        for (const resource of found) {
+          const key = `${resource.kind}:${resource.path}`;
+          if (!resourceBaselineRef.current.has(key))
+            resourceBaselineRef.current.set(key, resource.enabled);
+        }
+        setResources(found.map((resource) => ({
+          ...resource,
+          enabled: pending.get(`${resource.kind}:${resource.path}`) ?? resource.enabled,
+        })));
+      })
+      .catch((cause) => setError(String(cause)))
+      .finally(() => setBusy(false));
+  }, [cwd, open, page, runtimeId]);
+  useEffect(() => {
+    if (!open || (page !== "skills" && page !== "extensions")) return;
+    let cancelled = false;
+    setResourcesLocked(true);
+    const refreshStatus = () => {
+      void desktop.workerPoolStatus()
+        .then((status) => {
+          if (!cancelled) setResourcesLocked(status.busy > 0);
+        })
+        .catch(() => {
+          if (!cancelled) setResourcesLocked(true);
+        });
+    };
+    refreshStatus();
+    const timer = window.setInterval(refreshStatus, 500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [open, page]);
+  useEffect(() => {
+    if (!open || page !== "models") return;
     // Let the dialog shell paint before asking Pi for model data. Reopening
     // within the cache window only refreshes the small runtime state payload.
     let timeout: number | undefined;
@@ -139,7 +200,7 @@ export function SettingsDialog({
       window.cancelAnimationFrame(frame);
       if (timeout !== undefined) window.clearTimeout(timeout);
     };
-  }, [open]);
+  }, [open, page]);
   useEffect(() => {
     if (!open || page !== "about") return;
     void loadAboutData()
@@ -169,14 +230,24 @@ export function SettingsDialog({
     }, 80);
     return () => window.clearTimeout(timeout);
   }, [open]);
+  const closeDialog = () => {
+    if (resourcesLocked && resourceChanges.length > 0) {
+      setError(t("resourcesLocked"));
+      return;
+    }
+    const changes = resourceChanges;
+    setResourceChanges([]);
+    resourceBaselineRef.current.clear();
+    onClose(changes);
+  };
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") closeDialog();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, open]);
+  }, [open, resourceChanges, resourcesLocked]);
   const modelValue = state.model ? `${state.model.provider}/${state.model.id}` : "";
   const sessionAllowed = Boolean(
     sessionId && sessionStorage.getItem(`agent-k-permission:${sessionId}`) === "allow",
@@ -286,19 +357,36 @@ export function SettingsDialog({
       setBusy(false);
     }
   };
+  const toggleResource = (resource: PiResource) => {
+    const key = `${resource.kind}:${resource.path}`;
+    const enabled = !resource.enabled;
+    setResources((current) => current.map((item) =>
+      item.kind === resource.kind && item.path === resource.path
+        ? { ...item, enabled }
+        : item,
+    ));
+    setResourceChanges((current) => {
+      const next = current.filter((change) =>
+        `${change.resource.kind}:${change.resource.path}` !== key,
+      );
+      if (resourceBaselineRef.current.get(key) !== enabled)
+        next.push({ resource, enabled });
+      return next;
+    });
+  };
 
   return (
-    <div className="settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && closeDialog()}>
       <section aria-label={t("settings")} aria-modal="true" className="settings-dialog" role="dialog">
         <header className="settings-header">
           <strong>{t("settings")}</strong>
-          <button aria-label={t("close")} className="settings-close" onClick={onClose} type="button">×</button>
+          <button aria-label={t("close")} className="settings-close" onClick={closeDialog} type="button">×</button>
         </header>
         <div className="settings-body">
           <nav className="settings-nav">
-            {(["models", "appearance", "agentSettings", "permissions", "about"] as Page[]).map((item) => (
+            {(["models", "appearance", "agentSettings", "skills", "extensions", "permissions", "about"] as SettingsPage[]).map((item) => (
               <button className={page === item ? "is-active" : ""} key={item} onClick={() => setPage(item)} type="button">
-                <i className={`fa-solid ${item === "models" ? "fa-microchip" : item === "appearance" ? "fa-circle-half-stroke" : item === "agentSettings" ? "fa-sliders" : item === "permissions" ? "fa-shield-halved" : "fa-circle-info"}`} />
+                <i className={`fa-solid ${item === "models" ? "fa-microchip" : item === "appearance" ? "fa-circle-half-stroke" : item === "agentSettings" ? "fa-sliders" : item === "skills" ? "fa-wand-magic-sparkles" : item === "extensions" ? "fa-puzzle-piece" : item === "permissions" ? "fa-shield-halved" : "fa-circle-info"}`} />
                 {t(item)}
               </button>
             ))}
@@ -379,6 +467,73 @@ export function SettingsDialog({
                 </div>
               </>
             )}
+            {(page === "skills" || page === "extensions") && (
+              <>
+                <div className="settings-title-row">
+                  <h2>{t(page)}</h2>
+                  <button
+                    disabled={busy || !runtimeId || resourcesLocked}
+                    onClick={() => {
+                      if (!runtimeId || !cwd) return;
+                      setBusy(true);
+                      void desktop.piResources(cwd, runtimeId)
+                        .then((found) => {
+                          const pending = new Map(resourceChanges.map((change) => [
+                            `${change.resource.kind}:${change.resource.path}`,
+                            change.enabled,
+                          ]));
+                          for (const resource of found) {
+                            const key = `${resource.kind}:${resource.path}`;
+                            if (!resourceBaselineRef.current.has(key))
+                              resourceBaselineRef.current.set(key, resource.enabled);
+                          }
+                          setResources(found.map((resource) => ({
+                            ...resource,
+                            enabled: pending.get(`${resource.kind}:${resource.path}`) ?? resource.enabled,
+                          })));
+                        })
+                        .catch((cause) => setError(String(cause)))
+                        .finally(() => setBusy(false));
+                    }}
+                    type="button"
+                  >
+                    <i className="fa-solid fa-rotate" /> {t("refresh")}
+                  </button>
+                </div>
+                <p className="settings-description">{t("resourceDescription")}</p>
+                {resourcesLocked && (
+                  <p className="resource-lock-notice" role="status">
+                    <i className="fa-solid fa-spinner fa-spin" /> {t("resourcesLocked")}
+                  </p>
+                )}
+                <div className="resource-list">
+                  {resources
+                    .filter((resource) => resource.kind === (page === "skills" ? "skill" : "extension"))
+                    .map((resource) => (
+                      <article className="resource-card" key={`${resource.kind}:${resource.path}`}>
+                        <div>
+                          <strong>{resource.name}</strong>
+                          <small>{resource.description || resource.path}</small>
+                          <span>{resource.scope === "project" ? t("projectScope") : t("userScope")} · {resource.origin === "package" ? resource.source : resource.path}</span>
+                        </div>
+                        <button
+                          aria-checked={resource.enabled}
+                          className={resource.enabled ? "resource-toggle is-active" : "resource-toggle"}
+                          disabled={!cwd || resourcesLocked}
+                          onClick={() => toggleResource(resource)}
+                          role="switch"
+                          type="button"
+                        >
+                          <span />
+                        </button>
+                      </article>
+                    ))}
+                  {!busy && resources.every((resource) => resource.kind !== (page === "skills" ? "skill" : "extension")) && (
+                    <p className="empty-settings">{t("noResources")}</p>
+                  )}
+                </div>
+              </>
+            )}
             {page === "models" && (
               <>
                 <div className="settings-title-row"><h2>{t("models")}</h2><button disabled={busy} onClick={() => void reloadProviders()} type="button"><i className="fa-solid fa-rotate" /> {t("refresh")}</button></div>
@@ -394,7 +549,7 @@ export function SettingsDialog({
               </>
             )}
             {page === "about" && (
-              <><div className="about-brand"><span className="brand-mark">K</span><div><h2>Agent K</h2><p>Visual desktop client for Pi</p></div></div><dl className="about-list"><div><dt>{t("appVersion")}</dt><dd>{version}</dd></div><div><dt>{t("piVersion")}</dt><dd>{runtimeInfo.piVersion}</dd></div><div><dt>{t("systemInfo")}</dt><dd>{runtimeInfo.operatingSystem} {runtimeInfo.architecture} · {navigator.userAgent.includes("WebView") ? "WebView2" : "WebView"}</dd></div></dl><div className="about-actions"><button onClick={() => void navigator.clipboard.writeText(`Agent K ${version}\nPi ${runtimeInfo.piVersion}\n${runtimeInfo.operatingSystem} ${runtimeInfo.architecture}\n${navigator.userAgent}`)} type="button"><i className="fa-regular fa-copy" /> {t("copyDiagnostics")}</button><button onClick={() => void desktop.openExternalUrl("https://github.com/earendil-works/pi", settings.browserId)} type="button"><i className="fa-solid fa-arrow-up-right-from-square" /> {t("projectHomepage")}</button></div></>
+              <><div className="about-brand"><span className="brand-mark">K</span><div><h2>Agent K</h2><p>Visual desktop client for Pi</p></div></div><dl className="about-list"><div><dt>{t("appVersion")}</dt><dd>{version}</dd></div><div><dt>{t("piVersion")}</dt><dd>{runtimeInfo.piVersion}</dd></div><div><dt>{t("systemInfo")}</dt><dd>{runtimeInfo.operatingSystem} {runtimeInfo.architecture} · Electron / Chromium</dd></div></dl><div className="about-actions"><button onClick={() => void navigator.clipboard.writeText(`Agent K ${version}\nPi ${runtimeInfo.piVersion}\n${runtimeInfo.operatingSystem} ${runtimeInfo.architecture}\n${navigator.userAgent}`)} type="button"><i className="fa-regular fa-copy" /> {t("copyDiagnostics")}</button><button onClick={() => void desktop.openExternalUrl("https://github.com/earendil-works/pi", settings.browserId)} type="button"><i className="fa-solid fa-arrow-up-right-from-square" /> {t("projectHomepage")}</button></div></>
             )}
           </main>
         </div>

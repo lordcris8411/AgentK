@@ -5,14 +5,20 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { LogicalSize } from "@tauri-apps/api/dpi";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Bell, PanelLeft, PanelRight, Trash2, X } from "lucide-react";
 import { useSettings } from "../../features/settings/SettingsContext";
 import {
   AnsiText,
   useExtensionUi,
 } from "../../features/extensions/ExtensionUiContext";
+import {
+  resumeResponsiveMonacoLayouts,
+  suspendResponsiveMonacoLayouts,
+} from "../../lib/responsiveMonaco";
+import {
+  desktopWindow,
+  type WindowResizeDirection,
+} from "../../lib/platform";
 
 interface AppShellProps {
   sidebar: ReactNode;
@@ -20,19 +26,22 @@ interface AppShellProps {
   children: ReactNode;
 }
 
+interface FrozenPanelContent {
+  contain: string;
+  element: HTMLElement;
+  flex: string;
+  height: string;
+  transform: string;
+  width: string;
+  willChange: string;
+}
+
 const LEFT_PANEL_MINIMUM = 240;
 const RIGHT_PANEL_MINIMUM = 420;
 const WORKSPACE_MINIMUM = 780;
 const RESIZERS_WIDTH = 12;
-type WindowResizeDirection =
-  | "East"
-  | "North"
-  | "NorthEast"
-  | "NorthWest"
-  | "South"
-  | "SouthEast"
-  | "SouthWest"
-  | "West";
+const PANEL_POINTER_INTERVAL_MS = 1000 / 60;
+const PANEL_TOGGLE_LAYOUT_DELAY_MS = 260;
 const WINDOW_RESIZE_DIRECTIONS: WindowResizeDirection[] = [
   "North",
   "NorthEast",
@@ -45,7 +54,7 @@ const WINDOW_RESIZE_DIRECTIONS: WindowResizeDirection[] = [
 ];
 
 export function AppShell({ sidebar, inspector, children }: AppShellProps) {
-  const appWindow = getCurrentWindow();
+  const appWindow = desktopWindow;
   const { ready, settings, t, update: updateSettings } = useSettings();
   const en = settings.locale === "en-US";
   const {
@@ -64,8 +73,6 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
   const [leftHidden, setLeftHidden] = useState(settings.leftPanelHidden);
   const [rightHidden, setRightHidden] = useState(settings.rightPanelHidden);
   const [windowMaximized, setWindowMaximized] = useState(false);
-  const frameRef = useRef<HTMLDivElement | null>(null);
-  const shellRef = useRef<HTMLElement | null>(null);
   const leftWidthRef = useRef(leftWidth);
   const rightWidthRef = useRef(rightWidth);
   const leftHiddenRef = useRef(leftHidden);
@@ -78,25 +85,60 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
   const restoringWindowRef = useRef(false);
   const restoreTimerRef = useRef<number | undefined>(undefined);
   const drag = useRef<"left" | "right" | undefined>(undefined);
+  const frameRef = useRef<HTMLDivElement | null>(null);
   const panelResizeFrame = useRef<number | undefined>(undefined);
   const panelCommitFrame = useRef<number | undefined>(undefined);
-  const frozenPanelContents = useRef<
-    Array<{
-      contain: string;
-      element: HTMLElement;
-      width: string;
-    }>
-  >([]);
-  const floatingWorkspaceElements = useRef<
-    Array<{
-      element: HTMLElement;
-      leftWidth: string;
-      rightWidth: string;
-    }>
-  >([]);
+  const panelToggleTimer = useRef<number | undefined>(undefined);
+  const frozenPanelContents = useRef<FrozenPanelContent[]>([]);
+  const panelPreviewRef = useRef<HTMLDivElement | null>(null);
+  const panelPreviewX = useRef(0);
+  const pendingPanelClientX = useRef<number | undefined>(undefined);
+  const panelArmMoveHandlerRef = useRef<(() => void) | undefined>(
+    undefined,
+  );
+  const panelStopHandlerRef = useRef<((event?: Event) => void) | undefined>(
+    undefined,
+  );
   leftHiddenRef.current = leftHidden;
   rightHiddenRef.current = rightHidden;
   updateSettingsRef.current = updateSettings;
+
+  const freezeHeavyPanelContents = () => {
+    if (frozenPanelContents.current.length) return;
+    const elements = frameRef.current?.querySelectorAll<HTMLElement>(
+      ".message-list",
+    );
+    frozenPanelContents.current = Array.from(elements ?? [], (element) => {
+      const bounds = element.getBoundingClientRect();
+      const frozen = {
+        contain: element.style.contain,
+        element,
+        flex: element.style.flex,
+        height: element.style.height,
+        transform: element.style.transform,
+        width: element.style.width,
+        willChange: element.style.willChange,
+      };
+      element.style.contain = "strict";
+      element.style.flex = `0 0 ${bounds.height}px`;
+      element.style.height = `${bounds.height}px`;
+      element.style.width = `${bounds.width}px`;
+      element.style.transform = "translate3d(0, 0, 0)";
+      element.style.willChange = "transform";
+      return frozen;
+    });
+  };
+  const releaseHeavyPanelContents = () => {
+    for (const frozen of frozenPanelContents.current) {
+      frozen.element.style.contain = frozen.contain;
+      frozen.element.style.flex = frozen.flex;
+      frozen.element.style.height = frozen.height;
+      frozen.element.style.transform = frozen.transform;
+      frozen.element.style.width = frozen.width;
+      frozen.element.style.willChange = frozen.willChange;
+    }
+    frozenPanelContents.current = [];
+  };
 
   useEffect(() => {
     if (!ready || restoredLayoutRef.current) return;
@@ -115,7 +157,7 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
     setRightHidden(settings.rightPanelHidden);
 
     void appWindow
-      .setSize(new LogicalSize(settings.windowWidth, settings.windowHeight))
+      .setSize({ width: settings.windowWidth, height: settings.windowHeight })
       .then(async () => {
         if (settings.windowMaximized) await appWindow.maximize();
         else if (await appWindow.isMaximized()) await appWindow.unmaximize();
@@ -230,73 +272,105 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
     return () => window.removeEventListener("contextmenu", suppressContextMenu);
   }, []);
   useEffect(() => {
-    const applyPanelWidths = () => {
-      panelResizeFrame.current = undefined;
+    let panelMoveTimer: number | undefined;
+    let panelMoveListenerArmed = false;
+    const detachPanelListeners = () => {
+      if (panelMoveTimer !== undefined) {
+        window.clearTimeout(panelMoveTimer);
+        panelMoveTimer = undefined;
+      }
+      window.removeEventListener("mousemove", move);
+      panelMoveListenerArmed = false;
+      if (panelStopHandlerRef.current) {
+        window.removeEventListener("mouseup", panelStopHandlerRef.current);
+        window.removeEventListener("blur", panelStopHandlerRef.current);
+      }
+    };
+    const writePanelLayout = () => {
       const left = leftHiddenRef.current ? "0px" : `${leftWidthRef.current}px`;
       const right = rightHiddenRef.current ? "0px" : `${rightWidthRef.current}px`;
-      if (shellRef.current) {
-        shellRef.current.style.gridTemplateColumns = `${left} 6px minmax(${WORKSPACE_MINIMUM}px, 1fr) 6px ${right}`;
-      }
-      for (const { element } of floatingWorkspaceElements.current) {
-        element.style.setProperty("--left-panel-width", left);
-        element.style.setProperty("--right-panel-width", right);
-      }
+      document.documentElement.style.setProperty("--left-panel-width", left);
+      document.documentElement.style.setProperty("--right-panel-width", right);
+      frameRef.current?.style.setProperty("--left-panel-width", left);
+      frameRef.current?.style.setProperty("--right-panel-width", right);
+      if (panelPreviewRef.current)
+        panelPreviewRef.current.style.transform = `translate3d(${panelPreviewX.current}px, 0, 0)`;
     };
-    const releaseFrozenPanelContents = () => {
-      for (const { contain, element, width } of frozenPanelContents.current) {
-        element.style.contain = contain;
-        element.style.width = width;
-      }
-      frozenPanelContents.current = [];
-      for (const {
-        element,
-        leftWidth,
-        rightWidth,
-      } of floatingWorkspaceElements.current) {
-        element.style.setProperty("--left-panel-width", leftWidth);
-        element.style.setProperty("--right-panel-width", rightWidth);
-      }
-      floatingWorkspaceElements.current = [];
-      shellRef.current?.style.removeProperty("grid-template-columns");
-      // Keep the placeholder visible until the final React width has been
-      // committed and the frozen panel contents are ready to lay out again.
+    const finishPanelCommit = () => {
       document.body.classList.remove("is-resizing-panels");
+      releaseHeavyPanelContents();
+      resumeResponsiveMonacoLayouts();
       panelCommitFrame.current = undefined;
     };
-    const schedulePanelWidths = () => {
-      if (panelResizeFrame.current !== undefined) return;
-      panelResizeFrame.current = requestAnimationFrame(applyPanelWidths);
-    };
-    const move = (event: MouseEvent) => {
+    const updateDragPosition = (clientX: number) => {
       if (!drag.current) return;
       if (drag.current === "left") {
         const nextLeft = Math.max(
           LEFT_PANEL_MINIMUM,
           Math.min(
             window.innerWidth - (rightHiddenRef.current ? 0 : rightWidthRef.current) - WORKSPACE_MINIMUM - RESIZERS_WIDTH,
-            event.clientX,
+            clientX,
           ),
         );
         leftWidthRef.current = nextLeft;
         leftRatioRef.current = nextLeft / window.innerWidth;
+        panelPreviewX.current = nextLeft;
       } else {
         const nextRight = Math.max(
           RIGHT_PANEL_MINIMUM,
           Math.min(
             window.innerWidth - (leftHiddenRef.current ? 0 : leftWidthRef.current) - WORKSPACE_MINIMUM - RESIZERS_WIDTH,
-            window.innerWidth - event.clientX,
+            window.innerWidth - clientX,
           ),
         );
         rightWidthRef.current = nextRight;
         rightRatioRef.current = nextRight / window.innerWidth;
+        panelPreviewX.current = window.innerWidth - nextRight;
       }
-      schedulePanelWidths();
     };
-    const stop = () => {
+    const applyPanelLayout = () => {
+      panelResizeFrame.current = undefined;
+      const clientX = pendingPanelClientX.current;
+      pendingPanelClientX.current = undefined;
+      if (clientX === undefined || !drag.current) return;
+      updateDragPosition(clientX);
+      writePanelLayout();
+    };
+    const schedulePanelLayout = () => {
+      if (panelResizeFrame.current !== undefined) return;
+      panelResizeFrame.current = requestAnimationFrame(applyPanelLayout);
+    };
+    function armPanelMoveListener() {
+      if (!drag.current || panelMoveListenerArmed) return;
+      panelMoveListenerArmed = true;
+      window.addEventListener("mousemove", move, { once: true });
+    }
+    function move(event: MouseEvent) {
+      panelMoveListenerArmed = false;
       if (!drag.current) return;
+      pendingPanelClientX.current = event.clientX;
+      schedulePanelLayout();
+      // Keep the listener detached between samples. A 1000 Hz mouse can then
+      // invoke the renderer at most once per 16.7 ms instead of once for every
+      // hardware report.
+      panelMoveTimer = window.setTimeout(() => {
+        panelMoveTimer = undefined;
+        armPanelMoveListener();
+      }, PANEL_POINTER_INTERVAL_MS);
+    }
+    const stop = (event?: Event) => {
+      detachPanelListeners();
+      if (!drag.current) return;
+      if (event instanceof MouseEvent && event.type === "mouseup")
+        pendingPanelClientX.current = event.clientX;
       if (panelResizeFrame.current !== undefined) {
         cancelAnimationFrame(panelResizeFrame.current);
-        applyPanelWidths();
+        panelResizeFrame.current = undefined;
+      }
+      if (pendingPanelClientX.current !== undefined) {
+        updateDragPosition(pendingPanelClientX.current);
+        pendingPanelClientX.current = undefined;
+        writePanelLayout();
       }
       drag.current = undefined;
       setLeftWidth(leftWidthRef.current);
@@ -312,27 +386,28 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
       if (panelCommitFrame.current !== undefined) {
         cancelAnimationFrame(panelCommitFrame.current);
       }
-      // React commits the final CSS variables before the next frame. Keep the
-      // concrete grid tracks and frozen child widths until then so releasing
-      // the pointer cannot briefly jump back to the previous dimensions.
-      panelCommitFrame.current = requestAnimationFrame(releaseFrozenPanelContents);
+      // Keep grid transitions disabled until React has committed the final
+      // width, so releasing the pointer cannot animate from a stale value.
+      panelCommitFrame.current = requestAnimationFrame(finishPanelCommit);
     };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", stop);
-    window.addEventListener("blur", stop);
+    panelArmMoveHandlerRef.current = armPanelMoveListener;
+    panelStopHandlerRef.current = stop;
     return () => {
+      detachPanelListeners();
       if (panelResizeFrame.current !== undefined)
         cancelAnimationFrame(panelResizeFrame.current);
       if (panelCommitFrame.current !== undefined)
         cancelAnimationFrame(panelCommitFrame.current);
+      if (panelToggleTimer.current !== undefined)
+        window.clearTimeout(panelToggleTimer.current);
       if (restoreTimerRef.current !== undefined)
         window.clearTimeout(restoreTimerRef.current);
-      releaseFrozenPanelContents();
+      finishPanelCommit();
+      releaseHeavyPanelContents();
       document.body.classList.remove("is-resizing");
       document.body.classList.remove("is-resizing-panels");
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", stop);
-      window.removeEventListener("blur", stop);
+      panelArmMoveHandlerRef.current = undefined;
+      panelStopHandlerRef.current = undefined;
     };
   }, []);
   const startDrag =
@@ -344,38 +419,21 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
         cancelAnimationFrame(panelCommitFrame.current);
         panelCommitFrame.current = undefined;
       }
-      const panelContents = frameRef.current?.querySelectorAll<HTMLElement>(
-        ".app-sidebar > *, .workspace-surface, .app-inspector-slot > *",
-      );
-      frozenPanelContents.current = Array.from(panelContents ?? [], (element) => {
-        const frozen = {
-          contain: element.style.contain,
-          element,
-          width: element.style.width,
-        };
-        element.style.width = `${element.getBoundingClientRect().width}px`;
-        // layout/paint containment creates a containing block for fixed
-        // descendants. The composer lives inside workspace-surface but is
-        // positioned against the viewport, so strict containment would shift
-        // and clip it while dragging a panel. Size containment still freezes
-        // the expensive conversation layout without changing that coordinate
-        // system.
-        element.style.contain = element.matches(".workspace-surface")
-          ? "size style"
-          : "strict";
-        return frozen;
-      });
-      const floatingElements = frameRef.current?.querySelectorAll<HTMLElement>(
-        ".composer, .extension-dialog-backdrop.is-select .extension-dialog.is-select",
-      );
-      floatingWorkspaceElements.current = Array.from(
-        floatingElements ?? [],
-        (element) => ({
-          element,
-          leftWidth: element.style.getPropertyValue("--left-panel-width"),
-          rightWidth: element.style.getPropertyValue("--right-panel-width"),
-        }),
-      );
+      if (panelToggleTimer.current !== undefined) {
+        window.clearTimeout(panelToggleTimer.current);
+        panelToggleTimer.current = undefined;
+      }
+      pendingPanelClientX.current = event.clientX;
+      freezeHeavyPanelContents();
+      suspendResponsiveMonacoLayouts();
+      panelPreviewX.current = event.clientX;
+      if (panelPreviewRef.current)
+        panelPreviewRef.current.style.transform = `translate3d(${event.clientX}px, 0, 0)`;
+      panelArmMoveHandlerRef.current?.();
+      if (panelStopHandlerRef.current) {
+        window.addEventListener("mouseup", panelStopHandlerRef.current);
+        window.addEventListener("blur", panelStopHandlerRef.current);
+      }
       document.body.classList.add("is-resizing");
       document.body.classList.add("is-resizing-panels");
     };
@@ -388,18 +446,30 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
       setWindowMaximized(true);
     }
   };
+  const suspendMonacoForPanelToggle = () => {
+    freezeHeavyPanelContents();
+    suspendResponsiveMonacoLayouts();
+    if (panelToggleTimer.current !== undefined)
+      window.clearTimeout(panelToggleTimer.current);
+    panelToggleTimer.current = window.setTimeout(() => {
+      panelToggleTimer.current = undefined;
+      if (!drag.current) {
+        releaseHeavyPanelContents();
+        resumeResponsiveMonacoLayouts();
+      }
+    }, PANEL_TOGGLE_LAYOUT_DELAY_MS);
+  };
   const toggleLeftPanel = () => {
+    suspendMonacoForPanelToggle();
     const hidden = !leftHidden;
     setLeftHidden(hidden);
     void updateSettingsRef.current({ leftPanelHidden: hidden }).catch(() => undefined);
   };
   const toggleRightPanel = () => {
+    suspendMonacoForPanelToggle();
     const hidden = !rightHidden;
     setRightHidden(hidden);
     void updateSettingsRef.current({ rightPanelHidden: hidden }).catch(() => undefined);
-  };
-  const dragWindow = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (event.button === 0) void appWindow.startDragging();
   };
   const resizeWindow =
     (direction: WindowResizeDirection) =>
@@ -407,7 +477,30 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
       if (event.button !== 0 || windowMaximized) return;
       event.preventDefault();
       event.stopPropagation();
-      void appWindow.startResizeDragging(direction).catch(() => undefined);
+      let frame: number | undefined;
+      let pending = { x: event.screenX, y: event.screenY };
+      const flush = () => {
+        frame = undefined;
+        void appWindow.updateResize(pending.x, pending.y).catch(() => undefined);
+      };
+      const move = (moveEvent: MouseEvent) => {
+        pending = { x: moveEvent.screenX, y: moveEvent.screenY };
+        if (frame === undefined) frame = requestAnimationFrame(flush);
+      };
+      const stop = (stopEvent: MouseEvent) => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", stop);
+        if (frame !== undefined) cancelAnimationFrame(frame);
+        void appWindow
+          .updateResize(stopEvent.screenX, stopEvent.screenY)
+          .finally(() => appWindow.endResize())
+          .catch(() => undefined);
+      };
+      void appWindow
+        .beginResize(direction, event.screenX, event.screenY)
+        .catch(() => undefined);
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", stop);
     };
   const layoutStyle = {
     "--left-panel-width": leftHidden ? "0px" : `${leftWidth}px`,
@@ -427,12 +520,12 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
           onMouseDown={resizeWindow(direction)}
         />
       ))}
+      <div aria-hidden="true" className="panel-resize-preview" ref={panelPreviewRef} />
       <header className="window-titlebar">
         <div
           aria-label={en ? "Drag window" : "拖动窗口"}
           className="window-drag-region"
           onDoubleClick={() => void toggleMaximize()}
-          onMouseDown={dragWindow}
         />
         <div className="window-controls">
           <button
@@ -459,7 +552,7 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
           </button>
         </div>
       </header>
-      <main className="app-shell" ref={shellRef}>
+      <main className="app-shell">
         <aside className={leftHidden ? "app-sidebar is-hidden" : "app-sidebar"}>{sidebar}</aside>
         <div
           aria-label={en ? "Resize left sidebar" : "调整左侧栏宽度"}

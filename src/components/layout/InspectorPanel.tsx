@@ -1,5 +1,4 @@
 import Editor from "@monaco-editor/react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { editor as MonacoEditor } from "monaco-editor";
 import ReactMarkdown from "react-markdown";
 import { createPortal } from "react-dom";
@@ -16,6 +15,8 @@ import {
 } from "react";
 import { desktop, type FileEntry } from "../../lib/desktop";
 import { applyAgentKTheme, defineAgentKTheme } from "../../lib/monacoTheme";
+import { registerResponsiveMonacoEditor } from "../../lib/responsiveMonaco";
+import { platform } from "../../lib/platform";
 import { MediaPreview, type PreviewKind } from "./MediaPreview";
 import {
   ReviewPanel,
@@ -1323,41 +1324,43 @@ export function InspectorPanel({
   };
   useEffect(() => {
     if (!root) return;
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
     const directoryAt = (position: { x: number; y: number }) => {
-      const scale = window.devicePixelRatio || 1;
       const element = document.elementFromPoint(
-        position.x / scale,
-        position.y / scale,
+        position.x,
+        position.y,
       );
       const directory = element?.closest<HTMLElement>("[data-directory-path]");
       if (directory) return directory.dataset.directoryPath ?? "";
       return element?.closest(".file-explorer") ? "" : null;
     };
-    void getCurrentWebview()
-      .onDragDropEvent((event) => {
-        if (disposed) return;
-        if (event.payload.type === "leave") {
-          setDropTarget(null);
-          return;
-        }
-        const target = directoryAt(event.payload.position);
-        setDropTarget(target);
-        if (event.payload.type !== "drop" || target === null) return;
-        setDropTarget(null);
-        void desktop
-          .importPaths(root, target, event.payload.paths)
-          .then(() => refresh(false))
-          .catch((cause) => onError(`复制外部文件失败：${String(cause)}`));
-      })
-      .then((dispose) => {
-        if (disposed) dispose();
-        else unlisten = dispose;
-      });
+    const dragOver = (event: DragEvent) => {
+      if (!event.dataTransfer?.types.includes("Files")) return;
+      event.preventDefault();
+      setDropTarget(directoryAt({ x: event.clientX, y: event.clientY }));
+    };
+    const dragLeave = (event: DragEvent) => {
+      if (!event.relatedTarget) setDropTarget(null);
+    };
+    const drop = (event: DragEvent) => {
+      const target = directoryAt({ x: event.clientX, y: event.clientY });
+      if (target === null || !event.dataTransfer?.files.length) return;
+      event.preventDefault();
+      setDropTarget(null);
+      const paths = Array.from(event.dataTransfer.files)
+        .map(platform.pathForFile)
+        .filter(Boolean);
+      void desktop
+        .importPaths(root, target, paths)
+        .then(() => refresh(false))
+        .catch((cause) => onError(`复制外部文件失败：${String(cause)}`));
+    };
+    window.addEventListener("dragover", dragOver);
+    window.addEventListener("dragleave", dragLeave);
+    window.addEventListener("drop", drop);
     return () => {
-      disposed = true;
-      unlisten?.();
+      window.removeEventListener("dragover", dragOver);
+      window.removeEventListener("dragleave", dragLeave);
+      window.removeEventListener("drop", drop);
     };
   }, [root]);
   if (review)
@@ -1680,6 +1683,8 @@ export function InspectorPanel({
                 onChange={(value) => update(value ?? "")}
                 onMount={(editor, monaco) => {
                   editorRef.current = editor;
+                  const unregisterResponsiveLayout =
+                    registerResponsiveMonacoEditor(editor);
                   applyAgentKTheme(editor, monaco);
                   editor.onContextMenu((event) => {
                     editorContextMenuLine.current = event.target.position?.lineNumber;
@@ -1706,14 +1711,16 @@ export function InspectorPanel({
                     },
                   });
                   editor.onDidDispose(() => {
+                    unregisterResponsiveLayout();
                     if (editorRef.current === editor) editorRef.current = null;
                   });
                   requestAnimationFrame(() => restoreEditorView(current.path, editor));
                 }}
                 options={{
+                  automaticLayout: false,
                   inertialScroll: true,
                   minimap: { enabled: false },
-                  mouseWheelScrollSensitivity: 0.72,
+                  mouseWheelScrollSensitivity: 1.5,
                   scrollbar: {
                     alwaysConsumeMouseWheel: false,
                     handleMouseWheel: true,

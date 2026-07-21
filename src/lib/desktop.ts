@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+const invoke = <T>(command: string, args: Record<string, unknown> = {}) =>
+  window.agentK.invoke<T>(command, args);
 
 export type SessionSummary = {
   id: string;
@@ -58,6 +58,23 @@ export type RuntimeInfo = {
   architecture: string;
 };
 
+export type PiResource = {
+  kind: "skill" | "extension";
+  name: string;
+  description?: string;
+  path: string;
+  source: string;
+  scope: "user" | "project";
+  origin: "top-level" | "package";
+  baseDir?: string;
+  enabled: boolean;
+};
+
+export type PiResourceChange = {
+  resource: PiResource;
+  enabled: boolean;
+};
+
 export type ProviderCatalogItem = {
   id: string;
   name: string;
@@ -107,6 +124,12 @@ export const desktop = {
   openProviderLogin: (providerId: string) =>
     invoke<void>("open_provider_login", { providerId }),
   reloadPiRuntimes: () => invoke<void>("reload_pi_runtimes"),
+  piResources: (cwd: string, runtimeId?: string) =>
+    invoke<PiResource[]>("get_pi_resources", { cwd, runtimeId }),
+  applyPiResourceChanges: (
+    cwd: string,
+    changes: PiResourceChange[],
+  ) => invoke<void>("apply_pi_resource_changes", { cwd, changes }),
   detectLocalService: (baseUrl: string) =>
     invoke<LocalServiceInfo>("detect_local_service", { baseUrl }),
   discoverModels: (baseUrl: string, ollama = false) =>
@@ -182,7 +205,5 @@ export const desktop = {
   search: (root: string, query: string) =>
     invoke<string[]>("search_files", { root, query }),
   onEvent: (listener: (event: Record<string, unknown>) => void) =>
-    listen<Record<string, unknown>>("pi-rpc-event", ({ payload }) =>
-      listener(payload),
-    ),
+    Promise.resolve(window.agentK.onPiEvent(listener)),
 };

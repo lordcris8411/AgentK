@@ -9,23 +9,18 @@ if errorlevel 1 (
   exit /b 1
 )
 
-where cargo >nul 2>nul
-if errorlevel 1 if exist "%USERPROFILE%\.cargo\bin\cargo.exe" (
-  set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
-)
-
-where cargo >nul 2>nul
-if errorlevel 1 (
-  echo Error: cargo was not found. Install the Rust stable MSVC toolchain with rustup.
-  exit /b 1
-)
-
-if not exist "node_modules\.bin\tauri.cmd" (
+if not exist "node_modules\.bin\electron.cmd" (
   echo Installing npm dependencies...
   call npm ci --ignore-scripts
   if errorlevel 1 exit /b 1
 )
 
-echo Starting AgentK in Windows development mode...
-call npm run tauri -- dev %*
+if not exist "node_modules\electron\dist\electron.exe" (
+  echo Installing the reviewed Electron runtime...
+  node node_modules\electron\install.js
+  if errorlevel 1 exit /b 1
+)
+
+echo Starting Agent K in Electron development mode...
+call npm run dev -- %*
 exit /b %errorlevel%

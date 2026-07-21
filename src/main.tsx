@@ -17,15 +17,6 @@ if (!rootElement) {
   throw new Error("Application root was not found");
 }
 
-// WebKitGTK pays a noticeably higher price than WebView2 for backdrop filters
-// and layout animations. Expose the host platform to CSS so Linux can use a
-// visually equivalent, less compositing-heavy profile.
-const platform = navigator.userAgent.includes("Linux")
-  ? "linux"
-  : navigator.userAgent.includes("Windows")
-    ? "windows"
-    : "other";
-document.documentElement.dataset.platform = platform;
 installDampedWheelScrolling();
 
 createRoot(rootElement).render(

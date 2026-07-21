@@ -1,0 +1,294 @@
+import { existsSync } from "node:fs";
+import { mkdir, readFile, readdir } from "node:fs/promises";
+import { basename, extname, join, parse, relative, resolve } from "node:path";
+import type { RpcPool } from "./agent/pool.js";
+import type { JsonObject, PiResource, PiResourceChange } from "./types.js";
+import {
+  asArray,
+  asObject,
+  asString,
+  atomicWrite,
+  homeDirectory,
+  piAgentDirectory,
+  readJson,
+} from "./utils.js";
+
+function resourceName(path: string, kind: PiResource["kind"]): string {
+  if (kind === "skill" && basename(path) === "SKILL.md")
+    return basename(resolve(path, "..")) || "skill";
+  return parse(path).name || kind;
+}
+
+function resourcesFromCommands(value: unknown): PiResource[] {
+  const resources: PiResource[] = [];
+  for (const raw of asArray(asObject(value).commands)) {
+    const command = asObject(raw);
+    const kind = asString(command.source);
+    if (kind !== "skill" && kind !== "extension") continue;
+    const info = asObject(command.sourceInfo);
+    const path = asString(info.path);
+    if (!path) continue;
+    const existing = resources.find(
+      (resource) => resource.kind === kind && resource.path === path,
+    );
+    if (existing) {
+      if (!existing.description && typeof command.description === "string")
+        existing.description = command.description;
+      continue;
+    }
+    resources.push({
+      kind,
+      name: resourceName(path, kind),
+      ...(typeof command.description === "string"
+        ? { description: command.description }
+        : {}),
+      path,
+      source: asString(info.source) ?? path,
+      scope: info.scope === "project" ? "project" : "user",
+      origin: info.origin === "package" ? "package" : "top-level",
+      ...(typeof info.baseDir === "string" ? { baseDir: info.baseDir } : {}),
+      enabled: true,
+    });
+  }
+  return resources;
+}
+
+function addDiscovered(
+  resources: PiResource[],
+  kind: PiResource["kind"],
+  path: string,
+  scope: PiResource["scope"],
+  baseDir: string,
+): void {
+  if (resources.some((item) => item.kind === kind && item.path === path)) return;
+  resources.push({
+    kind,
+    name: resourceName(path, kind),
+    path,
+    source: "auto",
+    scope,
+    origin: "top-level",
+    baseDir,
+    enabled: true,
+  });
+}
+
+async function discoverSkills(
+  resources: PiResource[],
+  directory: string,
+  scope: PiResource["scope"],
+  baseDir: string,
+  allowRootMarkdown: boolean,
+): Promise<void> {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const skillFile = join(directory, "SKILL.md");
+  if (existsSync(skillFile)) {
+    addDiscovered(resources, "skill", skillFile, scope, baseDir);
+    return;
+  }
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (entry.name.startsWith(".") || entry.name === "node_modules") return;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory())
+        await discoverSkills(resources, path, scope, baseDir, false);
+      else if (allowRootMarkdown && extname(entry.name) === ".md")
+        addDiscovered(resources, "skill", path, scope, baseDir);
+    }),
+  );
+}
+
+async function extensionEntries(directory: string): Promise<string[]> {
+  try {
+    const manifest = asObject(
+      JSON.parse(await readFile(join(directory, "package.json"), "utf8")),
+    );
+    const entries = asArray(asObject(manifest.pi).extensions)
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => join(directory, value))
+      .filter(existsSync);
+    if (entries.length) return entries;
+  } catch {
+    // Fall back to conventional entry points.
+  }
+  return ["index.ts", "index.js"]
+    .map((name) => join(directory, name))
+    .filter(existsSync);
+}
+
+async function discoverExtensions(
+  resources: PiResource[],
+  directory: string,
+  scope: PiResource["scope"],
+  baseDir: string,
+): Promise<void> {
+  const rootEntries = await extensionEntries(directory);
+  if (rootEntries.length) {
+    rootEntries.forEach((path) =>
+      addDiscovered(resources, "extension", path, scope, baseDir),
+    );
+    return;
+  }
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    const path = join(directory, entry.name);
+    if (entry.isFile() && [".ts", ".js"].includes(extname(entry.name)))
+      addDiscovered(resources, "extension", path, scope, baseDir);
+    else if (entry.isDirectory())
+      for (const extension of await extensionEntries(path))
+        addDiscovered(resources, "extension", extension, scope, baseDir);
+  }
+}
+
+async function discoverTopLevel(resources: PiResource[], cwd: string): Promise<void> {
+  const userBase = piAgentDirectory();
+  await Promise.all([
+    discoverExtensions(resources, join(userBase, "extensions"), "user", userBase),
+    discoverSkills(resources, join(userBase, "skills"), "user", userBase, true),
+    discoverSkills(
+      resources,
+      join(homeDirectory(), ".agents", "skills"),
+      "user",
+      join(homeDirectory(), ".agents"),
+      false,
+    ),
+    discoverExtensions(resources, join(cwd, ".pi", "extensions"), "project", join(cwd, ".pi")),
+    discoverSkills(resources, join(cwd, ".pi", "skills"), "project", join(cwd, ".pi"), true),
+    discoverSkills(resources, join(cwd, ".agents", "skills"), "project", join(cwd, ".agents"), false),
+  ]);
+}
+
+export async function getPiResources(
+  appDataPath: string,
+  pool: RpcPool,
+  cwd: string,
+  bundledSkillsDirectory: string,
+  runtimeId?: string,
+): Promise<PiResource[]> {
+  const active = resourcesFromCommands(
+    await pool.command({ type: "get_commands" }, runtimeId),
+  );
+  const loaded = new Set(active.map((resource) => `${resource.kind}\0${resource.path}`));
+  await discoverTopLevel(active, cwd);
+  await discoverSkills(
+    active,
+    bundledSkillsDirectory,
+    "user",
+    bundledSkillsDirectory,
+    false,
+  );
+  const registryPath = join(appDataPath, "pi-resources.json");
+  const registry = await readJson<PiResource[]>(registryPath, []);
+  for (const resource of active) {
+    const index = registry.findIndex(
+      (item) => item.kind === resource.kind && item.path === resource.path,
+    );
+    if (index >= 0) {
+      const previous = registry[index];
+      registry[index] = {
+        ...resource,
+        enabled:
+          loaded.has(`${resource.kind}\0${resource.path}`) ||
+          previous?.enabled !== false,
+      };
+    } else registry.push(resource);
+  }
+  registry.sort(
+    (left, right) =>
+      left.kind.localeCompare(right.kind) ||
+      left.name.localeCompare(right.name, undefined, { sensitivity: "base" }),
+  );
+  await atomicWrite(registryPath, JSON.stringify(registry, null, 2));
+  return registry;
+}
+
+function updateFilterList(list: unknown[], path: string, enabled: boolean): void {
+  const include = `+${path}`;
+  const exclude = `-${path}`;
+  const kept = list.filter((entry) => entry !== include && entry !== exclude);
+  list.splice(0, list.length, ...kept, enabled ? include : exclude);
+}
+
+async function updateResourceFilter(
+  resource: PiResource,
+  cwd: string,
+  enabled: boolean,
+): Promise<void> {
+  const settingsPath =
+    resource.scope === "project"
+      ? join(cwd, ".pi", "settings.json")
+      : join(piAgentDirectory(), "settings.json");
+  await mkdir(resolve(settingsPath, ".."), { recursive: true });
+  const settings = await readJson<JsonObject>(settingsPath, {});
+  const key = resource.kind === "skill" ? "skills" : "extensions";
+  if (resource.origin === "package") {
+    if (!resource.baseDir) throw new Error("Package resource is missing its base directory");
+    const resourcePath = relative(resource.baseDir, resource.path).replaceAll("\\", "/");
+    const packages = Array.isArray(settings.packages) ? settings.packages : [];
+    let index = packages.findIndex((entry) =>
+      typeof entry === "string"
+        ? entry === resource.source
+        : asString(asObject(entry).source) === resource.source,
+    );
+    if (index < 0) {
+      packages.push({ source: resource.source });
+      index = packages.length - 1;
+    } else if (typeof packages[index] === "string") {
+      packages[index] = { source: resource.source };
+    }
+    const packageSettings = asObject(packages[index]);
+    const list = Array.isArray(packageSettings[key]) ? packageSettings[key] as unknown[] : [];
+    updateFilterList(list, resourcePath, enabled);
+    packageSettings[key] = list;
+    packages[index] = packageSettings;
+    settings.packages = packages;
+  } else {
+    const list = Array.isArray(settings[key]) ? settings[key] as unknown[] : [];
+    updateFilterList(list, resource.path.replaceAll("\\", "/"), enabled);
+    settings[key] = list;
+  }
+  await atomicWrite(settingsPath, JSON.stringify(settings, null, 2));
+}
+
+export async function applyPiResourceChanges(
+  appDataPath: string,
+  pool: RpcPool,
+  cwd: string,
+  changes: PiResourceChange[],
+): Promise<void> {
+  if (!changes.length) return;
+  for (const change of changes) {
+    const resource = change.resource;
+    if (
+      !["skill", "extension"].includes(resource.kind) ||
+      !["user", "project"].includes(resource.scope) ||
+      !["top-level", "package"].includes(resource.origin) ||
+      !resource.path.trim()
+    ) throw new Error("Invalid Pi resource");
+  }
+  const registryPath = join(appDataPath, "pi-resources.json");
+  const registry = await readJson<PiResource[]>(registryPath, []);
+  for (const change of changes) {
+    await updateResourceFilter(change.resource, cwd, change.enabled);
+    const next = { ...change.resource, enabled: change.enabled };
+    const index = registry.findIndex(
+      (item) => item.kind === next.kind && item.path === next.path,
+    );
+    if (index >= 0) registry[index] = next;
+    else registry.push(next);
+  }
+  await atomicWrite(registryPath, JSON.stringify(registry, null, 2));
+  const onlyProject = changes.every((change) => change.resource.scope === "project");
+  await pool.reload(onlyProject ? cwd : undefined);
+}

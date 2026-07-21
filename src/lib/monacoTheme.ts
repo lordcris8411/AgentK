@@ -8,9 +8,10 @@ export function defineAgentKTheme(monaco: typeof Monaco) {
     colors: {
       "editor.background": "#F6F4F1",
       "editorGutter.background": "#F6F4F1",
-      "editor.lineHighlightBackground": "#ECE8E3",
-      "editor.selectionBackground": "#E5E0D9",
-      "editor.inactiveSelectionBackground": "#EEEAE5",
+      "editor.lineHighlightBackground": "#EDF4FC",
+      "editor.selectionBackground": "#B6D7FF",
+      "editor.inactiveSelectionBackground": "#DBEAFE",
+      "editor.selectionHighlightBackground": "#D7E9FF99",
     },
   });
   monaco.editor.defineTheme("agent-k-dark", {
@@ -20,9 +21,10 @@ export function defineAgentKTheme(monaco: typeof Monaco) {
     colors: {
       "editor.background": "#252422",
       "editorGutter.background": "#252422",
-      "editor.lineHighlightBackground": "#353330",
-      "editor.selectionBackground": "#504B45",
-      "editor.inactiveSelectionBackground": "#403D39",
+      "editor.lineHighlightBackground": "#272F3A",
+      "editor.selectionBackground": "#264F78",
+      "editor.inactiveSelectionBackground": "#20364D",
+      "editor.selectionHighlightBackground": "#2F669966",
     },
   });
   window.addEventListener("agent-k-theme", (event) => {

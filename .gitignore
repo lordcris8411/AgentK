@@ -1,7 +1,7 @@
 node_modules/
 dist/
-src-tauri/target/
-src-tauri/gen/
+.electron-dist/
+release/
 .reference/
 *.log
 .env

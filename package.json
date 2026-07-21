@@ -1,31 +1,44 @@
 {
   "name": "agent-k",
   "version": "0.1.0",
-  "description": "Standalone Tauri desktop client for the Pi coding agent",
+  "description": "Standalone Electron desktop client for the Pi coding agent",
+  "author": "AgentK contributors",
+  "desktopName": "agent-k.desktop",
+  "main": ".electron-dist/main.js",
   "private": true,
   "type": "module",
   "workspaces": [
     "extensions/k-plan"
   ],
   "scripts": {
-    "clean": "shx rm -rf dist",
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "check": "npm run check:web && npm run check:k-plan",
+    "clean": "shx rm -rf dist .electron-dist",
+    "dev": "node script/electron-dev.mjs",
+    "dev:web": "vite",
+    "build": "npm run build:desktop && npm run build:web",
+    "build:web": "tsc -b && vite build",
+    "build:desktop": "tsc -p tsconfig.electron.json",
+    "dist": "npm run build && electron-builder",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:windows": "npm run build && electron-builder --win",
+    "check": "npm run check:web && npm run check:desktop && npm run check:k-plan",
     "check:web": "tsc -b",
     "check:k-plan": "tsc -p extensions/k-plan/tsconfig.json",
-    "check:desktop": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "check:desktop": "tsc -p tsconfig.electron.json --noEmit",
     "test": "node --test extensions/k-plan/index.test.ts",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "electron": "electron ."
   },
-  "dependencies": {
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.10",
     "@fontsource-variable/noto-sans-sc": "5.2.10",
     "@fortawesome/fontawesome-free": "7.3.1",
     "@monaco-editor/react": "4.7.0",
-    "@tauri-apps/api": "2.11.1",
-    "@tauri-apps/plugin-dialog": "2.7.2",
-    "@tauri-apps/plugin-opener": "2.5.4",
+    "@types/node": "24.6.0",
+    "@types/react": "19.1.10",
+    "@types/react-dom": "19.1.7",
+    "@vitejs/plugin-react": "5.0.2",
+    "electron": "43.1.1",
+    "electron-builder": "26.15.3",
     "katex": "0.18.0",
     "lucide-react": "1.25.0",
     "monaco-editor": "0.55.1",
@@ -35,20 +48,58 @@
     "rehype-katex": "7.0.1",
     "remark-breaks": "4.0.0",
     "remark-gfm": "4.0.1",
-    "remark-math": "6.0.0"
-  },
-  "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.80.10",
-    "@tauri-apps/cli": "2.11.4",
-    "@types/node": "24.6.0",
-    "@types/react": "19.1.10",
-    "@types/react-dom": "19.1.7",
-    "@vitejs/plugin-react": "5.0.2",
+    "remark-math": "6.0.0",
     "shx": "0.4.0",
     "typescript": "5.9.2",
-    "vite": "7.1.7"
+    "vite": "7.3.6"
+  },
+  "overrides": {
+    "monaco-editor": {
+      "dompurify": "3.4.12"
+    }
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "build": {
+    "appId": "com.lordcris8411.agentk",
+    "productName": "Agent K",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      ".electron-dist/**/*",
+      "dist/**/*",
+      "electron/preload.cjs",
+      "agent-k-permissions.ts",
+      "assets/icons/icon.png",
+      "!node_modules{,/**/*}",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "skills",
+        "to": "skills"
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development",
+      "icon": "assets/icons/icon.png",
+      "syncDesktopName": true
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icons/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

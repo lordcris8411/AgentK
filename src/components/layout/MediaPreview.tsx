@@ -163,7 +163,7 @@ function ImagePreview({
     canvas.height = size.height;
     // RGB is the normal viewing path. Keeping this canvas GPU-backed matters
     // much more than optimizing the occasional channel readback, especially
-    // while WebKitGTK is compositing a zoomed image on Linux.
+    // while Chromium is compositing a zoomed image.
     const context = canvas.getContext("2d");
     if (!context) return;
     context.clearRect(0, 0, size.width, size.height);

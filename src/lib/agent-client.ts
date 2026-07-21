@@ -4,8 +4,8 @@ import type { AgentSessionState, ConversationMessage } from "../types/agent";
  * Frontend port for Pi communication.
  *
  * The initial mock keeps UI development independent from process management.
- * A future Tauri implementation will invoke Rust commands and subscribe to
- * forwarded Pi RPC events without changing feature components.
+ * The production Electron adapter forwards Pi RPC events without exposing
+ * process access to feature components.
  */
 export interface AgentClient {
   getState(): Promise<AgentSessionState>;
@@ -23,10 +23,9 @@ export const mockAgentClient: AgentClient = {
     };
   },
   async prompt(_message) {
-    // Replaced by the Tauri-backed RPC client in the integration milestone.
+    // Replaced by the Electron-backed RPC client in production.
   },
   subscribe(_listener) {
     return () => undefined;
   },
 };
-

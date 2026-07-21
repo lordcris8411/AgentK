@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { open } from "@tauri-apps/plugin-dialog";
 import { AppShell } from "./components/layout/AppShell";
 import { InspectorPanel } from "./components/layout/InspectorPanel";
 import { ConversationWorkspace } from "./features/conversation/ConversationWorkspace";
@@ -8,12 +7,14 @@ import { SessionSidebar } from "./features/sessions/SessionSidebar";
 import type { ReviewCall } from "./features/conversation/ReviewPanel";
 import {
   desktop,
+  type PiResourceChange,
   type ProjectSummary,
   type SessionSummary,
 } from "./lib/desktop";
-import { SettingsDialog } from "./features/settings/SettingsDialog";
+import { SettingsDialog, type SettingsPage } from "./features/settings/SettingsDialog";
 import { useSettings } from "./features/settings/SettingsContext";
 import { useExtensionUi } from "./features/extensions/ExtensionUiContext";
+import { platform } from "./lib/platform";
 
 const DRAFT_SESSION_PATH = "__new__";
 
@@ -51,6 +52,32 @@ export function App() {
   const [error, setError] = useState<string>();
   const [reviewCalls, setReviewCalls] = useState<ReviewCall[]>();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsPage, setSettingsPage] = useState<SettingsPage>("models");
+  useEffect(() => {
+    const openSettings = (event: Event) => {
+      const page = (event as CustomEvent<{ page?: SettingsPage }>).detail?.page;
+      setSettingsPage(page ?? "models");
+      setSettingsOpen(true);
+    };
+    const updateSessionName = (event: Event) => {
+      const name = (event as CustomEvent<{ name?: string }>).detail?.name?.trim();
+      const current = activeRef.current;
+      if (!name || !current) return;
+      const renamed = { ...current, name };
+      activeRef.current = renamed;
+      setActive(renamed);
+      setProjects((projects) => projects.map((project) => ({
+        ...project,
+        sessions: project.sessions.map((session) => session.path === current.path ? renamed : session),
+      })));
+    };
+    window.addEventListener("agent-k-open-settings", openSettings);
+    window.addEventListener("agent-k-session-name", updateSessionName);
+    return () => {
+      window.removeEventListener("agent-k-open-settings", openSettings);
+      window.removeEventListener("agent-k-session-name", updateSessionName);
+    };
+  }, []);
   const beginBusy = (
     message: string,
     delay = 220,
@@ -110,6 +137,24 @@ export function App() {
         setBusyMessage(undefined);
       }
     };
+  };
+  const closeSettings = (changes: PiResourceChange[]) => {
+    setSettingsOpen(false);
+    if (changes.length === 0) return;
+    const cwd = activeRef.current?.cwd;
+    if (!cwd) {
+      setError(en ? "Select a workspace before changing Pi resources" : "请先选择工作区再修改 Pi 资源");
+      return;
+    }
+    const finishBusy = beginBusy(
+      en ? "Applying Extension/Skill settings…" : "正在应用 Extension/Skill 设置…",
+      0,
+      420,
+    );
+    void desktop.applyPiResourceChanges(cwd, changes)
+      .then(() => window.dispatchEvent(new Event("agent-k-resources-changed")))
+      .catch((cause) => setError(String(cause)))
+      .finally(finishBusy);
   };
   const reload = async () => {
     try {
@@ -182,11 +227,6 @@ export function App() {
             preview: "",
             updatedAt: Math.floor(Date.now() / 1000),
           };
-          activeRef.current = draft;
-          setActive(draft);
-          setHistorySeed({ path: DRAFT_SESSION_PATH, messages: [] });
-          setWorkspaceCwd(initialCwd);
-          setReadyPath(DRAFT_SESSION_PATH);
           const ready = warmedRuntimeIds[0]
             ? Promise.resolve(warmedRuntimeIds[0])
             : desktop.prepareSession(initialCwd);
@@ -198,6 +238,9 @@ export function App() {
               activeRef.current = prepared;
               setActive(prepared);
               setActiveRuntimeId(runtimeId);
+              setHistorySeed({ path: DRAFT_SESSION_PATH, messages: [] });
+              setWorkspaceCwd(initialCwd);
+              setReadyPath(DRAFT_SESSION_PATH);
             }
           } catch (cause) {
             if (warmupRef.current?.ready === ready)
@@ -419,12 +462,13 @@ export function App() {
   const addWorkspace = async () => {
     setError(undefined);
     try {
-      const selected = await open({
+      const selected = await platform.openDialog({
         directory: true,
         multiple: false,
         title: en ? "Select Agent K workspace" : "选择 Agent K 工作区",
       });
       if (!selected) return;
+      if (Array.isArray(selected)) return;
       const finishBusy = beginBusy(en ? "Adding and preloading workspace…" : "正在添加并预加载工作区…");
       try {
         const cwd = await desktop.addWorkspace(selected);
@@ -714,7 +758,10 @@ export function App() {
             onRename={renameSession}
             onSelect={select}
             onSelectProject={setWorkspaceCwd}
-            onSettings={() => setSettingsOpen(true)}
+            onSettings={() => {
+              setSettingsPage("models");
+              setSettingsOpen(true);
+            }}
             projects={projects}
             runningPaths={runningPaths}
           />
@@ -722,7 +769,7 @@ export function App() {
       >
         <ConversationWorkspace
           beforeSend={materializeDraft}
-          connected={readyPath === active?.path}
+          connected={Boolean(active && readyPath === active.path)}
           connecting={connecting}
           error={error}
           initialMessages={
@@ -751,8 +798,11 @@ export function App() {
         </div>
       )}
       <SettingsDialog
-        onClose={() => setSettingsOpen(false)}
+        cwd={active?.cwd}
+        initialPage={settingsPage}
+        onClose={closeSettings}
         open={settingsOpen}
+        runtimeId={active?.runtimeId}
         sessionId={active?.path === DRAFT_SESSION_PATH ? undefined : active?.id}
       />
     </>
