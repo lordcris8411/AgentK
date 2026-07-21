@@ -12,6 +12,9 @@
  */
 
 import * as crypto from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import type { AuthEvent, AuthPrompt, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type {
 	ExtensionUIContext,
@@ -25,6 +28,8 @@ import {
 	waitForRawStdoutBackpressure,
 	writeRawStdout,
 } from "../../core/output-guard.ts";
+import { processImage } from "../../utils/image-process.ts";
+import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
@@ -36,6 +41,21 @@ import type {
 	RpcSessionState,
 	RpcSlashCommand,
 } from "./rpc-types.ts";
+
+async function imagesFromPaths(paths: string[] | undefined): Promise<ImageContent[]> {
+	if (!paths?.length) return [];
+	if (paths.length > 10) throw new Error("A maximum of 10 image paths is supported per message");
+	const images: ImageContent[] = [];
+	for (const inputPath of paths) {
+		const filePath = resolve(inputPath);
+		const mimeType = await detectSupportedImageMimeTypeFromFile(filePath);
+		if (!mimeType) throw new Error(`Unsupported image format: ${filePath}`);
+		const processed = await processImage(await readFile(filePath), mimeType, { autoResizeImages: true });
+		if (!processed.ok) throw new Error(`${filePath}: ${processed.message}`);
+		images.push({ type: "image", data: processed.data, mimeType: processed.mimeType });
+	}
+	return images;
+}
 
 // Re-export types for consumers
 export type {
@@ -57,7 +77,18 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	let unsubscribeBackpressure: (() => void) | undefined;
 
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
-		writeRawStdout(serializeJsonLine(obj));
+		const value = obj as Record<string, unknown>;
+		writeRawStdout(
+			serializeJsonLine(
+				value.type === "response"
+					? obj
+					: {
+							...value,
+							sessionFile: session.sessionFile,
+							sessionId: session.sessionId,
+						},
+			),
+		);
 	};
 
 	const success = <T extends RpcCommand["type"]>(
@@ -84,6 +115,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	// Shutdown request flag
 	let shutdownRequested = false;
 	let shuttingDown = false;
+	let pendingAuthAbort: AbortController | undefined;
 	const signalCleanupHandlers: Array<() => void> = [];
 
 	/** Helper for dialog methods with signal/timeout support */
@@ -314,6 +346,8 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	});
 
 	const rebindSession = async (): Promise<void> => {
+		const previousSession = session;
+		const previousSessionFile = previousSession.sessionFile;
 		session = runtimeHost.session;
 		await session.bindExtensions({
 			uiContext: createExtensionUIContext(),
@@ -347,6 +381,21 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			onError: (err) => {
 				output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
 			},
+		});
+
+		// RPC is also embedded by GUI clients that must remain compatible with
+		// extensions written before session replacement introduced `withSession`.
+		// Keep the old extension API usable for the continuation immediately after
+		// newSession/fork/switchSession, while the new runner owns all real state.
+		if (previousSession !== session) {
+			previousSession.extensionRunner.forwardLegacySessionActionsTo(session.extensionRunner);
+		}
+		output({
+			type: "session_changed",
+			previousSessionFile,
+			sessionFile: session.sessionFile,
+			sessionId: session.sessionId,
+			cwd: runtimeHost.cwd,
 		});
 
 		unsubscribe?.();
@@ -391,12 +440,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// =================================================================
 
 			case "prompt": {
+				const pathImages = await imagesFromPaths(command.imagePaths);
+				const images = [...(command.images ?? []), ...pathImages];
 				// Start prompt handling immediately, but emit the authoritative response only after
 				// prompt preflight succeeds. Queued and immediately handled prompts also count as success.
 				let preflightSucceeded = false;
 				void session
 					.prompt(command.message, {
-						images: command.images,
+						images: images.length > 0 ? images : undefined,
 						streamingBehavior: command.streamingBehavior,
 						source: "rpc",
 						preflightResult: (didSucceed) => {
@@ -415,12 +466,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			}
 
 			case "steer": {
-				await session.steer(command.message, command.images);
+				const images = [...(command.images ?? []), ...(await imagesFromPaths(command.imagePaths))];
+				await session.steer(command.message, images.length > 0 ? images : undefined);
 				return success(id, "steer");
 			}
 
 			case "follow_up": {
-				await session.followUp(command.message, command.images);
+				const images = [...(command.images ?? []), ...(await imagesFromPaths(command.imagePaths))];
+				await session.followUp(command.message, images.length > 0 ? images : undefined);
 				return success(id, "follow_up");
 			}
 
@@ -485,6 +538,92 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			case "get_available_models": {
 				const models = await session.modelRuntime.getAvailable();
 				return success(id, "get_available_models", { models });
+			}
+
+			case "get_provider_catalog": {
+				const configuredIds = new Set(session.modelRuntime.getConfiguredProviderIds());
+				const extensionIds = new Set(session.modelRuntime.getRegisteredProviderIds());
+				const providers = session.modelRuntime.getProviders().map((provider) => ({
+					id: provider.id,
+					name: provider.name,
+					baseUrl: provider.baseUrl,
+					api: provider.getModels()[0]?.api,
+					source: configuredIds.has(provider.id)
+						? "custom"
+						: extensionIds.has(provider.id)
+							? "extension"
+							: "builtin",
+					configured: session.modelRuntime.getProviderAuthStatus(provider.id).configured,
+					authMethods: [
+						...(provider.auth.apiKey?.login ? (["api_key"] as const) : []),
+						...(provider.auth.oauth ? (["oauth"] as const) : []),
+					],
+					models: provider.getModels().map((model) => ({ id: model.id, name: model.name })),
+				}));
+				return success(id, "get_provider_catalog", { providers });
+			}
+
+			case "reload_models": {
+				await session.modelRuntime.reloadConfig();
+				const configError = session.modelRuntime.getError();
+				if (configError) return error(id, "reload_models", configError);
+				return success(id, "reload_models");
+			}
+
+			case "login_provider": {
+				if (pendingAuthAbort) return error(id, "login_provider", "Another provider login is already active");
+				const authAbort = new AbortController();
+				pendingAuthAbort = authAbort;
+				const fixedValue = command.value;
+				const prompt = async (request: AuthPrompt): Promise<string> => {
+					if (fixedValue !== undefined && request.type !== "select") return fixedValue;
+					if (request.type === "select") {
+						const labels = request.options.map((option) => option.label);
+						const selected = await createDialogPromise(
+							{ signal: request.signal },
+							undefined as string | undefined,
+							{ method: "select", title: request.message, options: labels },
+							(response) => ("value" in response ? response.value : undefined),
+						);
+						const option = request.options.find((entry) => entry.label === selected || entry.id === selected);
+						if (!option) throw new Error("Login cancelled");
+						return option.id;
+					}
+					const response = await createDialogPromise(
+						{ signal: request.signal },
+						undefined as string | undefined,
+						{
+							method: "input",
+							title: request.message,
+							placeholder: request.placeholder,
+							secret: request.type === "secret",
+						},
+						(value) => ("value" in value ? value.value : undefined),
+					);
+					if (response === undefined) throw new Error("Login cancelled");
+					return response;
+				};
+				const notify = (event: AuthEvent) => output({ type: "auth_event", providerId: command.providerId, event });
+				try {
+					await session.modelRuntime.login(command.providerId, command.authType, {
+						signal: authAbort.signal,
+						prompt,
+						notify,
+					});
+					return success(id, "login_provider");
+				} finally {
+					if (pendingAuthAbort === authAbort) pendingAuthAbort = undefined;
+				}
+			}
+
+			case "cancel_login": {
+				pendingAuthAbort?.abort();
+				return success(id, "cancel_login");
+			}
+
+			case "logout_provider": {
+				await session.modelRuntime.logout(command.providerId);
+				return success(id, "logout_provider");
 			}
 
 			// =================================================================
@@ -627,6 +766,16 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "get_tree", { tree: sessionManager.getTree(), leafId: sessionManager.getLeafId() });
 			}
 
+			case "navigate_tree": {
+				const result = await session.navigateTree(command.entryId, {
+					summarize: command.summarize,
+					customInstructions: command.customInstructions,
+					replaceInstructions: command.replaceInstructions,
+					label: command.label,
+				});
+				return success(id, "navigate_tree", result);
+			}
+
 			case "get_last_assistant_text": {
 				const text = session.getLastAssistantText();
 				return success(id, "get_last_assistant_text", { text });
@@ -646,7 +795,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// =================================================================
 
 			case "get_messages": {
-				return success(id, "get_messages", { messages: session.messages });
+				const total = session.messages.length;
+				const before = Math.max(0, Math.min(command.before ?? total, total));
+				const start = Math.max(0, before - Math.max(1, command.limit ?? total));
+				return success(id, "get_messages", {
+					messages: session.messages.slice(start, before),
+					total,
+					nextBefore: start > 0 ? start : undefined,
+				});
 			}
 
 			// =================================================================

@@ -12,7 +12,7 @@ import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+import type { RpcCommand, RpcProviderInfo, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -265,6 +265,27 @@ export class RpcClient {
 		return this.getData<{ models: ModelInfo[] }>(response).models;
 	}
 
+	async getProviderCatalog(): Promise<RpcProviderInfo[]> {
+		const response = await this.send({ type: "get_provider_catalog" });
+		return this.getData<{ providers: RpcProviderInfo[] }>(response).providers;
+	}
+
+	async reloadModels(): Promise<void> {
+		await this.send({ type: "reload_models" });
+	}
+
+	async loginProvider(providerId: string, authType: "api_key" | "oauth", value?: string): Promise<void> {
+		await this.send({ type: "login_provider", providerId, authType, value });
+	}
+
+	async cancelLogin(): Promise<void> {
+		await this.send({ type: "cancel_login" });
+	}
+
+	async logoutProvider(providerId: string): Promise<void> {
+		await this.send({ type: "logout_provider", providerId });
+	}
+
 	/**
 	 * Set thinking level.
 	 */
@@ -405,6 +426,15 @@ export class RpcClient {
 		return this.getData<{ tree: SessionTreeNode[]; leafId: string | null }>(response);
 	}
 
+	/** Navigate to a session tree entry, optionally saving a summary of the branch being left. */
+	async navigateTree(
+		entryId: string,
+		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
+	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean }> {
+		const response = await this.send({ type: "navigate_tree", entryId, ...options });
+		return this.getData<{ editorText?: string; cancelled: boolean; aborted?: boolean }>(response);
+	}
+
 	/**
 	 * Get text of last assistant message.
 	 */
@@ -421,11 +451,14 @@ export class RpcClient {
 	}
 
 	/**
-	 * Get all messages in the session.
+	 * Get a page of messages in the session, ending before the optional cursor.
 	 */
-	async getMessages(): Promise<AgentMessage[]> {
-		const response = await this.send({ type: "get_messages" });
-		return this.getData<{ messages: AgentMessage[] }>(response).messages;
+	async getMessages(options?: {
+		limit?: number;
+		before?: number;
+	}): Promise<{ messages: AgentMessage[]; total: number; nextBefore?: number }> {
+		const response = await this.send({ type: "get_messages", ...options });
+		return this.getData<{ messages: AgentMessage[]; total: number; nextBefore?: number }>(response);
 	}
 
 	/**

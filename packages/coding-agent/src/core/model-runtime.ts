@@ -344,6 +344,11 @@ export class ModelRuntime implements Models {
 		return [...new Set([...this.extensionProviders.keys(), ...this.nativeExtensionProviders.keys()])];
 	}
 
+	/** Provider IDs explicitly present in models.json. */
+	getConfiguredProviderIds(): readonly string[] {
+		return this.config.getProviderIds();
+	}
+
 	getRegisteredNativeProvider(providerId: string): Provider | undefined {
 		return this.nativeExtensionProviders.get(providerId);
 	}

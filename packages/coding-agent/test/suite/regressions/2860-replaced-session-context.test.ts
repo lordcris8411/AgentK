@@ -36,7 +36,11 @@ describe("regression #2860: replaced session callbacks", () => {
 		}
 	});
 
-	async function createRuntimeForTest(extensionFactory: ExtensionFactory, responses: string[]) {
+	async function createRuntimeForTest(
+		extensionFactory: ExtensionFactory,
+		responses: string[],
+		options: { legacySessionActions?: boolean } = {},
+	) {
 		const tempDir = join(tmpdir(), `pi-2860-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(tempDir, { recursive: true });
 
@@ -98,10 +102,12 @@ describe("regression #2860: replaced session callbacks", () => {
 		const runtime = await createAgentSessionRuntime(createRuntime, {
 			cwd: tempDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(tempDir),
+			sessionManager: SessionManager.create(tempDir, join(tempDir, "sessions")),
 		});
 
+		let boundSession: AgentSession | undefined;
 		const rebindSession = async (): Promise<void> => {
+			const previousSession = boundSession;
 			const session = runtime.session;
 			await session.bindExtensions({
 				commandContextActions: {
@@ -126,6 +132,10 @@ describe("regression #2860: replaced session callbacks", () => {
 					},
 				},
 			});
+			if (options.legacySessionActions && previousSession && previousSession !== session) {
+				previousSession.extensionRunner.forwardLegacySessionActionsTo(session.extensionRunner);
+			}
+			boundSession = session;
 		};
 
 		runtime.setRebindSession(async () => {
@@ -237,6 +247,33 @@ describe("regression #2860: replaced session callbacks", () => {
 			"assistant:seed reply",
 			"user:fork callback message",
 			"assistant:fork reply",
+		]);
+	});
+
+	it("optionally forwards legacy pi actions after session replacement", async () => {
+		const { runtime } = await createRuntimeForTest(
+			(pi) => {
+				pi.registerCommand("legacy-new", {
+					description: "legacy-new",
+					handler: async (_args, ctx) => {
+						const parentSession = ctx.sessionManager.getSessionFile();
+						await ctx.newSession({ parentSession });
+						pi.setSessionName("Legacy continuation");
+						pi.sendUserMessage("legacy message after replacement");
+					},
+				});
+			},
+			["legacy reply"],
+			{ legacySessionActions: true },
+		);
+
+		await runtime.session.prompt("/legacy-new");
+		await runtime.session.waitForIdle();
+
+		expect(runtime.session.sessionManager.getSessionName()).toBe("Legacy continuation");
+		expect(runtime.session.messages.map((message) => `${message.role}:${getText(message)}`)).toEqual([
+			"user:legacy message after replacement",
+			"assistant:legacy reply",
 		]);
 	});
 

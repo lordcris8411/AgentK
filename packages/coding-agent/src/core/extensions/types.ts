@@ -1566,6 +1566,11 @@ export interface ExtensionRuntimeState {
 	/** Marks this extension instance as stale after runtime replacement or reload. */
 	invalidate: (message?: string) => void;
 	/**
+	 * Clears the stale marker for an explicitly rebound legacy API proxy.
+	 * Internal compatibility hook; extensions must not call this directly.
+	 */
+	reactivateAfterSessionReplacement: () => void;
+	/**
 	 * Register or unregister a provider.
 	 *
 	 * Before bindCore(): queues registrations / removes from queue.

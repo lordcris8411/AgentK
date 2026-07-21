@@ -1,0 +1,328 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { desktop, type ClientSettings } from "../../lib/desktop";
+
+export type Locale = "zh-CN" | "en-US";
+export type ThemeMode = "light" | "dark" | "system";
+
+const fallback: ClientSettings = {
+  version: 2,
+  theme: "light",
+  locale: "zh-CN",
+  permissionMode: "ask",
+  browserId: "default",
+  workerPoolSize: 4,
+};
+
+const dictionaries = {
+  "zh-CN": {
+    settings: "设置",
+    addWorkspace: "添加工作区",
+    workspaces: "工作区",
+    localPi: "本地 Pi RPC",
+    connected: "已连接",
+    running: "正在运行",
+    models: "模型与 Provider",
+    appearance: "外观与语言",
+    agentSettings: "Agent 设置",
+    permissions: "运行权限",
+    about: "关于",
+    close: "关闭",
+    light: "白天模式",
+    dark: "黑夜模式",
+    systemTheme: "跟随系统",
+    language: "界面语言",
+    browser: "打开链接的浏览器",
+    workerPoolSize: "常驻 Pi 进程",
+    workerPoolDescription: "保持 2–4 个 Pi 进程待命；忙时会自动扩容，空闲后回收到此数量。",
+    defaultBrowser: "系统默认浏览器",
+    chinese: "中文",
+    english: "English",
+    permissionAsk: "执行前确认",
+    permissionSession: "本次 session 不提醒",
+    permissionFull: "完全访问",
+    permissionDescription: "控制 Agent K 执行命令和修改文件前是否需要确认。",
+    currentModel: "当前模型",
+    thinking: "思考级别",
+    providerAdd: "添加 Provider",
+    localAdd: "添加本地模型",
+    localService: "本地服务类型",
+    refresh: "刷新",
+    configured: "已配置",
+    notConfigured: "未配置",
+    login: "登录",
+    logout: "退出登录",
+    apiKey: "API Key",
+    oauth: "OAuth",
+    save: "保存",
+    revertFile: "撤销",
+    markdownPreview: "预览",
+    markdownEdit: "编辑",
+    cancel: "取消",
+    delete: "删除",
+    renameSession: "重命名会话",
+    deleteSession: "删除会话",
+    copySession: "复制会话",
+    openFolder: "打开文件夹",
+    sessionName: "会话名称",
+    deleteSessionConfirm: "确定要删除这个会话吗？",
+    openInBrowser: "在浏览器中打开",
+    notifications: "通知",
+    notificationHistory: "通知历史",
+    noNotifications: "暂无通知",
+    clearNotifications: "清除全部通知",
+    read: "已读",
+    unread: "未读",
+    test: "测试连接",
+    discover: "发现模型",
+    modelId: "模型 ID",
+    providerId: "Provider ID",
+    displayName: "显示名称",
+    baseUrl: "Base URL",
+    apiProtocol: "API 协议",
+    contextWindow: "上下文窗口",
+    maxTokens: "最大输出 Token",
+    reasoning: "支持思考",
+    imageInput: "支持图片输入",
+    noProviders: "尚未发现可用 Provider",
+    appVersion: "应用版本",
+    piVersion: "Pi 版本",
+    systemInfo: "系统信息",
+    copyDiagnostics: "复制诊断信息",
+    projectHomepage: "Pi 项目主页",
+    licenses: "开源许可证",
+    askPermissionTitle: "Agent K 运行权限",
+    deny: "拒绝",
+    allowOnce: "仅允许本次",
+    allowSession: "本次 session 不再提醒",
+    fullAccess: "完全访问",
+    no: "否",
+    confirm: "确认",
+    submit: "提交",
+    commands: "命令",
+    extensionCommand: "扩展",
+    promptCommand: "提示模板",
+    skillCommand: "技能",
+    noMatchingCommands: "没有匹配的命令",
+    loadingCommands: "正在读取命令…",
+  },
+  "en-US": {
+    settings: "Settings",
+    addWorkspace: "Add workspace",
+    workspaces: "Workspaces",
+    localPi: "Local Pi RPC",
+    connected: "Connected",
+    running: "Running",
+    models: "Models & Providers",
+    appearance: "Appearance & Language",
+    agentSettings: "Agent Settings",
+    permissions: "Execution permissions",
+    about: "About",
+    close: "Close",
+    light: "Light",
+    dark: "Dark",
+    systemTheme: "System",
+    language: "Interface language",
+    browser: "Browser for links",
+    workerPoolSize: "Warm Pi processes",
+    workerPoolDescription: "Keep 2–4 Pi processes ready. The pool grows while busy and returns to this size when idle.",
+    defaultBrowser: "System default browser",
+    chinese: "中文",
+    english: "English",
+    permissionAsk: "Ask before running",
+    permissionSession: "Allow for this session",
+    permissionFull: "Full access",
+    permissionDescription: "Choose whether Agent K asks before running commands or changing files.",
+    currentModel: "Current model",
+    thinking: "Thinking level",
+    providerAdd: "Add provider",
+    localAdd: "Add local model",
+    localService: "Local service type",
+    refresh: "Refresh",
+    configured: "Configured",
+    notConfigured: "Not configured",
+    login: "Sign in",
+    logout: "Sign out",
+    apiKey: "API key",
+    oauth: "OAuth",
+    save: "Save",
+    revertFile: "Revert",
+    markdownPreview: "Preview",
+    markdownEdit: "Edit",
+    cancel: "Cancel",
+    delete: "Delete",
+    renameSession: "Rename session",
+    deleteSession: "Delete session",
+    copySession: "Duplicate session",
+    openFolder: "Open folder",
+    sessionName: "Session name",
+    deleteSessionConfirm: "Delete this session?",
+    openInBrowser: "Open in browser",
+    notifications: "Notifications",
+    notificationHistory: "Notification history",
+    noNotifications: "No notifications yet",
+    clearNotifications: "Clear all notifications",
+    read: "Read",
+    unread: "Unread",
+    test: "Test connection",
+    discover: "Discover models",
+    modelId: "Model ID",
+    providerId: "Provider ID",
+    displayName: "Display name",
+    baseUrl: "Base URL",
+    apiProtocol: "API protocol",
+    contextWindow: "Context window",
+    maxTokens: "Max output tokens",
+    reasoning: "Reasoning model",
+    imageInput: "Image input",
+    noProviders: "No providers available",
+    appVersion: "App version",
+    piVersion: "Pi version",
+    systemInfo: "System information",
+    copyDiagnostics: "Copy diagnostics",
+    projectHomepage: "Pi project homepage",
+    licenses: "Open-source licenses",
+    askPermissionTitle: "Agent K permission",
+    deny: "Deny",
+    allowOnce: "Allow once",
+    allowSession: "Allow for this session",
+    fullAccess: "Full access",
+    no: "No",
+    confirm: "Confirm",
+    submit: "Submit",
+    commands: "Commands",
+    extensionCommand: "Extension",
+    promptCommand: "Prompt template",
+    skillCommand: "Skill",
+    noMatchingCommands: "No matching commands",
+    loadingCommands: "Loading commands…",
+  },
+} as const;
+
+type SettingsContextValue = {
+  settings: ClientSettings;
+  resolvedTheme: "light" | "dark";
+  ready: boolean;
+  update(patch: Partial<ClientSettings>): Promise<void>;
+  t: (key: keyof (typeof dictionaries)["zh-CN"]) => string;
+};
+
+const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);
+
+function applyTheme(locale: Locale, theme: "light" | "dark") {
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.lang = locale;
+  window.dispatchEvent(new CustomEvent("agent-k-theme", { detail: theme }));
+}
+
+export function SettingsProvider({ children }: { children: ReactNode }) {
+  const [settings, setSettings] = useState<ClientSettings>(() => {
+    const cached = localStorage.getItem("agent-k-settings");
+    try {
+      return cached ? { ...fallback, ...JSON.parse(cached) } : fallback;
+    } catch {
+      return fallback;
+    }
+  });
+  const [ready, setReady] = useState(false);
+  const [systemDark, setSystemDark] = useState(
+    () => window.matchMedia("(prefers-color-scheme: dark)").matches,
+  );
+  const resolvedTheme =
+    settings.theme === "system"
+      ? systemDark
+        ? "dark"
+        : "light"
+      : settings.theme;
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const changed = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    setSystemDark(media.matches);
+    media.addEventListener("change", changed);
+    return () => media.removeEventListener("change", changed);
+  }, []);
+  useEffect(() => {
+    applyTheme(settings.locale, resolvedTheme);
+  }, [resolvedTheme, settings.locale]);
+  useEffect(() => {
+    const openExternalLink = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest("a[href]") as HTMLAnchorElement | null;
+      const href = anchor?.href;
+      if (!href || !/^https?:\/\//i.test(href)) return;
+      event.preventDefault();
+      void desktop.openExternalUrl(href, settings.browserId).catch(() => undefined);
+    };
+    document.addEventListener("click", openExternalLink);
+    return () => document.removeEventListener("click", openExternalLink);
+  }, [settings.browserId]);
+  useEffect(() => {
+    let disposed = false;
+    void desktop
+      .getSettings()
+      .then((loaded) => {
+        if (!disposed) {
+          const next = { ...fallback, ...loaded };
+          setSettings(next);
+          localStorage.setItem("agent-k-settings", JSON.stringify(next));
+        }
+      })
+      .catch(() => {
+        // Browser-only development does not expose the native settings bridge.
+      })
+      .finally(() => {
+        if (!disposed) setReady(true);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+  const update = useCallback(
+    async (patch: Partial<ClientSettings>) => {
+      const next = { ...settings, ...patch };
+      setSettings(next);
+      localStorage.setItem("agent-k-settings", JSON.stringify(next));
+      const poolChanged =
+        patch.workerPoolSize !== undefined &&
+        patch.workerPoolSize !== settings.workerPoolSize;
+      try {
+        if (poolChanged) await desktop.resizeWorkerPool(next.workerPoolSize);
+        const saved = await desktop.saveSettings(next);
+        setSettings(saved);
+      } catch (error) {
+        if (poolChanged)
+          void desktop.resizeWorkerPool(settings.workerPoolSize).catch(() => undefined);
+        setSettings(settings);
+        localStorage.setItem("agent-k-settings", JSON.stringify(settings));
+        throw error;
+      }
+    },
+    [settings],
+  );
+  const value = useMemo<SettingsContextValue>(
+    () => ({
+      settings,
+      resolvedTheme,
+      ready,
+      update,
+      t: (key) => dictionaries[settings.locale][key],
+    }),
+    [ready, resolvedTheme, settings, update],
+  );
+  return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
+}
+
+export function useSettings() {
+  const value = useContext(SettingsContext);
+  if (!value) throw new Error("SettingsProvider is missing");
+  return value;
+}

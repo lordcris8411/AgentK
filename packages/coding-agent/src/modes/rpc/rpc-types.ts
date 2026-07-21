@@ -19,9 +19,16 @@ import type { SourceInfo } from "../../core/source-info.ts";
 
 export type RpcCommand =
 	// Prompting
-	| { id?: string; type: "prompt"; message: string; images?: ImageContent[]; streamingBehavior?: "steer" | "followUp" }
-	| { id?: string; type: "steer"; message: string; images?: ImageContent[] }
-	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[] }
+	| {
+			id?: string;
+			type: "prompt";
+			message: string;
+			images?: ImageContent[];
+			imagePaths?: string[];
+			streamingBehavior?: "steer" | "followUp";
+	  }
+	| { id?: string; type: "steer"; message: string; images?: ImageContent[]; imagePaths?: string[] }
+	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[]; imagePaths?: string[] }
 	| { id?: string; type: "abort" }
 	| { id?: string; type: "new_session"; parentSession?: string }
 
@@ -32,6 +39,11 @@ export type RpcCommand =
 	| { id?: string; type: "set_model"; provider: string; modelId: string }
 	| { id?: string; type: "cycle_model" }
 	| { id?: string; type: "get_available_models" }
+	| { id?: string; type: "get_provider_catalog" }
+	| { id?: string; type: "reload_models" }
+	| { id?: string; type: "login_provider"; providerId: string; authType: "api_key" | "oauth"; value?: string }
+	| { id?: string; type: "cancel_login" }
+	| { id?: string; type: "logout_provider"; providerId: string }
 
 	// Thinking
 	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel }
@@ -62,11 +74,20 @@ export type RpcCommand =
 	| { id?: string; type: "get_fork_messages" }
 	| { id?: string; type: "get_entries"; since?: string }
 	| { id?: string; type: "get_tree" }
+	| {
+			id?: string;
+			type: "navigate_tree";
+			entryId: string;
+			summarize?: boolean;
+			customInstructions?: string;
+			replaceInstructions?: boolean;
+			label?: string;
+	  }
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
 
 	// Messages
-	| { id?: string; type: "get_messages" }
+	| { id?: string; type: "get_messages"; limit?: number; before?: number }
 
 	// Commands (available for invocation via prompt)
 	| { id?: string; type: "get_commands" };
@@ -144,6 +165,17 @@ export type RpcResponse =
 			success: true;
 			data: { models: Model<any>[] };
 	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_provider_catalog";
+			success: true;
+			data: { providers: RpcProviderInfo[] };
+	  }
+	| { id?: string; type: "response"; command: "reload_models"; success: true }
+	| { id?: string; type: "response"; command: "login_provider"; success: true }
+	| { id?: string; type: "response"; command: "cancel_login"; success: true }
+	| { id?: string; type: "response"; command: "logout_provider"; success: true }
 
 	// Thinking
 	| { id?: string; type: "response"; command: "set_thinking_level"; success: true }
@@ -201,6 +233,13 @@ export type RpcResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "navigate_tree";
+			success: true;
+			data: { editorText?: string; cancelled: boolean; aborted?: boolean };
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "get_last_assistant_text";
 			success: true;
 			data: { text: string | null };
@@ -208,7 +247,13 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "set_session_name"; success: true }
 
 	// Messages
-	| { id?: string; type: "response"; command: "get_messages"; success: true; data: { messages: AgentMessage[] } }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_messages";
+			success: true;
+			data: { messages: AgentMessage[]; total: number; nextBefore?: number };
+	  }
 
 	// Commands
 	| {
@@ -263,6 +308,23 @@ export type RpcExtensionUIRequest =
 	  }
 	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
 	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string };
+
+export interface RpcProviderInfo {
+	id: string;
+	name: string;
+	baseUrl?: string;
+	api?: string;
+	source: "builtin" | "custom" | "extension";
+	configured: boolean;
+	authMethods: Array<"api_key" | "oauth">;
+	models: Array<{ id: string; name?: string }>;
+}
+
+export type RpcAuthEvent = {
+	type: "auth_event";
+	providerId: string;
+	event: unknown;
+};
 
 // ============================================================================
 // Extension UI Commands (stdin)

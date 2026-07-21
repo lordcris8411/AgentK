@@ -545,6 +545,104 @@ export class ExtensionRunner {
 		}
 	}
 
+	/**
+	 * Rebind action calls from a legacy extension instance to a replacement
+	 * session. Older extensions commonly await `ctx.newSession()` and then use
+	 * their captured `pi` object. Modern extensions should use `withSession`,
+	 * but RPC hosts may opt into this bridge to remain compatible with packages
+	 * authored before that callback existed.
+	 *
+	 * Registration maps and event handlers are deliberately not transferred;
+	 * only runtime actions and context state are forwarded to the already-loaded
+	 * replacement runner.
+	 */
+	forwardLegacySessionActionsTo(target: ExtensionRunner): void {
+		const targetRuntime = target.runtime;
+		const ensureTarget = () => targetRuntime.assertActive();
+
+		this.runtime.sendMessage = (message, options) => {
+			ensureTarget();
+			return targetRuntime.sendMessage(message, options);
+		};
+		this.runtime.sendUserMessage = (content, options) => {
+			ensureTarget();
+			return targetRuntime.sendUserMessage(content, options);
+		};
+		this.runtime.appendEntry = (customType, data) => {
+			ensureTarget();
+			return targetRuntime.appendEntry(customType, data);
+		};
+		this.runtime.setSessionName = (name) => {
+			ensureTarget();
+			return targetRuntime.setSessionName(name);
+		};
+		this.runtime.getSessionName = () => {
+			ensureTarget();
+			return targetRuntime.getSessionName();
+		};
+		this.runtime.setLabel = (entryId, label) => {
+			ensureTarget();
+			return targetRuntime.setLabel(entryId, label);
+		};
+		this.runtime.getActiveTools = () => {
+			ensureTarget();
+			return targetRuntime.getActiveTools();
+		};
+		this.runtime.getAllTools = () => {
+			ensureTarget();
+			return targetRuntime.getAllTools();
+		};
+		this.runtime.setActiveTools = (toolNames) => {
+			ensureTarget();
+			return targetRuntime.setActiveTools(toolNames);
+		};
+		this.runtime.refreshTools = () => {
+			ensureTarget();
+			return targetRuntime.refreshTools();
+		};
+		this.runtime.getCommands = () => {
+			ensureTarget();
+			return targetRuntime.getCommands();
+		};
+		this.runtime.setModel = (model) => {
+			ensureTarget();
+			return targetRuntime.setModel(model);
+		};
+		this.runtime.getThinkingLevel = () => {
+			ensureTarget();
+			return targetRuntime.getThinkingLevel();
+		};
+		this.runtime.setThinkingLevel = (level) => {
+			ensureTarget();
+			return targetRuntime.setThinkingLevel(level);
+		};
+
+		this.cwd = target.cwd;
+		this.sessionManager = target.sessionManager;
+		this.modelRegistry = target.modelRegistry;
+		this.uiContext = target.uiContext;
+		this.mode = target.mode;
+		this.getModel = target.getModel;
+		this.isIdleFn = target.isIdleFn;
+		this.isProjectTrustedFn = target.isProjectTrustedFn;
+		this.getSignalFn = target.getSignalFn;
+		this.waitForIdleFn = target.waitForIdleFn;
+		this.abortFn = target.abortFn;
+		this.hasPendingMessagesFn = target.hasPendingMessagesFn;
+		this.getContextUsageFn = target.getContextUsageFn;
+		this.compactFn = target.compactFn;
+		this.getSystemPromptFn = target.getSystemPromptFn;
+		this.getSystemPromptOptionsFn = target.getSystemPromptOptionsFn;
+		this.newSessionHandler = target.newSessionHandler;
+		this.forkHandler = target.forkHandler;
+		this.navigateTreeHandler = target.navigateTreeHandler;
+		this.switchSessionHandler = target.switchSessionHandler;
+		this.reloadHandler = target.reloadHandler;
+		this.shutdownHandler = target.shutdownHandler;
+		this.staleMessage = undefined;
+		this.runtime.reactivateAfterSessionReplacement();
+	}
+
 	private assertActive(): void {
 		if (this.staleMessage) {
 			throw new Error(this.staleMessage);

@@ -53,6 +53,12 @@ With images:
 {"type": "prompt", "message": "What's in this image?", "images": [{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}]}
 ```
 
+Local RPC clients can pass image file paths instead. Pi reads, normalizes, and
+auto-resizes these files inside the agent process before contacting the model:
+```json
+{"type": "prompt", "message": "What's in this image?", "imagePaths": ["C:/path/to/image.png"]}
+```
+
 **During streaming**: If the agent is already streaming, you must specify `streamingBehavior` to queue the message:
 
 ```json
@@ -75,7 +81,7 @@ Response:
 
 `success: true` means the prompt was accepted, queued, or handled immediately. `success: false` means the prompt was rejected before acceptance. Failures after acceptance are reported through the normal event and message stream, not as a second `response` for the same request id.
 
-The `images` field is optional. Each image uses `ImageContent` format: `{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}`.
+The `images` and `imagePaths` fields are optional. Each inline image uses `ImageContent` format: `{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}`. `imagePaths` is intended for trusted local RPC clients and accepts up to 10 paths.
 
 #### steer
 
@@ -90,7 +96,7 @@ With images:
 {"type": "steer", "message": "Look at this instead", "images": [{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}]}
 ```
 
-The `images` field is optional. Each image uses `ImageContent` format (same as `prompt`).
+The `images` and `imagePaths` fields are optional (same as `prompt`).
 
 Response:
 ```json
@@ -112,7 +118,7 @@ With images:
 {"type": "follow_up", "message": "Also check this image", "images": [{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}]}
 ```
 
-The `images` field is optional. Each image uses `ImageContent` format (same as `prompt`).
+The `images` and `imagePaths` fields are optional (same as `prompt`).
 
 Response:
 ```json
@@ -194,10 +200,10 @@ The `model` field is a full [Model](#model) object or `null`. The `sessionName` 
 
 #### get_messages
 
-Get all messages in the conversation.
+Get a page of messages in the conversation. With no parameters, this returns all messages for backwards compatibility. Use `limit` to return only the most recent messages; pass the returned `nextBefore` value as `before` to load an earlier page.
 
 ```json
-{"type": "get_messages"}
+{"type": "get_messages", "limit": 60}
 ```
 
 Response:
@@ -206,7 +212,7 @@ Response:
   "type": "response",
   "command": "get_messages",
   "success": true,
-  "data": {"messages": [...]}
+  "data": {"messages": [...], "total": 241, "nextBefore": 181}
 }
 ```
 
@@ -275,6 +281,17 @@ Response contains an array of full [Model](#model) objects:
   }
 }
 ```
+
+#### Provider configuration
+
+```json
+{"id":"1","type":"get_provider_catalog"}
+{"id":"2","type":"login_provider","providerId":"anthropic","authType":"oauth"}
+{"id":"3","type":"logout_provider","providerId":"anthropic"}
+{"id":"4","type":"reload_models"}
+```
+
+`login_provider` can emit `auth_event` and blocking `extension_ui_request` records while authentication is in progress. Respond with `extension_ui_response`. Trusted desktop hosts may include `value` for non-interactive API-key login; the value is never returned in a response.
 
 ### Thinking
 
@@ -718,6 +735,16 @@ Response:
   }
 }
 ```
+
+#### navigate_tree
+
+Navigate to an entry in the active session tree. Set `summarize` to retain a summary of the branch being left.
+
+```json
+{"type": "navigate_tree", "entryId": "abc123", "summarize": true}
+```
+
+The response contains `cancelled`, optional `aborted`, and `editorText` when Pi restores a user message into its editor.
 
 #### get_last_assistant_text
 

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent K</title>
+    <script>
+      try {
+        const cached = JSON.parse(localStorage.getItem("agent-k-settings") || "{}");
+        document.documentElement.dataset.theme = cached.theme === "dark" ||
+          (cached.theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+          ? "dark"
+          : "light";
+        document.documentElement.lang = cached.locale === "en-US" ? "en-US" : "zh-CN";
+      } catch {
+        document.documentElement.dataset.theme = "light";
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
