@@ -44,6 +44,7 @@ if (compileCode !== 0) process.exit(Number(compileCode) || 1);
 // back to PowerShell (Backspace then prints as ^H). It only needs stdout and
 // stderr for this launcher, so deliberately give it no console input handle.
 const vite = run(bin("vite"), ["--host", "127.0.0.1"], {
+  detached: !windows,
   stdio: ["ignore", "inherit", "inherit"],
 });
 let electron;
@@ -57,6 +58,17 @@ function stopChild(child) {
       windowsHide: true,
     });
     return;
+  }
+  // Vite and Electron each run in their own Unix process group. Stopping the
+  // group also releases Chromium helpers and the listening socket if the
+  // launcher receives Ctrl+Z, SIGHUP, or another terminal signal.
+  if (child.pid) {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+      return;
+    } catch (cause) {
+      if (cause?.code !== "ESRCH") throw cause;
+    }
   }
   child.kill("SIGTERM");
 }
@@ -76,8 +88,12 @@ const cleanup = () => {
   stop();
   restoreTerminal();
 };
-process.once("SIGINT", cleanup);
-process.once("SIGTERM", cleanup);
+for (const signal of windows
+  ? ["SIGINT", "SIGTERM"]
+  : ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGTSTP"]) {
+  process.once(signal, cleanup);
+}
+process.once("exit", stop);
 
 try {
   await waitForVite(vite);
@@ -86,7 +102,7 @@ try {
     AGENT_K_DEV_URL: "http://127.0.0.1:1420",
   };
   delete env.ELECTRON_RUN_AS_NODE;
-  electron = run(bin("electron"), ["."], { env });
+  electron = run(bin("electron"), ["."], { detached: !windows, env });
   const code = await new Promise((resolve) => electron.once("exit", resolve));
   process.exitCode = Number(code) || 0;
 } catch (cause) {

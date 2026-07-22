@@ -59,12 +59,6 @@ export type RuntimeInfo = {
   operatingSystem: string;
   architecture: string;
 };
-export type ConsoleCompletion = {
-  text: string;
-  replacementIndex: number;
-  replacementLength: number;
-};
-
 export type PiResource = {
   kind: "skill" | "extension";
   name: string;
@@ -75,11 +69,17 @@ export type PiResource = {
   origin: "top-level" | "package";
   baseDir?: string;
   enabled: boolean;
+  fileFormat?: {
+    id: string;
+    name: string;
+    enabled: boolean;
+  };
 };
 
 export type PiResourceChange = {
   resource: PiResource;
   enabled: boolean;
+  target: "resource" | "file-format";
 };
 
 export type FileFormatPluginResource = {
@@ -241,12 +241,12 @@ export const desktop = {
     invoke<void>("trash_path", { root, path }),
   openTerminal: (root: string, path: string) =>
     invoke<void>("open_terminal_at", { root, path }),
-  startProjectConsole: (root: string) =>
-    invoke<string>("start_project_console", { root }),
+  startProjectConsole: (root: string, cols: number, rows: number) =>
+    invoke<string>("start_project_console", { root, cols, rows }),
   writeProjectConsole: (id: string, data: string) =>
     invoke<void>("write_project_console", { id, data }),
-  completeProjectConsole: (root: string, input: string) =>
-    invoke<Array<ConsoleCompletion | string>>("complete_project_console", { root, input }),
+  resizeProjectConsole: (id: string, cols: number, rows: number) =>
+    invoke<void>("resize_project_console", { id, cols, rows }),
   stopProjectConsole: (id: string) =>
     invoke<void>("stop_project_console", { id }),
   openInFileManager: (root: string, path = "") =>

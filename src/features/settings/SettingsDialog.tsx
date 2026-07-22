@@ -26,6 +26,38 @@ const featuredSkills = [
   },
 ];
 
+function resourceChangeKey(
+  resource: PiResource,
+  target: PiResourceChange["target"],
+): string {
+  return `${target}:${resource.kind}:${resource.path}`;
+}
+
+function withPendingResourceChanges(
+  resources: PiResource[],
+  changes: PiResourceChange[],
+): PiResource[] {
+  const pending = new Map(changes.map((change) => [
+    resourceChangeKey(change.resource, change.target),
+    change.enabled,
+  ]));
+  return resources.map((resource) => ({
+    ...resource,
+    enabled:
+      pending.get(resourceChangeKey(resource, "resource")) ?? resource.enabled,
+    ...(resource.fileFormat
+      ? {
+          fileFormat: {
+            ...resource.fileFormat,
+            enabled:
+              pending.get(resourceChangeKey(resource, "file-format")) ??
+              resource.fileFormat.enabled,
+          },
+        }
+      : {}),
+  }));
+}
+
 function loadAboutData() {
   aboutDataPromise ??= Promise.all([platform.appVersion(), desktop.runtimeInfo()]).catch(
     (error) => {
@@ -168,19 +200,17 @@ export function SettingsDialog({
     setError(undefined);
     void desktop.piResources(cwd, runtimeId)
       .then((found) => {
-        const pending = new Map(resourceChanges.map((change) => [
-          `${change.resource.kind}:${change.resource.path}`,
-          change.enabled,
-        ]));
         for (const resource of found) {
-          const key = `${resource.kind}:${resource.path}`;
-          if (!resourceBaselineRef.current.has(key))
-            resourceBaselineRef.current.set(key, resource.enabled);
+          const resourceKey = resourceChangeKey(resource, "resource");
+          if (!resourceBaselineRef.current.has(resourceKey))
+            resourceBaselineRef.current.set(resourceKey, resource.enabled);
+          if (resource.fileFormat) {
+            const pluginKey = resourceChangeKey(resource, "file-format");
+            if (!resourceBaselineRef.current.has(pluginKey))
+              resourceBaselineRef.current.set(pluginKey, resource.fileFormat.enabled);
+          }
         }
-        setResources(found.map((resource) => ({
-          ...resource,
-          enabled: pending.get(`${resource.kind}:${resource.path}`) ?? resource.enabled,
-        })));
+        setResources(withPendingResourceChanges(found, resourceChanges));
       })
       .catch((cause) => setError(String(cause)))
       .finally(() => setBusy(false));
@@ -374,22 +404,56 @@ export function SettingsDialog({
       setBusy(false);
     }
   };
-  const toggleResource = (resource: PiResource) => {
-    const key = `${resource.kind}:${resource.path}`;
-    const enabled = !resource.enabled;
+  const setResourceState = (
+    resource: PiResource,
+    enabled: boolean,
+    fileFormatEnabled = resource.fileFormat?.enabled,
+  ) => {
+    const nextResource: PiResource = {
+      ...resource,
+      enabled,
+      ...(resource.fileFormat && fileFormatEnabled !== undefined
+        ? { fileFormat: { ...resource.fileFormat, enabled: fileFormatEnabled } }
+        : {}),
+    };
     setResources((current) => current.map((item) =>
       item.kind === resource.kind && item.path === resource.path
-        ? { ...item, enabled }
+        ? nextResource
         : item,
     ));
     setResourceChanges((current) => {
-      const next = current.filter((change) =>
-        `${change.resource.kind}:${change.resource.path}` !== key,
-      );
-      if (resourceBaselineRef.current.get(key) !== enabled)
-        next.push({ resource, enabled });
+      const resourceKey = resourceChangeKey(resource, "resource");
+      const pluginKey = resourceChangeKey(resource, "file-format");
+      const next = current.filter((change) => {
+        const key = resourceChangeKey(change.resource, change.target);
+        return key !== resourceKey && key !== pluginKey;
+      });
+      if (resourceBaselineRef.current.get(resourceKey) !== enabled)
+        next.push({ resource: nextResource, enabled, target: "resource" });
+      if (
+        nextResource.fileFormat &&
+        fileFormatEnabled !== undefined &&
+        resourceBaselineRef.current.get(pluginKey) !== fileFormatEnabled
+      ) next.push({
+        resource: nextResource,
+        enabled: fileFormatEnabled,
+        target: "file-format",
+      });
       return next;
     });
+  };
+  const toggleResource = (resource: PiResource) => {
+    const enabled = !resource.enabled;
+    setResourceState(
+      resource,
+      enabled,
+      enabled && resource.fileFormat ? true : resource.fileFormat?.enabled,
+    );
+  };
+  const toggleFileFormat = (resource: PiResource) => {
+    if (!resource.fileFormat) return;
+    const enabled = !resource.fileFormat.enabled;
+    setResourceState(resource, enabled ? resource.enabled : false, enabled);
   };
   const previewSkill = async () => {
     if (!skillHubUrl.trim()) return;
@@ -539,19 +603,17 @@ export function SettingsDialog({
                       setBusy(true);
                       void desktop.piResources(cwd, runtimeId)
                         .then((found) => {
-                          const pending = new Map(resourceChanges.map((change) => [
-                            `${change.resource.kind}:${change.resource.path}`,
-                            change.enabled,
-                          ]));
                           for (const resource of found) {
-                            const key = `${resource.kind}:${resource.path}`;
-                            if (!resourceBaselineRef.current.has(key))
-                              resourceBaselineRef.current.set(key, resource.enabled);
+                            const resourceKey = resourceChangeKey(resource, "resource");
+                            if (!resourceBaselineRef.current.has(resourceKey))
+                              resourceBaselineRef.current.set(resourceKey, resource.enabled);
+                            if (resource.fileFormat) {
+                              const pluginKey = resourceChangeKey(resource, "file-format");
+                              if (!resourceBaselineRef.current.has(pluginKey))
+                                resourceBaselineRef.current.set(pluginKey, resource.fileFormat.enabled);
+                            }
                           }
-                          setResources(found.map((resource) => ({
-                            ...resource,
-                            enabled: pending.get(`${resource.kind}:${resource.path}`) ?? resource.enabled,
-                          })));
+                          setResources(withPendingResourceChanges(found, resourceChanges));
                         })
                         .catch((cause) => setError(String(cause)))
                         .finally(() => setBusy(false));
@@ -562,6 +624,9 @@ export function SettingsDialog({
                   </button>
                 </div>
                 <p className="settings-description">{t("resourceDescription")}</p>
+                {page === "skills" && resources.some((resource) => resource.fileFormat) && (
+                  <p className="file-format-dependency"><i className="fa-solid fa-link" /> {t("filePluginDependency")}</p>
+                )}
                 {resourcesLocked && (
                   <p className="resource-lock-notice" role="status">
                     <i className="fa-solid fa-spinner fa-spin" /> {t("resourcesLocked")}
@@ -615,19 +680,40 @@ export function SettingsDialog({
                           <strong>{resource.name}</strong>
                           <small>{resource.description || resource.path}</small>
                           <span>{resource.scope === "project" ? t("projectScope") : t("userScope")} · {resource.origin === "package" ? resource.source : resource.path}</span>
+                          {resource.fileFormat && <span>{t("filePlugin")}: {resource.fileFormat.name}</span>}
                         </div>
                         <div className="resource-card-actions">
                           {resource.kind === "skill" && <button onClick={() => setSelectedSkill(resource)} type="button">{t("skillDetails")}</button>}
-                          <button
-                            aria-checked={resource.enabled}
-                            className={resource.enabled ? "resource-toggle is-active" : "resource-toggle"}
-                            disabled={!cwd || resourcesLocked}
-                            onClick={() => toggleResource(resource)}
-                            role="switch"
-                            type="button"
-                          >
-                            <span />
-                          </button>
+                          {resource.fileFormat && (
+                            <div className="resource-switch">
+                              <span>{t("filePlugin")}</span>
+                              <button
+                                aria-checked={resource.fileFormat.enabled}
+                                aria-label={`${t("filePlugin")}: ${resource.name}`}
+                                className={resource.fileFormat.enabled ? "resource-toggle is-active" : "resource-toggle"}
+                                disabled={!cwd || resourcesLocked}
+                                onClick={() => toggleFileFormat(resource)}
+                                role="switch"
+                                type="button"
+                              >
+                                <span />
+                              </button>
+                            </div>
+                          )}
+                          <div className="resource-switch">
+                            <span>{resource.kind === "skill" ? t("piSkill") : t("extensions")}</span>
+                            <button
+                              aria-checked={resource.enabled}
+                              aria-label={`${resource.kind === "skill" ? t("piSkill") : t("extensions")}: ${resource.name}`}
+                              className={resource.enabled ? "resource-toggle is-active" : "resource-toggle"}
+                              disabled={!cwd || resourcesLocked}
+                              onClick={() => toggleResource(resource)}
+                              role="switch"
+                              type="button"
+                            >
+                              <span />
+                            </button>
+                          </div>
                         </div>
                       </article>
                     ))}

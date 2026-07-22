@@ -9,11 +9,16 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist "node_modules\.bin\electron.cmd" (
-  echo Installing npm dependencies...
-  call npm ci --ignore-scripts
-  if errorlevel 1 exit /b 1
-)
+if not exist "node_modules\.bin\electron.cmd" goto :install_dependencies
+if not exist "node_modules\node-pty\package.json" goto :install_dependencies
+goto :dependencies_ready
+
+:install_dependencies
+echo Installing npm dependencies...
+call npm ci --ignore-scripts
+if errorlevel 1 exit /b 1
+
+:dependencies_ready
 
 if not exist "node_modules\electron\dist\electron.exe" (
   echo Installing the reviewed Electron runtime...

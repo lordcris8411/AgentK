@@ -16,6 +16,7 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 
 run npm ci --ignore-scripts
+run npm run prepare:native
 run npm run check
 run npm test
 run npm run build

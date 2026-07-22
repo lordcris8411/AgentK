@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
-import type { FileFormatPluginResource } from "./types.js";
-import { homeDirectory, piAgentDirectory } from "./utils.js";
+import { dirname, join, resolve } from "node:path";
+import type { FileFormatPluginResource, PiResource } from "./types.js";
+import { homeDirectory, piAgentDirectory, readJson } from "./utils.js";
 
 const MAX_PLUGIN_SOURCE_BYTES = 64 * 1024;
 const editors = new Set(["text", "markdown", "html", "media", "unsupported"]);
@@ -93,7 +93,12 @@ async function discover(directory: string, scope: FileFormatPluginResource["scop
   }
 }
 
-export async function getFileFormatPlugins(cwd: string): Promise<FileFormatPluginResource[]> {
+function pathKey(path: string): string {
+  const normalized = resolve(path);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+export async function discoverFileFormatPlugins(cwd: string): Promise<FileFormatPluginResource[]> {
   const home = homeDirectory();
   const found = (await Promise.all([
     discover(join(piAgentDirectory(), "skills"), "user"),
@@ -107,4 +112,24 @@ export async function getFileFormatPlugins(cwd: string): Promise<FileFormatPlugi
   ))
     unique.set(plugin.id, plugin);
   return [...unique.values()];
+}
+
+export async function getFileFormatPlugins(
+  appDataPath: string,
+  cwd: string,
+): Promise<FileFormatPluginResource[]> {
+  const [plugins, registry] = await Promise.all([
+    discoverFileFormatPlugins(cwd),
+    readJson<PiResource[]>(join(appDataPath, "pi-resources.json"), []),
+  ]);
+  const disabled = new Set(
+    registry.flatMap((resource) =>
+      resource.kind === "skill" && resource.fileFormat?.enabled === false
+        ? [`${pathKey(dirname(resource.path))}\0${resource.fileFormat.id}`]
+        : [],
+    ),
+  );
+  return plugins.filter((plugin) =>
+    !disabled.has(`${pathKey(dirname(plugin.path))}\0${plugin.id}`),
+  );
 }

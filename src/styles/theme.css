@@ -209,6 +209,10 @@ body {
 .resource-card-actions { align-items: center; display: flex !important; flex: 0 0 auto; gap: 14px; }
 .resource-card-actions > button:not(.resource-toggle) { background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: 7px; color: var(--text-primary); font-size: 12px; padding: 6px 10px; }
 .resource-card-actions > button:not(.resource-toggle):hover { background: var(--surface-hover); }
+.resource-switch { align-items: center; display: grid; gap: 5px; justify-items: center; }
+.resource-switch > span { color: var(--text-muted); font-size: 10px; line-height: 1; white-space: nowrap; }
+.file-format-dependency { align-items: center; background: var(--surface-panel); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-secondary); display: flex; font-size: 12px; gap: 8px; margin: -10px 0 14px; padding: 9px 11px; }
+.file-format-dependency i { color: var(--accent); }
 .skill-details dl { margin: 0; }
 .skill-details dl > div { border-bottom: 1px solid var(--border-color); display: grid; gap: 5px; padding: 10px 0; }
 .skill-details dl > div:last-child { border-bottom: 0; }
@@ -2573,27 +2577,20 @@ body.is-resizing-console { cursor: ns-resize; user-select: none; }
 .project-console > header > small { color: var(--text-muted, #8c857e); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-console > header > button { background: transparent; border: 0; color: var(--text-secondary, #6f6963); cursor: pointer; font-size: 11px; margin-left: auto; padding: 6px; }
 .project-console > header > button:hover { color: var(--text-primary, #302d2a); }
-.project-console-output {
+.project-console-terminal {
   background: var(--surface-raised, #fff);
   border: 1px solid var(--border-color, #e4e0db);
   border-radius: 6px;
-  color: var(--text-primary, #302d2a);
   flex: 1 1 0;
-  font: 12px/1.55 inherit;
-  margin: 0 8px;
+  margin: 0 8px 8px;
   min-height: 0;
-  overflow: auto;
-  padding: 8px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  overflow: hidden;
+  padding: 6px;
 }
-.project-console-output:focus { border-color: var(--border-strong, #bcb4ac); outline: none; }
-.project-console-output .is-command { color: var(--accent, #a95624); }
-.project-console-output .is-error { color: var(--danger, #b14a38); }
-.project-console-output .is-status { color: var(--text-muted, #8c857e); }
-.project-console-input { color: var(--text-primary, #302d2a); }
-.project-console-input i { animation: project-console-cursor 1s steps(1) infinite; background: var(--text-primary, #302d2a); display: inline-block; height: 1.1em; margin-left: 1px; vertical-align: -0.2em; width: 7px; }
-@keyframes project-console-cursor { 50% { opacity: 0; } }
+.project-console-terminal:focus-within { border-color: var(--border-strong, #bcb4ac); }
+.project-console-terminal .xterm { height: 100%; }
+.project-console-terminal .xterm-viewport { scrollbar-color: var(--scrollbar-thumb) transparent; }
+.project-console.is-collapsed .project-console-terminal { display: none; }
 .file-explorer {
   box-sizing: border-box;
   color: #615c56;

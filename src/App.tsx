@@ -147,7 +147,7 @@ export function App() {
       return;
     }
     const finishBusy = beginBusy(
-      en ? "Applying Extension/Skill settings…" : "正在应用 Extension/Skill 设置…",
+      en ? "Applying file plugin, Extension, and Skill settings…" : "正在应用文件插件、Extension 和 Skill 设置…",
       0,
       420,
     );

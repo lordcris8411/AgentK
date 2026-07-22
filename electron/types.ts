@@ -52,11 +52,17 @@ export interface PiResource {
   origin: "top-level" | "package";
   baseDir?: string;
   enabled: boolean;
+  fileFormat?: {
+    id: string;
+    name: string;
+    enabled: boolean;
+  };
 }
 
 export interface PiResourceChange {
   resource: PiResource;
   enabled: boolean;
+  target: "resource" | "file-format";
 }
 
 export interface FileFormatPluginResource {

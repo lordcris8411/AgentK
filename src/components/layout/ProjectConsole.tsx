@@ -1,50 +1,168 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal, type ITheme } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
 import { desktop } from "../../lib/desktop";
 import { useSettings } from "../../features/settings/SettingsContext";
 
-type ConsoleLine = { kind: "error" | "output" | "status"; text: string };
-const maximumOutputCharacters = 300_000;
+function terminalTheme(dark: boolean): ITheme {
+  return dark
+    ? {
+        background: "#242321",
+        foreground: "#dedad4",
+        cursor: "#dedad4",
+        cursorAccent: "#242321",
+        selectionBackground: "#69533f",
+        black: "#242321",
+        red: "#d17a6d",
+        green: "#8fb573",
+        yellow: "#d5ad68",
+        blue: "#75a9c7",
+        magenta: "#b998c5",
+        cyan: "#72b8ad",
+        white: "#dedad4",
+        brightBlack: "#817b73",
+        brightRed: "#eb9184",
+        brightGreen: "#a8cc8d",
+        brightYellow: "#ebc47c",
+        brightBlue: "#8dc3e0",
+        brightMagenta: "#d0addb",
+        brightCyan: "#8ed0c5",
+        brightWhite: "#fffdf9",
+      }
+    : {
+        background: "#fffdf9",
+        foreground: "#302d2a",
+        cursor: "#302d2a",
+        cursorAccent: "#fffdf9",
+        selectionBackground: "#d9c3ae",
+        black: "#302d2a",
+        red: "#a73e32",
+        green: "#557d3e",
+        yellow: "#936a20",
+        blue: "#316e92",
+        magenta: "#795388",
+        cyan: "#27796f",
+        white: "#e7e2dc",
+        brightBlack: "#77716a",
+        brightRed: "#c45548",
+        brightGreen: "#6d974f",
+        brightYellow: "#ad8132",
+        brightBlue: "#4488af",
+        brightMagenta: "#9369a3",
+        brightCyan: "#38958a",
+        brightWhite: "#ffffff",
+      };
+}
 
 export function ProjectConsole({ root, onError }: { root?: string; onError(message: string): void }) {
-  const { settings } = useSettings();
+  const { resolvedTheme, settings } = useSettings();
   const en = settings.locale === "en-US";
   const [collapsed, setCollapsed] = useState(false);
-  const [input, setInput] = useState("");
-  const [terminalId, setTerminalId] = useState<string>();
-  const [lines, setLines] = useState<ConsoleLine[]>([]);
   const [height, setHeight] = useState(220);
+  const terminalHostRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<Terminal | undefined>(undefined);
+  const fitAddonRef = useRef<FitAddon | undefined>(undefined);
+  const enRef = useRef(en);
+  const onErrorRef = useRef(onError);
   const terminalIdRef = useRef<string | undefined>(undefined);
-  const outputRef = useRef<HTMLDivElement>(null);
+  const pendingOutputRef = useRef(new Map<string, string>());
+  const resizeFrameRef = useRef<number | undefined>(undefined);
   const resizeStart = useRef<{ height: number; y: number } | undefined>(undefined);
-  const completion = useRef<{ candidates: string[]; index: number } | undefined>(undefined);
-  const completionRequest = useRef(0);
-  const promptRef = useRef("");
-  terminalIdRef.current = terminalId;
+  const lastDimensionsRef = useRef<{ cols: number; rows: number } | undefined>(undefined);
+  enRef.current = en;
+  onErrorRef.current = onError;
+
+  const fitTerminal = useCallback(() => {
+    if (resizeFrameRef.current !== undefined) return;
+    resizeFrameRef.current = window.requestAnimationFrame(() => {
+      resizeFrameRef.current = undefined;
+      const host = terminalHostRef.current;
+      const terminal = terminalRef.current;
+      const fitAddon = fitAddonRef.current;
+      if (!host || !terminal || !fitAddon || host.clientWidth < 2 || host.clientHeight < 2)
+        return;
+      try {
+        fitAddon.fit();
+      } catch {
+        return;
+      }
+      const dimensions = { cols: terminal.cols, rows: terminal.rows };
+      const previous = lastDimensionsRef.current;
+      lastDimensionsRef.current = dimensions;
+      const id = terminalIdRef.current;
+      if (id && (previous?.cols !== dimensions.cols || previous.rows !== dimensions.rows))
+        void desktop.resizeProjectConsole(id, dimensions.cols, dimensions.rows).catch(() => undefined);
+    });
+  }, []);
+
+  useEffect(() => {
+    const host = terminalHostRef.current;
+    if (!host) return;
+    const terminal = new Terminal({
+      cursorBlink: true,
+      cursorStyle: "block",
+      fontFamily: 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace',
+      fontSize: 12,
+      lineHeight: 1.25,
+      scrollback: 10_000,
+      theme: terminalTheme(resolvedTheme === "dark"),
+    });
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(host);
+    terminalRef.current = terminal;
+    fitAddonRef.current = fitAddon;
+    const dataSubscription = terminal.onData((data) => {
+      const id = terminalIdRef.current;
+      if (!id) return;
+      void desktop.writeProjectConsole(id, data).catch((cause) =>
+        onErrorRef.current(`${enRef.current ? "Console input failed" : "控制台输入失败"}：${String(cause)}`),
+      );
+    });
+    const observer = new ResizeObserver(fitTerminal);
+    observer.observe(host);
+    fitTerminal();
+    return () => {
+      observer.disconnect();
+      dataSubscription.dispose();
+      terminal.dispose();
+      terminalRef.current = undefined;
+      fitAddonRef.current = undefined;
+      if (resizeFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = undefined;
+      }
+    };
+  }, [fitTerminal]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    terminal.options.theme = terminalTheme(resolvedTheme === "dark");
+  }, [resolvedTheme]);
 
   useEffect(() => {
     let stop: (() => void) | undefined;
     let disposed = false;
     void desktop.onEvent((event) => {
       const id = typeof event.id === "string" ? event.id : undefined;
-      if (!id || id !== terminalIdRef.current) return;
-      if (event.type === "project_console_output" && typeof event.text === "string") {
-        const text = String(event.text);
-        const prompts = text.match(/PS [^\r\n]*> ?/g);
-        if (prompts?.length) promptRef.current = prompts[prompts.length - 1]!;
-        const kind: ConsoleLine["kind"] = event.stream === "stderr" ? "error" : "output";
-        setLines((current) => {
-          const next = [...current, { kind, text }];
-          let length = 0;
-          for (let index = next.length - 1; index >= 0; index -= 1) {
-            length += next[index]!.text.length;
-            if (length > maximumOutputCharacters) return next.slice(index + 1);
-          }
-          return next;
-        });
+      if (!id) return;
+      if (event.type === "project_console_output" && typeof event.data === "string") {
+        if (id === terminalIdRef.current) terminalRef.current?.write(event.data);
+        else {
+          const pending = `${pendingOutputRef.current.get(id) ?? ""}${event.data}`;
+          pendingOutputRef.current.set(id, pending.slice(-300_000));
+        }
       }
       if (event.type === "project_console_exit") {
-        setTerminalId(undefined);
-        setLines((current) => [...current, { kind: "status", text: "\n[console closed]\n" }]);
+        pendingOutputRef.current.delete(id);
+        if (id !== terminalIdRef.current) return;
+        terminalIdRef.current = undefined;
+        const code = typeof event.code === "number" ? event.code : undefined;
+        terminalRef.current?.write(
+          `\r\n\x1b[90m[${enRef.current ? "process exited" : "进程已退出"}${code === undefined ? "" : `: ${code}`}]\x1b[0m\r\n`,
+        );
       }
     }).then((unlisten) => {
       if (disposed) unlisten();
@@ -55,10 +173,45 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
       stop?.();
     };
   }, []);
+
   useEffect(() => {
-    const output = outputRef.current;
-    if (output) output.scrollTop = output.scrollHeight;
-  }, [input, lines]);
+    const terminal = terminalRef.current;
+    terminal?.reset();
+    terminal?.clear();
+    terminalIdRef.current = undefined;
+    lastDimensionsRef.current = undefined;
+    if (!root || !terminal) return;
+    let disposed = false;
+    let createdId: string | undefined;
+    void desktop.startProjectConsole(root, terminal.cols, terminal.rows).then((id) => {
+      createdId = id;
+      if (disposed) {
+        pendingOutputRef.current.delete(id);
+        void desktop.stopProjectConsole(id);
+        return;
+      }
+      terminalIdRef.current = id;
+      const pending = pendingOutputRef.current.get(id);
+      pendingOutputRef.current.delete(id);
+      if (pending) terminal.write(pending);
+      lastDimensionsRef.current = { cols: terminal.cols, rows: terminal.rows };
+      terminal.focus();
+      fitTerminal();
+    }).catch((cause) => {
+      const message = `${enRef.current ? "Unable to start console" : "无法启动控制台"}：${String(cause)}`;
+      terminal.writeln(`\x1b[31m${message}\x1b[0m`);
+      onErrorRef.current(message);
+    });
+    return () => {
+      disposed = true;
+      terminalIdRef.current = undefined;
+      if (createdId) {
+        pendingOutputRef.current.delete(createdId);
+        void desktop.stopProjectConsole(createdId);
+      }
+    };
+  }, [fitTerminal, root]);
+
   useEffect(() => {
     const move = (event: PointerEvent) => {
       const start = resizeStart.current;
@@ -68,6 +221,7 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
     const stop = () => {
       resizeStart.current = undefined;
       document.body.classList.remove("is-resizing-console");
+      fitTerminal();
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
@@ -75,91 +229,11 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
     };
-  }, []);
-  useEffect(() => {
-    setLines([]);
-    setInput("");
-    setTerminalId(undefined);
-    promptRef.current = root ? `PS ${root}> ` : "";
-    if (!root) return;
-    let disposed = false;
-    let createdId: string | undefined;
-    void desktop.startProjectConsole(root).then((id) => {
-      createdId = id;
-      if (disposed) {
-        void desktop.stopProjectConsole(id);
-        return;
-      }
-      setTerminalId(id);
-    }).catch((cause) => onError(`${en ? "Unable to start console" : "无法启动控制台"}：${String(cause)}`));
-    return () => {
-      disposed = true;
-      if (createdId) void desktop.stopProjectConsole(createdId);
-    };
-  }, [en, onError, root]);
+  }, [fitTerminal]);
 
-  const send = (data: string) => {
-    const id = terminalIdRef.current;
-    if (!id) return;
-    void desktop.writeProjectConsole(id, data).catch((cause) => onError(`${en ? "Console input failed" : "控制台输入失败"}：${String(cause)}`));
-  };
-  const keyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.ctrlKey && event.key.toLowerCase() === "c") {
-      event.preventDefault();
-      send("\u0003");
-      return;
-    }
-    if (event.key === "Enter") {
-      event.preventDefault();
-      if (/^(?:cls|clear)$/i.test(input.trim())) {
-        setLines(promptRef.current ? [{ kind: "output", text: promptRef.current }] : []);
-        setInput("");
-        return;
-      }
-      send(`${input}\r\n`);
-      setInput("");
-      return;
-    }
-    if (event.key === "Tab") {
-      event.preventDefault();
-      if (!root) return;
-      const current = completion.current;
-      if (current && current.candidates[current.index] === input) {
-        const step = event.shiftKey ? -1 : 1;
-        const index = (current.index + step + current.candidates.length) % current.candidates.length;
-        completion.current = { ...current, index };
-        setInput(current.candidates[index]!);
-        return;
-      }
-      const request = ++completionRequest.current;
-      void desktop.completeProjectConsole(root, input).then((matches) => {
-        if (request !== completionRequest.current || matches.length === 0) return;
-        const legacyStart = Math.max(input.lastIndexOf(" "), input.lastIndexOf("\t")) + 1;
-        const candidates = matches.map((match) =>
-          typeof match === "string"
-            ? input.slice(0, legacyStart) + match
-            : input.slice(0, match.replacementIndex) +
-              match.text +
-              input.slice(match.replacementIndex + match.replacementLength),
-        );
-        const index = event.shiftKey ? candidates.length - 1 : 0;
-        completion.current = { candidates, index };
-        setInput(candidates[index]!);
-      }).catch((cause) => onError(`${en ? "Console completion failed" : "控制台补全失败"}：${String(cause)}`));
-      return;
-    }
-    if (event.key === "Backspace") {
-      event.preventDefault();
-      setInput((current) => current.slice(0, -1));
-      return;
-    }
-    if (event.key === "Escape") { event.preventDefault(); setInput(""); return; }
-    if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1) {
-      event.preventDefault();
-      completion.current = undefined;
-      setInput((current) => current + event.key);
-    }
-  };
+  useEffect(() => {
+    fitTerminal();
+  }, [collapsed, fitTerminal, height]);
 
   return (
     <section className={collapsed ? "project-console is-collapsed" : "project-console"} style={collapsed ? undefined : { flexBasis: height }}>
@@ -174,14 +248,23 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
         role="separator"
       /> : null}
       <header>
-        <span><i aria-hidden="true" className="fa-solid fa-terminal" /> {en ? "Console" : "控制台"}</span>
+        <span><i aria-hidden="true" className="fa-solid fa-terminal" /> {en ? "Terminal" : "终端"}</span>
         <small title={root}>{root ?? (en ? "No project selected" : "未选择项目")}</small>
-        <button aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)} title={collapsed ? (en ? "Show console" : "显示控制台") : (en ? "Hide console" : "隐藏控制台")} type="button"><i aria-hidden="true" className={`fa-solid fa-chevron-${collapsed ? "up" : "down"}`} /></button>
+        <button
+          aria-expanded={!collapsed}
+          onClick={() => setCollapsed((value) => !value)}
+          title={collapsed ? (en ? "Show terminal" : "显示终端") : (en ? "Hide terminal" : "隐藏终端")}
+          type="button"
+        >
+          <i aria-hidden="true" className={`fa-solid fa-chevron-${collapsed ? "up" : "down"}`} />
+        </button>
       </header>
-      {!collapsed ? <div aria-label={en ? "Project terminal" : "项目终端"} className="project-console-output" onClick={() => outputRef.current?.focus()} onKeyDown={keyDown} ref={outputRef} role="textbox" tabIndex={0}>
-        {lines.length ? lines.map((line, index) => <span className={`is-${line.kind}`} key={index}>{line.text}</span>) : <span className="is-status">{terminalId ? "" : (en ? "Starting shell…\n" : "正在启动 shell…\n")}</span>}
-        {terminalId ? <span className="project-console-input">{input}<i aria-label={en ? "Cursor" : "光标"} /></span> : null}
-      </div> : null}
+      <div
+        aria-label={en ? "Project terminal" : "项目终端"}
+        className="project-console-terminal"
+        onMouseDown={() => terminalRef.current?.focus()}
+        ref={terminalHostRef}
+      />
     </section>
   );
 }

@@ -10,7 +10,7 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ ! -x node_modules/.bin/electron ]]; then
+if [[ ! -x node_modules/.bin/electron || ! -f node_modules/node-pty/package.json ]]; then
   echo "Installing npm dependencies..."
   npm ci --ignore-scripts
 fi

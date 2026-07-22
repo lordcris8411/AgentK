@@ -10,6 +10,7 @@ if errorlevel 1 (
 )
 
 call :run npm ci --ignore-scripts || goto :failed
+call :run npm run prepare:native || goto :failed
 call :run npm run check || goto :failed
 call :run npm test || goto :failed
 call :run npm run build || goto :failed

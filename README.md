@@ -150,7 +150,7 @@ cd AgentK
 script\run-windows.bat
 ~~~
 
-The scripts install locked npm dependencies, download the Electron runtime with its reviewed official installer, and launch Vite with Electron. Rust, Cargo, WebKitGTK development packages, and WebView2 are not required.
+The scripts install locked npm dependencies, prepare the reviewed native PTY module, download the Electron runtime with its reviewed official installer, and launch Vite with Electron. Rust, Cargo, WebKitGTK development packages, and WebView2 are not required.
 
 ## Requirements
 
@@ -173,17 +173,21 @@ sudo dnf install gtk3 nss alsa-lib mesa-libgbm
 
 ## Development and builds
 
-Install dependencies without running third-party lifecycle scripts, then run Electron's reviewed download script explicitly:
+Install dependencies without running third-party lifecycle scripts, then prepare the reviewed PTY module and Electron runtime explicitly:
 
 ~~~bash
 npm ci --ignore-scripts
+npm run prepare:native
 node node_modules/electron/install.js
 ~~~
+
+Building `node-pty` from source on Linux requires Python 3, `make`, and a C++ compiler. Release packages already contain the native module.
 
 | Command | Purpose |
 | --- | --- |
 | `npm run dev` | Start Vite and the complete Electron development environment |
 | `npm run dev:web` | Start only the Vite renderer |
+| `npm run prepare:native` | Prepare the reviewed `node-pty` native module |
 | `npm run check` | Type-check React, the Electron backend, and K Plan |
 | `npm run check:desktop` | Type-check the Electron main process |
 | `npm test` | Run K Plan tests |
@@ -388,7 +392,7 @@ cd AgentK
 script\run-windows.bat
 ~~~
 
-启动脚本会安装锁定的 npm 依赖、通过已审查的官方脚本下载 Electron 运行时，然后启动 Vite 与 Electron。不再需要 Rust、Cargo、WebKitGTK 开发包或 WebView2。
+启动脚本会安装锁定的 npm 依赖、准备已审查的原生 PTY 模块、通过已审查的官方脚本下载 Electron 运行时，然后启动 Vite 与 Electron。不再需要 Rust、Cargo、WebKitGTK 开发包或 WebView2。
 
 ## 系统要求
 
@@ -411,17 +415,21 @@ sudo dnf install gtk3 nss alsa-lib mesa-libgbm
 
 ## 开发与构建
 
-安装依赖时默认不执行第三方生命周期脚本；Electron 的官方下载脚本需单独运行：
+安装依赖时默认不执行第三方生命周期脚本；随后显式准备已审查的 PTY 模块和 Electron 运行时：
 
 ~~~bash
 npm ci --ignore-scripts
+npm run prepare:native
 node node_modules/electron/install.js
 ~~~
+
+Linux 源码开发环境构建 `node-pty` 时需要 Python 3、`make` 和 C++ 编译器；正式安装包已包含编译好的原生模块。
 
 | 命令 | 用途 |
 | --- | --- |
 | `npm run dev` | 启动 Vite 与完整 Electron 开发环境 |
 | `npm run dev:web` | 只启动 Vite 渲染层 |
+| `npm run prepare:native` | 准备已审查的 `node-pty` 原生模块 |
 | `npm run check` | 检查 React、Electron 后端和 K Plan TypeScript |
 | `npm run check:desktop` | 检查 Electron 主进程 TypeScript |
 | `npm test` | 运行 K Plan 测试 |

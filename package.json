@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "clean": "shx rm -rf dist .electron-dist",
-    "dev": "node script/electron-dev.mjs",
+    "dev": "npm run prepare:native && node script/electron-dev.mjs",
     "dev:web": "vite",
     "build": "npm run build:desktop && npm run build:web",
     "build:web": "tsc -b && vite build",
@@ -24,6 +24,7 @@
     "check:web": "tsc -b",
     "check:k-plan": "tsc -p extensions/k-plan/tsconfig.json",
     "check:desktop": "tsc -p tsconfig.electron.json --noEmit",
+    "prepare:native": "node script/prepare-native.mjs",
     "test": "node --test extensions/k-plan/index.test.ts",
     "preview": "vite preview",
     "electron": "electron ."
@@ -37,6 +38,8 @@
     "@types/react": "19.1.10",
     "@types/react-dom": "19.1.7",
     "@vitejs/plugin-react": "5.0.2",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "electron": "43.1.1",
     "electron-builder": "26.15.3",
     "katex": "0.18.0",
@@ -75,7 +78,6 @@
       "electron/preload.cjs",
       "agent-k-permissions.ts",
       "assets/icons/icon.png",
-      "!node_modules{,/**/*}",
       "package.json"
     ],
     "extraResources": [
@@ -110,5 +112,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }
+  },
+  "dependencies": {
+    "node-pty": "1.1.0"
   }
 }

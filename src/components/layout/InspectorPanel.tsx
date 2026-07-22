@@ -564,7 +564,15 @@ export function InspectorPanel({
     treeRef.current = undefined;
     setSelectedEntry(undefined);
     refresh(false);
-    if (root) {
+    const interval = window.setInterval(() => refresh(true), 5_000);
+    return () => window.clearInterval(interval);
+  }, [root]);
+  useEffect(() => {
+    const refreshFileFormats = () => {
+      if (!root) {
+        setFileFormatPlugins([]);
+        return;
+      }
       void desktop.fileFormatPlugins(root)
         .then((plugins) => setFileFormatPlugins(
           [...plugins]
@@ -572,9 +580,10 @@ export function InspectorPanel({
             .map((plugin) => plugin as FileFormatPlugin),
         ))
         .catch(() => setFileFormatPlugins([]));
-    } else setFileFormatPlugins([]);
-    const interval = window.setInterval(() => refresh(true), 5_000);
-    return () => window.clearInterval(interval);
+    };
+    refreshFileFormats();
+    window.addEventListener("agent-k-resources-changed", refreshFileFormats);
+    return () => window.removeEventListener("agent-k-resources-changed", refreshFileFormats);
   }, [root]);
   useEffect(
     () => () => {

@@ -1,6 +1,9 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { cp } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
+import * as pty from "node-pty";
+import type { IPty } from "node-pty";
 import type { JsonObject, PiResourceChange, SkillHubScope } from "./types.js";
 import { RpcPool } from "./agent/pool.js";
 import { resolvePiLaunch, type PiLaunch } from "./pi-runtime.js";
@@ -40,9 +43,7 @@ export interface DesktopBackendOptions {
 }
 
 type ProjectConsoleProcess = {
-  child: ChildProcess;
-  stderrDecoder: TextDecoder;
-  stdoutDecoder: TextDecoder;
+  terminal: IPty;
 };
 
 export class DesktopBackend {
@@ -127,7 +128,10 @@ export class DesktopBackend {
           optionalString(args.runtimeId),
         );
       case "get_file_format_plugins":
-        return getFileFormatPlugins(requiredString(args.cwd, "cwd"));
+        return getFileFormatPlugins(
+          this.options.appDataPath,
+          requiredString(args.cwd, "cwd"),
+        );
       case "apply_pi_resource_changes":
         return applyPiResourceChanges(
           this.options.appDataPath,
@@ -236,16 +240,21 @@ export class DesktopBackend {
       case "open_terminal_at":
         return this.files.openTerminal(requiredString(args.root, "root"), requiredString(args.path, "path"));
       case "start_project_console":
-        return this.startProjectConsole(requiredString(args.root, "root"));
+        return this.startProjectConsole(
+          requiredString(args.root, "root"),
+          requiredNumber(args.cols, "cols"),
+          requiredNumber(args.rows, "rows"),
+        );
       case "write_project_console":
         return this.writeProjectConsole(
           requiredString(args.id, "id"),
           requiredString(args.data, "data"),
         );
-      case "complete_project_console":
-        return this.completeProjectConsole(
-          requiredString(args.root, "root"),
-          requiredString(args.input, "input"),
+      case "resize_project_console":
+        return this.resizeProjectConsole(
+          requiredString(args.id, "id"),
+          requiredNumber(args.cols, "cols"),
+          requiredNumber(args.rows, "rows"),
         );
       case "stop_project_console":
         return this.stopProjectConsole(requiredString(args.id, "id"));
@@ -266,129 +275,71 @@ export class DesktopBackend {
     this.files.shutdown();
   }
 
-  private startProjectConsole(root: string): string {
+  private startProjectConsole(root: string, cols: number, rows: number): string {
     const id = randomId();
     const isWindows = process.platform === "win32";
-    const executable = isWindows ? "powershell.exe" : "/bin/sh";
-    const args = isWindows
-      ? [
-          "-NoLogo",
-          "-NoProfile",
-          "-NoExit",
-          "-Command",
-          "[Console]::InputEncoding=[Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding",
-        ]
-      : ["-i"];
-    const child = spawn(executable, args, {
+    const configuredShell = process.env.SHELL?.trim();
+    const executable = isWindows
+      ? "powershell.exe"
+      : configuredShell && isAbsolute(configuredShell) && existsSync(configuredShell)
+        ? configuredShell
+        : existsSync("/bin/bash")
+          ? "/bin/bash"
+          : "/bin/sh";
+    const args = isWindows ? ["-NoLogo"] : [];
+    const environment = Object.fromEntries(
+      Object.entries(process.env).filter((entry): entry is [string, string] =>
+        typeof entry[1] === "string",
+      ),
+    );
+    const terminal = pty.spawn(executable, args, {
+      cols: terminalDimension(cols, 80),
+      rows: terminalDimension(rows, 24),
       cwd: root,
-      env: { ...process.env, LANG: "zh_CN.UTF-8", LC_ALL: "zh_CN.UTF-8" },
-      stdio: "pipe",
-      windowsHide: true,
+      env: {
+        ...environment,
+        TERM: "xterm-256color",
+        COLORTERM: "truecolor",
+        TERM_PROGRAM: "AgentK",
+      },
+      name: "xterm-256color",
     });
-    const consoleProcess = {
-      child,
-      stderrDecoder: new TextDecoder("utf-8"),
-      stdoutDecoder: new TextDecoder("utf-8"),
-    };
+    const consoleProcess = { terminal };
     this.projectConsoles.set(id, consoleProcess);
-    const output = (stream: "stdout" | "stderr", chunk: Buffer) => {
-      const decoder = stream === "stdout" ? consoleProcess.stdoutDecoder : consoleProcess.stderrDecoder;
-      this.options.emit({ id, stream, text: decoder.decode(chunk, { stream: true }), type: "project_console_output" });
-    };
-    child.stdout?.on("data", (chunk: Buffer) => output("stdout", chunk));
-    child.stderr?.on("data", (chunk: Buffer) => output("stderr", chunk));
+    terminal.onData((data) => {
+      this.options.emit({ data, id, type: "project_console_output" });
+    });
     let finished = false;
-    const finish = (code: number | null, signal?: string) => {
+    const finish = (code: number, signal?: number) => {
       if (finished) return;
       finished = true;
       this.projectConsoles.delete(id);
       this.options.emit({ code, id, signal, type: "project_console_exit" });
     };
-    child.once("error", (error) => {
-      this.options.emit({ id, stream: "stderr", text: `${error.message}\n`, type: "project_console_output" });
-      finish(null);
-    });
-    child.once("close", (code, signal) => finish(code, signal ?? undefined));
+    terminal.onExit(({ exitCode, signal }) => finish(exitCode, signal));
     return id;
   }
 
   private writeProjectConsole(id: string, data: string): void {
     if (data.length > 32_000) throw new Error("Console input is too long");
     const consoleProcess = this.projectConsoles.get(id);
-    if (!consoleProcess?.child.stdin?.writable) throw new Error("Console is not running");
-    consoleProcess.child.stdin.write(data, "utf8");
+    if (!consoleProcess) throw new Error("Console is not running");
+    consoleProcess.terminal.write(data);
   }
 
-  private async completeProjectConsole(
-    root: string,
-    input: string,
-  ): Promise<Array<{ text: string; replacementIndex: number; replacementLength: number }>> {
-    if (input.length > 32_000) throw new Error("Console input is too long");
-    if (process.platform !== "win32") return [];
-    const script = [
-      "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)",
-      "$line=$env:AGENT_K_CONSOLE_COMPLETION",
-      "$result=TabExpansion2 -inputScript $line -cursorColumn $line.Length",
-      "$result.CompletionMatches | ForEach-Object { [PSCustomObject]@{ text=$_.CompletionText; replacementIndex=$result.ReplacementIndex; replacementLength=$result.ReplacementLength } } | ConvertTo-Json -Compress",
-    ].join("; ");
-    return new Promise<Array<{ text: string; replacementIndex: number; replacementLength: number }>>((resolve, reject) => {
-      const child = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
-        cwd: root,
-        env: { ...process.env, AGENT_K_CONSOLE_COMPLETION: input },
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
-      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
-      child.once("error", reject);
-      child.once("close", (code) => {
-        if (code !== 0) {
-          reject(new Error(stderr.trim() || "Console completion failed"));
-          return;
-        }
-        try {
-          const parsed: unknown = JSON.parse(stdout.trim() || "[]");
-          const values = Array.isArray(parsed) ? parsed : [parsed];
-          resolve(
-            values.flatMap((item) => {
-              if (!item || typeof item !== "object") return [];
-              const value = item as Record<string, unknown>;
-              return typeof value.text === "string" &&
-                typeof value.replacementIndex === "number" &&
-                Number.isInteger(value.replacementIndex) &&
-                typeof value.replacementLength === "number" &&
-                Number.isInteger(value.replacementLength)
-                ? [{
-                    text: value.text,
-                    replacementIndex: value.replacementIndex,
-                    replacementLength: value.replacementLength,
-                  }]
-                : [];
-            }),
-          );
-        } catch {
-          resolve([]);
-        }
-      });
-    });
+  private resizeProjectConsole(id: string, cols: number, rows: number): void {
+    const consoleProcess = this.projectConsoles.get(id);
+    if (!consoleProcess) throw new Error("Console is not running");
+    consoleProcess.terminal.resize(
+      terminalDimension(cols, 80),
+      terminalDimension(rows, 24),
+    );
   }
 
   private stopProjectConsole(id: string): void {
     const consoleProcess = this.projectConsoles.get(id);
     if (!consoleProcess) return;
-    const { child } = consoleProcess;
-    if (process.platform === "win32" && child.pid) {
-      const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-      });
-      killer.unref();
-      return;
-    }
-    child.kill("SIGTERM");
+    consoleProcess.terminal.kill();
   }
 
   private requirePool(): RpcPool {
@@ -438,6 +389,11 @@ function requiredNumber(value: unknown, name: string): number {
   if (typeof value !== "number" || !Number.isFinite(value))
     throw new Error(`${name} must be a number`);
   return value;
+}
+
+function terminalDimension(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(2, Math.min(1_000, Math.floor(value)));
 }
 
 function stringArray(value: unknown): string[] {

@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir } from "node:fs/promises";
-import { basename, extname, join, parse, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, parse, relative, resolve } from "node:path";
 import type { RpcPool } from "./agent/pool.js";
 import type { JsonObject, PiResource, PiResourceChange } from "./types.js";
+import { discoverFileFormatPlugins } from "./file-formats.js";
 import {
   asArray,
   asObject,
@@ -195,6 +196,16 @@ export async function getPiResources(
     bundledSkillsDirectory,
     false,
   );
+  const fileFormats = await discoverFileFormatPlugins(cwd);
+  const fileFormatByDirectory = new Map(
+    fileFormats.map((plugin) => [resolve(dirname(plugin.path)), plugin]),
+  );
+  for (const resource of active) {
+    if (resource.kind !== "skill") continue;
+    const plugin = fileFormatByDirectory.get(resolve(dirname(resource.path)));
+    if (!plugin) continue;
+    resource.fileFormat = { id: plugin.id, name: plugin.name, enabled: true };
+  }
   const registryPath = join(appDataPath, "pi-resources.json");
   const registry = await readJson<PiResource[]>(registryPath, []);
   for (const resource of active) {
@@ -203,11 +214,24 @@ export async function getPiResources(
     );
     if (index >= 0) {
       const previous = registry[index];
+      const priorFileFormat = previous?.fileFormat;
+      const previousFileFormat =
+        priorFileFormat?.id === resource.fileFormat?.id
+          ? priorFileFormat
+          : undefined;
       registry[index] = {
         ...resource,
         enabled:
           loaded.has(`${resource.kind}\0${resource.path}`) ||
           previous?.enabled !== false,
+        ...(resource.fileFormat
+          ? {
+              fileFormat: {
+                ...resource.fileFormat,
+                enabled: previousFileFormat?.enabled !== false,
+              },
+            }
+          : {}),
       };
     } else registry.push(resource);
   }
@@ -281,14 +305,81 @@ export async function applyPiResourceChanges(
       !["skill", "extension"].includes(resource.kind) ||
       !["user", "project"].includes(resource.scope) ||
       !["top-level", "package"].includes(resource.origin) ||
+      !["resource", "file-format"].includes(change.target) ||
       !resource.path.trim()
     ) throw new Error("Invalid Pi resource");
+    if (change.target === "file-format" &&
+      (resource.kind !== "skill" || !resource.fileFormat?.id))
+      throw new Error("Invalid file-format plugin resource");
   }
   const registryPath = join(appDataPath, "pi-resources.json");
   const registry = await readJson<PiResource[]>(registryPath, []);
+
+  type DesiredState = {
+    resource: PiResource;
+    initialSkillEnabled: boolean;
+    skillEnabled: boolean;
+    pluginEnabled?: boolean;
+  };
+  const desired = new Map<string, DesiredState>();
   for (const change of changes) {
-    await updateResourceFilter(change.resource, cwd, change.enabled);
-    const next = { ...change.resource, enabled: change.enabled };
+    const key = `${change.resource.kind}\0${change.resource.path}`;
+    let state = desired.get(key);
+    if (!state) {
+      const current = registry.find(
+        (item) => item.kind === change.resource.kind && item.path === change.resource.path,
+      );
+      const resource = {
+        ...change.resource,
+        enabled: current?.enabled ?? change.resource.enabled,
+        ...(change.resource.fileFormat
+          ? {
+              fileFormat: {
+                ...change.resource.fileFormat,
+                enabled:
+                  current?.fileFormat?.id === change.resource.fileFormat.id
+                    ? current.fileFormat.enabled
+                    : change.resource.fileFormat.enabled,
+              },
+            }
+          : {}),
+      };
+      state = {
+        resource,
+        initialSkillEnabled: resource.enabled,
+        skillEnabled: resource.enabled,
+        ...(resource.fileFormat ? { pluginEnabled: resource.fileFormat.enabled } : {}),
+      };
+      desired.set(key, state);
+    }
+    if (change.target === "resource") {
+      state.skillEnabled = change.enabled;
+      if (change.enabled && state.pluginEnabled !== undefined)
+        state.pluginEnabled = true;
+    } else {
+      state.pluginEnabled = change.enabled;
+      if (!change.enabled) state.skillEnabled = false;
+    }
+  }
+
+  let piResourcesChanged = false;
+  for (const state of desired.values()) {
+    if (state.skillEnabled !== state.initialSkillEnabled) {
+      await updateResourceFilter(state.resource, cwd, state.skillEnabled);
+      piResourcesChanged = true;
+    }
+    const next: PiResource = {
+      ...state.resource,
+      enabled: state.skillEnabled,
+      ...(state.resource.fileFormat && state.pluginEnabled !== undefined
+        ? {
+            fileFormat: {
+              ...state.resource.fileFormat,
+              enabled: state.pluginEnabled,
+            },
+          }
+        : {}),
+    };
     const index = registry.findIndex(
       (item) => item.kind === next.kind && item.path === next.path,
     );
@@ -296,6 +387,8 @@ export async function applyPiResourceChanges(
     else registry.push(next);
   }
   await atomicWrite(registryPath, JSON.stringify(registry, null, 2));
-  const onlyProject = changes.every((change) => change.resource.scope === "project");
-  await pool.reload(onlyProject ? cwd : undefined);
+  if (piResourcesChanged) {
+    const onlyProject = changes.every((change) => change.resource.scope === "project");
+    await pool.reload(onlyProject ? cwd : undefined);
+  }
 }

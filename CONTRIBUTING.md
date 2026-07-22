@@ -5,6 +5,7 @@ patched Pi source tree.
 
 ```bash
 npm ci --ignore-scripts
+npm run prepare:native
 npm run check:desktop
 npm run check
 npm test
