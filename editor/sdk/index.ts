@@ -47,6 +47,31 @@ export type EditorFactory = (
   initialState: EditorInitialState,
 ) => EditorInstance | Promise<EditorInstance>;
 
+/** Context supplied to a sandboxed file-tree menu contribution. */
+export type ContextMenuContext = {
+  absolutePath: string;
+  isDirectory: boolean;
+  /** UTF-8 package.json from the selected directory when it exists and is small enough. */
+  packageJson?: string;
+  path: string;
+  viteConfig: boolean;
+};
+
+export type ContextMenuItem = { id: string; label: string };
+export type ContextMenuFactory = (
+  context: ContextMenuContext,
+) => ContextMenuItem[] | Promise<ContextMenuItem[]>;
+
+/**
+ * Register a sandboxed callback used to append context-menu items. The host
+ * supplies only metadata and a bounded package.json snapshot; no Node or file
+ * system APIs are exposed to the plugin.
+ */
+export function defineContextMenu(factory: ContextMenuFactory): void {
+  (globalThis as typeof globalThis & { AgentKContextMenu?: ContextMenuFactory })
+    .AgentKContextMenu = factory;
+}
+
 type HostMessage = {
   apiVersion: typeof EDITOR_API_VERSION;
   channel: typeof EDITOR_CHANNEL;

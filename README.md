@@ -94,7 +94,7 @@ The dedicated Editor Extensions settings page gives every first-party file categ
 
 In programmable packages, `editor.ts` is real application code. A plugin can choose Monaco, CodeMirror, Canvas, a framework, or plain DOM and fully define the frame's appearance and behavior. Agent K executes the compiled bundle in a unique-origin `<iframe sandbox="allow-scripts">`; the plugin has no Node, Electron IPC, host DOM, or direct filesystem access and uses a versioned typed message bridge for content, dirty state, saves, theme changes, navigation, and line references. A separate `editor.json` remains necessary so discovery never executes unknown code. The former JSON-in-`editor.ts` comment format is not supported.
 
-With Editor Skill enabled, Agent K gives Pi the active format and file path as context. Plugins may also declare callable capabilities in the manifest; the model can invoke those through `agent_k_file_editor`. The first-party audio and video categories currently implement `play`, `pause`, and `seek`.
+With Editor Skill enabled, Agent K gives Pi the active format and file path as context. `agent_k_file_editor` also provides the built-in `open` action for displaying a workspace file in the right-side editor (with `preview: true` for HTML or Markdown rendering). Plugins may declare additional callable capabilities in the manifest; the first-party audio and video categories implement `play`, `pause`, and `seek`.
 
 See [File-format SDK](docs/file-format-sdk.md) for the complete manifest, field reference, example, and safety model.
 
@@ -345,7 +345,7 @@ Agent K 启动时会校验已安装的第一方包、读取开关状态，并通
 
 在可编程包中，`editor.ts` 是真正的应用代码。插件可以选择 Monaco、CodeMirror、Canvas、前端框架或原生 DOM，并完整定义自己的界面和功能。Agent K 把编译后的 bundle 放进独立源的 `<iframe sandbox="allow-scripts">` 中运行；插件没有 Node、Electron IPC、宿主 DOM 或直接文件系统权限，只能通过带版本和 nonce 校验的类型化消息桥接交换内容、dirty 状态、保存、主题、导航和行引用。独立 `editor.json` 让发现过程无需执行未知代码。旧版在 `editor.ts` 注释中嵌入 JSON 的格式不再支持。
 
-启用 Editor Skill 后，Agent K 会把当前格式与文件路径作为上下文提供给 Pi。插件还可在 manifest 中声明可调用能力，模型可通过 `agent_k_file_editor` 调用它们；第一方音频和视频品类目前实现了 `play`、`pause`、`seek`。
+启用 Editor Skill 后，Agent K 会把当前格式与文件路径作为上下文提供给 Pi。`agent_k_file_editor` 还提供内置 `open` 动作，用于在右侧编辑器中显示工作区文件（HTML 或 Markdown 传入 `preview: true` 可直接显示预览）。插件可在 manifest 中声明额外的可调用能力；第一方音频和视频品类目前实现了 `play`、`pause`、`seek`。
 
 完整 manifest、字段说明、示例与安全模型见 [文件格式 SDK](docs/file-format-sdk.md)。
 

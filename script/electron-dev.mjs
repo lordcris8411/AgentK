@@ -6,11 +6,16 @@ import process from "node:process";
 const root = join(import.meta.dirname, "..");
 const windows = process.platform === "win32";
 const bin = (name) => join(root, "node_modules", ".bin", `${name}${windows ? ".cmd" : ""}`);
+const electronExecutable = windows
+  ? join(root, "node_modules", "electron", "dist", "electron.exe")
+  : bin("electron");
+const tsc = join(root, "node_modules", "typescript", "bin", "tsc");
+const vite = join(root, "node_modules", "vite", "bin", "vite.js");
 
 function run(command, args, options = {}) {
   return spawn(command, args, {
     cwd: root,
-    shell: windows,
+    shell: false,
     stdio: "inherit",
     ...options,
   });
@@ -30,12 +35,12 @@ async function waitForVite(child) {
   throw new Error("Timed out waiting for Vite on port 1420");
 }
 
-if (!existsSync(bin("electron"))) {
+if (!existsSync(electronExecutable)) {
   console.error("Electron is not installed. Run npm ci --ignore-scripts first.");
   process.exit(1);
 }
 
-const compile = run(bin("tsc"), ["-p", "tsconfig.electron.json"]);
+const compile = run(process.execPath, [tsc, "-p", "tsconfig.electron.json"]);
 const compileCode = await new Promise((resolve) => compile.once("exit", resolve));
 if (compileCode !== 0) process.exit(Number(compileCode) || 1);
 
@@ -47,15 +52,15 @@ if (editorBuildCode !== 0) process.exit(Number(editorBuildCode) || 1);
 // If it is terminated together with Electron on Windows, that mode can leak
 // back to PowerShell (Backspace then prints as ^H). It only needs stdout and
 // stderr for this launcher, so deliberately give it no console input handle.
-const vite = run(bin("vite"), ["--host", "127.0.0.1"], {
+const viteProcess = run(process.execPath, [vite, "--host", "127.0.0.1"], {
   detached: !windows,
   stdio: ["ignore", "inherit", "inherit"],
 });
-let electron;
+let electronProcess;
 function stopChild(child) {
   if (!child || child.exitCode !== null) return;
-  // On Windows, npm's .cmd launchers add a cmd.exe parent. Killing only that
-  // parent leaves Vite's node.exe child alive and keeps port 1420 occupied.
+  // Terminate the process tree on Windows so Vite's node.exe child cannot
+  // survive the launcher and keep port 1420 occupied.
   if (windows && child.pid) {
     spawnSync("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], {
       stdio: "ignore",
@@ -77,8 +82,8 @@ function stopChild(child) {
   child.kill("SIGTERM");
 }
 const stop = () => {
-  stopChild(electron);
-  stopChild(vite);
+  stopChild(electronProcess);
+  stopChild(viteProcess);
 };
 const restoreTerminal = () => {
   if (!process.stdin.isTTY) return;
@@ -100,14 +105,14 @@ for (const signal of windows
 process.once("exit", stop);
 
 try {
-  await waitForVite(vite);
+  await waitForVite(viteProcess);
   const env = {
     ...process.env,
     AGENT_K_DEV_URL: "http://127.0.0.1:1420",
   };
   delete env.ELECTRON_RUN_AS_NODE;
-  electron = run(bin("electron"), ["."], { detached: !windows, env });
-  const code = await new Promise((resolve) => electron.once("exit", resolve));
+  electronProcess = run(electronExecutable, ["."], { detached: !windows, env });
+  const code = await new Promise((resolve) => electronProcess.once("exit", resolve));
   process.exitCode = Number(code) || 0;
 } catch (cause) {
   console.error(cause instanceof Error ? cause.message : String(cause));

@@ -1920,6 +1920,35 @@ body.is-resizing-panels .composer {
   position: absolute;
   z-index: 4;
 }
+.pending-steer-card {
+  align-items: center;
+  background: var(--surface-raised, #fff);
+  border: 1px solid var(--border-color, #e4e0db);
+  border-radius: 12px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin: 2px 0 8px;
+  padding: 8px 10px;
+}
+.pending-steer-text {
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pending-steer-actions { display: flex; flex: 0 0 auto; gap: 4px; }
+.pending-steer-actions button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-secondary, #625d58);
+  cursor: pointer;
+  font: inherit;
+  padding: 4px 6px;
+}
+.pending-steer-actions button:hover { background: var(--surface-hover, #efebe6); }
 .composer-editor {
   background: transparent;
   border: 0;
@@ -3169,6 +3198,10 @@ body.is-tree-dragging * {
   height: 29px;
   padding: 6px 8px;
 }
+.editor-floating-actions .external-browser-action {
+  margin-right: auto;
+  order: -1;
+}
 .editor-floating-actions button:hover:not(:disabled) {
   background: var(--surface-hover, #efebe6);
   color: var(--text-primary, #302d2a);
@@ -3543,6 +3576,39 @@ body.is-tree-dragging * {
   color: #aaa39c;
   font-size: 12px;
   margin: 20px;
+}
+.web-project-preview {
+  background: #fff;
+  border: 0;
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+}
+.web-project-preview-actions {
+  align-items: center;
+  border-bottom: 1px solid var(--border-color, #e4e0db);
+  display: flex;
+  font-size: 12px;
+  padding: 5px 10px;
+}
+.web-project-preview-left-actions {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  margin-left: 10px;
+}
+.web-project-preview-devtools {
+  margin-left: auto;
+}
+.web-project-preview-actions button {
+  background: var(--surface-raised, #fff);
+  border: 1px solid var(--border-color, #e4e0db);
+  border-radius: 5px;
+  color: var(--text-primary, #302d2a);
+  cursor: pointer;
+  font: inherit;
+  padding: 4px 7px;
 }
 .unsupported-editor {
   align-items: center;

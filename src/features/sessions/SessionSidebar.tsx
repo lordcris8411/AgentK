@@ -214,7 +214,10 @@ export function SessionSidebar({
                       <button
                         aria-label={t("deleteSession")}
                         className="row-action"
-                        onClick={() => onDelete(session)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setDialog({ action: "delete", session });
+                        }}
                         type="button"
                       >
                         ×

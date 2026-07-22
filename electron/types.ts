@@ -81,7 +81,7 @@ export interface FileFormatPluginResource {
     mimeTypes?: string[];
   };
   editor: "plugin";
-  runtime: { assets?: string; dependencies?: string[]; entry: string; style?: string };
+  runtime: { assets?: string; dependencies?: string[]; entry: string; menu?: string; style?: string };
   editable?: boolean;
   languageId?: string;
   mimeType?: string;
@@ -92,7 +92,6 @@ export interface FileFormatPluginResource {
     description: string;
     parameters?: Record<string, "string" | "number" | "boolean">;
   }>;
-  contextActions?: Array<{ id: string; label: string; when: "file" | "directory" | "both" }>;
 }
 
 export interface EditorPluginRuntime {
@@ -100,6 +99,7 @@ export interface EditorPluginRuntime {
   css: string;
   dependencies: string[];
   javascript: string;
+  menuJavascript?: string;
   pluginId: string;
 }
 

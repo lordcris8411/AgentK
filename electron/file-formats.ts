@@ -108,13 +108,6 @@ function parsePluginValue(raw: unknown, path: string, scope: FileFormatPluginRes
         }]
       : [];
   });
-  const contextActions = (Array.isArray(value.contextActions) ? value.contextActions : []).flatMap((entry) => {
-    const action = asRecord(entry);
-    const when = action.when === "directory" || action.when === "both" ? action.when : "file";
-    return typeof action.id === "string" && typeof action.label === "string"
-      ? [{ id: action.id, label: action.label, when: when as "file" | "directory" | "both" }]
-      : [];
-  });
   const mediaKind = typeof value.mediaKind === "string" && mediaKinds.has(value.mediaKind)
     ? value.mediaKind as FileFormatPluginResource["mediaKind"]
     : undefined;
@@ -123,6 +116,9 @@ function parsePluginValue(raw: unknown, path: string, scope: FileFormatPluginRes
   const runtimeStyle = rawRuntime.style === undefined
     ? undefined
     : safeRuntimePath(rawRuntime.style, ".css");
+  const runtimeMenu = rawRuntime.menu === undefined
+    ? undefined
+    : safeRuntimePath(rawRuntime.menu, ".js");
   const runtimeAssets = rawRuntime.assets === undefined
     ? undefined
     : safeRuntimeDirectory(rawRuntime.assets);
@@ -132,6 +128,7 @@ function parsePluginValue(raw: unknown, path: string, scope: FileFormatPluginRes
     : undefined;
   if (
     !runtimeEntry ||
+    (rawRuntime.menu !== undefined && !runtimeMenu) ||
     (rawRuntime.style !== undefined && !runtimeStyle) ||
     (rawRuntime.assets !== undefined && !runtimeAssets) ||
     (rawRuntime.dependencies !== undefined &&
@@ -159,6 +156,7 @@ function parsePluginValue(raw: unknown, path: string, scope: FileFormatPluginRes
     editor: "plugin",
     runtime: {
       entry: runtimeEntry,
+      ...(runtimeMenu ? { menu: runtimeMenu } : {}),
       ...(runtimeStyle ? { style: runtimeStyle } : {}),
       ...(runtimeAssets ? { assets: runtimeAssets } : {}),
       ...(runtimeDependencies.length ? { dependencies: runtimeDependencies } : {}),
@@ -168,7 +166,6 @@ function parsePluginValue(raw: unknown, path: string, scope: FileFormatPluginRes
     ...(typeof value.mimeType === "string" ? { mimeType: value.mimeType } : {}),
     ...(mediaKind ? { mediaKind } : {}),
     ...(capabilities.length ? { capabilities } : {}),
-    ...(contextActions.length ? { contextActions } : {}),
   };
 }
 
@@ -188,7 +185,7 @@ async function readPlugin(directory: string, scope: FileFormatPluginResource["sc
   if (!plugin) throw new Error(`Editor manifest failed schema validation: ${manifestPath}`);
   if (!existsSync(join(directory, "editor.ts")))
     throw new Error(`Editor source is required: ${join(directory, "editor.ts")}`);
-  for (const asset of [plugin.runtime.entry, plugin.runtime.style, plugin.runtime.assets]) {
+  for (const asset of [plugin.runtime.entry, plugin.runtime.menu, plugin.runtime.style, plugin.runtime.assets]) {
     if (asset && !existsSync(resolve(directory, asset)))
       throw new Error(`Editor '${plugin.id}' is missing runtime asset: ${asset}`);
   }
@@ -329,8 +326,11 @@ export async function getEditorPluginRuntime(
   const plugin = plugins.find((candidate) => candidate.id === pluginId);
   if (!plugin?.runtime) throw new Error(`Editor plugin runtime is unavailable: ${pluginId}`);
   const packageDirectory = dirname(plugin.path);
-  const [javascript, css, assets] = await Promise.all([
+  const [javascript, menuJavascript, css, assets] = await Promise.all([
     readRuntimeAsset(packageDirectory, plugin.runtime.entry, MAX_EDITOR_JAVASCRIPT_BYTES),
+    plugin.runtime.menu
+      ? readRuntimeAsset(packageDirectory, plugin.runtime.menu, MAX_EDITOR_JAVASCRIPT_BYTES)
+      : Promise.resolve(undefined),
     plugin.runtime.style
       ? readRuntimeAsset(packageDirectory, plugin.runtime.style, MAX_EDITOR_CSS_BYTES)
       : Promise.resolve(""),
@@ -341,6 +341,7 @@ export async function getEditorPluginRuntime(
     css,
     dependencies: plugin.runtime.dependencies ?? [],
     javascript,
+    ...(menuJavascript ? { menuJavascript } : {}),
     pluginId,
   };
 }

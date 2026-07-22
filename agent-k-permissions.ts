@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { basename, isAbsolute, normalize } from "node:path";
+import { basename, isAbsolute, join, normalize } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -7,14 +7,24 @@ type Settings = { locale?: "zh-CN" | "en-US"; permissionMode?: "ask" | "full" };
 
 const fileFormatActionPrefix = "agent-k-file-format-action:";
 
+function previewScreenshotPath(ctx: unknown): string {
+  const cwd = typeof (ctx as { cwd?: unknown }).cwd === "string"
+    ? (ctx as { cwd: string }).cwd
+    : process.cwd();
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return join(cwd, "screenshot", `preview-${timestamp}-${process.pid}.png`);
+}
+
 const fileFormatTool = defineTool({
   name: "agent_k_file_editor",
   label: "Agent K file editor",
-  description: "Control the active Agent K file-format editor. Only capabilities advertised in the current file-format context are accepted.",
+  description: "Open a workspace file in Agent K's right-side editor, run a web project with an npm dev script in Agent K's preview, capture the currently visible HTML or web-project preview as a PNG, read console output from the current web-project preview, or control the active file-format editor. The built-in open and run-web-project actions accept a workspace path; capture-preview and get-preview-console act on the current preview; other actions must be advertised in the current file-format context.",
   parameters: Type.Object({
-    action: Type.String({ description: "Capability id, for example play, pause, or seek." }),
-    path: Type.Optional(Type.String({ description: "The active file path advertised in the file-format context." })),
+    action: Type.String({ description: "Use open to show a workspace file, run-web-project to start a web project with an npm dev script in Agent K, capture-preview to save the current HTML or web-project preview as a PNG, get-preview-console to read the current web-project preview's console output, or an advertised capability such as play, pause, or seek." }),
+    path: Type.Optional(Type.String({ description: "A workspace-relative or absolute workspace path. Required for open and run-web-project; use the active path for editor capabilities." })),
+    preview: Type.Optional(Type.Boolean({ description: "For open, show the file in its preview mode when supported." })),
     seconds: Type.Optional(Type.Number({ description: "Seek offset in seconds; positive is forward and negative is backward." })),
+    limit: Type.Optional(Type.Number({ description: "For get-preview-console, maximum number of recent log entries to return (1-200; default 80)." })),
   }),
   async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
     if (!ctx.hasUI) {
@@ -22,13 +32,32 @@ const fileFormatTool = defineTool({
     }
     const action = typeof params.action === "string" ? params.action : "";
     if (!action) return { content: [{ type: "text", text: "Missing file editor action." }] };
+    if (action === "get-preview-console") {
+      const limit = typeof params.limit === "number" ? Math.max(1, Math.min(200, Math.round(params.limit))) : 80;
+      const output = await ctx.ui.input(`agent-k-preview-console:${limit}`);
+      return {
+        content: [{ type: "text", text: output ?? "Preview console request was cancelled." }],
+        details: { action, limit },
+      };
+    }
+    const screenshotPath = action === "capture-preview" ? previewScreenshotPath(ctx) : undefined;
     const payload = {
       action,
       ...(typeof params.path === "string" ? { path: params.path } : {}),
+      ...(typeof params.preview === "boolean" ? { preview: params.preview } : {}),
       ...(typeof params.seconds === "number" ? { seconds: params.seconds } : {}),
+      ...(screenshotPath ? { outputPath: screenshotPath } : {}),
     };
     ctx.ui.notify(`${fileFormatActionPrefix}${JSON.stringify(payload)}`, "info");
-    return { content: [{ type: "text", text: `Requested Agent K file editor action: ${action}.` }], details: payload };
+    return {
+      content: [{
+        type: "text",
+        text: screenshotPath
+          ? `Preview screenshot will be saved to: ${screenshotPath}`
+          : `Requested Agent K file editor action: ${action}.`,
+      }],
+      details: payload,
+    };
   },
 });
 

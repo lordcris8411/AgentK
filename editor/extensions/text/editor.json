@@ -12,6 +12,7 @@
   "runtime": {
     "dependencies": ["monaco-editor@0.55.1"],
     "entry": "dist/editor.iife.js",
+    "menu": "dist/menu.iife.js",
     "style": "dist/editor.css"
   }
 }

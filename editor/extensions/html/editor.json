@@ -6,5 +6,12 @@
   "editor": "plugin",
   "editable": true,
   "languageId": "html",
-  "runtime": { "dependencies": ["monaco-editor@0.55.1"], "entry": "dist/editor.iife.js", "style": "dist/editor.css" }
+  "runtime": { "dependencies": ["monaco-editor@0.55.1"], "entry": "dist/editor.iife.js", "menu": "dist/menu.iife.js", "style": "dist/editor.css" },
+  "capabilities": [
+    {
+      "id": "capture-preview",
+      "label": "Capture preview",
+      "description": "Save the currently visible HTML preview as a PNG image."
+    }
+  ]
 }

@@ -34,14 +34,13 @@ export type FileFormatPlugin = {
     mimeTypes?: readonly string[];
   };
   editor: FileFormatEditor;
-  runtime: { assets?: string; dependencies?: string[]; entry: string; style?: string };
+  runtime: { assets?: string; dependencies?: string[]; entry: string; menu?: string; style?: string };
   scope?: "builtin" | "user" | "project";
   skillEnabled?: boolean;
   editable?: boolean;
   languageId?: string;
   mimeType?: string;
   mediaKind?: PreviewKind;
-  contextActions?: readonly FileFormatContextAction[];
   capabilities?: readonly FileFormatCapability[];
 };
 

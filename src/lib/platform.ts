@@ -31,6 +31,18 @@ export const desktopWindow = {
   unmaximize: () => window.agentK.window.invoke<void>("unmaximize"),
   minimize: () => window.agentK.window.invoke<void>("minimize"),
   close: () => window.agentK.window.invoke<void>("close"),
+  openDevTools: () => window.agentK.window.invoke<void>("open-devtools"),
+  capturePreview: (bounds: { x: number; y: number; width: number; height: number }, outputPath: string) =>
+    window.agentK.window.invoke<string>("capture-preview", { ...bounds, outputPath }),
+  getPreviewConsole: (url: string, limit = 80) =>
+    window.agentK.window.invoke<Array<{
+      column?: number;
+      frameUrl?: string;
+      level: "debug" | "error" | "info" | "log" | "warning";
+      line?: number;
+      text: string;
+      timestamp: number;
+    }>>("get-preview-console", { limit, url }),
   beginResize: (
     direction: WindowResizeDirection,
     screenX: number,

@@ -8,5 +8,5 @@
   },
   "editor": "plugin",
   "mediaKind": "image",
-  "runtime": { "entry": "dist/editor.iife.js", "style": "dist/editor.css" }
+  "runtime": { "entry": "dist/editor.iife.js", "menu": "dist/menu.iife.js", "style": "dist/editor.css" }
 }

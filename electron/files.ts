@@ -102,7 +102,7 @@ function userFacingSessionText(text: string): string {
   if (normalized.startsWith(prefix)) {
     const request = normalized.slice(prefix.length);
     const index = request.indexOf(marker);
-    if (index >= 0) return `/plan ${request.slice(0, index).trim()}`;
+    if (index >= 0) return `Plan：${request.slice(0, index).trim()}`;
   }
   return normalized;
 }
@@ -299,6 +299,20 @@ export class FileService {
       if (summary) await this.addWorkspace(summary.cwd);
       this.hidden.add(path);
     } else this.hidden.delete(path);
+    await atomicWrite(
+      join(this.appDataPath, "hidden-sessions.json"),
+      JSON.stringify([...this.hidden]),
+    );
+  }
+
+  async deleteSession(path: string): Promise<void> {
+    const root = await realpath(join(piAgentDirectory(), "sessions"));
+    const target = await realpath(path);
+    if (!isPathInside(root, target) || extname(target) !== ".jsonl")
+      throw new Error("Session path is outside Pi's session directory");
+    await shell.trashItem(target);
+    this.hidden.delete(path);
+    this.hidden.delete(target);
     await atomicWrite(
       join(this.appDataPath, "hidden-sessions.json"),
       JSON.stringify([...this.hidden]),

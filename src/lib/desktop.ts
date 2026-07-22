@@ -109,7 +109,6 @@ export type FileFormatPluginResource = {
     description: string;
     parameters?: Record<string, "string" | "number" | "boolean">;
   }>;
-  contextActions?: Array<{ id: string; label: string; when: "file" | "directory" | "both" }>;
 };
 
 export type EditorPluginRuntime = {
@@ -117,6 +116,7 @@ export type EditorPluginRuntime = {
   css: string;
   dependencies: string[];
   javascript: string;
+  menuJavascript?: string;
   pluginId: string;
 };
 
@@ -224,6 +224,7 @@ export const desktop = {
     invoke<Array<Record<string, unknown>>>("session_messages", { path }),
   hideSession: (path: string, hidden: boolean) =>
     invoke<void>("hide_session", { path, hidden }),
+  deleteSession: (path: string) => invoke<void>("delete_session", { path }),
   renameSession: (path: string, name: string) =>
     invoke<void>("rename_session", {
       path,
@@ -263,6 +264,8 @@ export const desktop = {
     invoke<string>("save_temp_attachment", { name, data }),
   startPreview: (root: string, path: string, content: string) =>
     invoke<string>("start_workspace_preview", { root, path, content }),
+  startWebProject: (root: string, path: string) =>
+    invoke<{ id: string; url: string }>("start_web_project", { root, path }),
   write: (root: string, path: string, content: string) =>
     invoke<void>("write_text_file", { root, path, content }),
   mkdir: (root: string, path: string) =>

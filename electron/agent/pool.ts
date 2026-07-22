@@ -218,29 +218,40 @@ export class RpcPool {
       throw new Error(
         "Wait for active Pi tasks and dialogs to finish before reloading configuration",
       );
+    let completed = 0;
+    this.options.emit({ type: "pi_reload_progress", completed, total: plans.length });
     const results = await Promise.allSettled(
       plans.map(async (old) => {
-        const replacement = await RpcBridge.start({
-          ...this.options,
-          cwd: old.workspaceCwd(),
-          runtimeId: old.runtimeId,
-        });
         try {
-          const sessionFile = old.sessionFile();
-          if (sessionFile) {
-            await this.requestData(replacement, {
-              type: "switch_session",
-              sessionPath: sessionFile,
-            });
-            replacement.setSessionFile(sessionFile);
+          const replacement = await RpcBridge.start({
+            ...this.options,
+            cwd: old.workspaceCwd(),
+            runtimeId: old.runtimeId,
+          });
+          try {
+            const sessionFile = old.sessionFile();
+            if (sessionFile) {
+              await this.requestData(replacement, {
+                type: "switch_session",
+                sessionPath: sessionFile,
+              });
+              replacement.setSessionFile(sessionFile);
+            }
+            await this.requestData(replacement, { type: "get_state" });
+            return { old, replacement };
+          } catch (cause) {
+            replacement.stop();
+            throw new Error(
+              `Unable to restore Pi runtime after configuration reload: ${errorMessage(cause)}`,
+            );
           }
-          await this.requestData(replacement, { type: "get_state" });
-          return { old, replacement };
-        } catch (cause) {
-          replacement.stop();
-          throw new Error(
-            `Unable to restore Pi runtime after configuration reload: ${errorMessage(cause)}`,
-          );
+        } finally {
+          completed += 1;
+          this.options.emit({
+            type: "pi_reload_progress",
+            completed,
+            total: plans.length,
+          });
         }
       }),
     );

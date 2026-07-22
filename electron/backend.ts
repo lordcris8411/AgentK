@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 import { existsSync } from "node:fs";
-import { cp } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { cp, readFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 import type {
@@ -38,7 +39,7 @@ import {
   loadFirstPartyFileFormatPlugins,
 } from "./file-formats.js";
 import { installSkillHub, previewSkillHub } from "./skill-hub.js";
-import { asArray, asObject, asString, atomicWrite, errorMessage, randomId } from "./utils.js";
+import { asArray, asObject, asString, atomicWrite, errorMessage, isPathInside, randomId } from "./utils.js";
 
 export interface DesktopBackendOptions {
   appDataPath: string;
@@ -66,6 +67,7 @@ export class DesktopBackend {
   private piLaunch?: PiLaunch;
   private pool?: RpcPool;
   private readonly projectConsoles = new Map<string, ProjectConsoleProcess>();
+  private readonly webProjects = new Map<string, ReturnType<typeof spawn>>();
 
   constructor(options: DesktopBackendOptions) {
     this.options = options;
@@ -209,6 +211,8 @@ export class DesktopBackend {
         return this.files.sessionMessages(requiredString(args.path, "path"));
       case "hide_session":
         return this.files.hideSession(requiredString(args.path, "path"), args.hidden === true);
+      case "delete_session":
+        return this.files.deleteSession(requiredString(args.path, "path"));
       case "rename_session":
         return this.files.renameSession(
           requiredString(args.path, "path"),
@@ -268,6 +272,8 @@ export class DesktopBackend {
           requiredString(args.path, "path"),
           requiredString(args.content, "content"),
         );
+      case "start_web_project":
+        return this.startWebProject(requiredString(args.root, "root"), requiredString(args.path, "path"));
       case "write_text_file":
         return this.files.writeText(requiredString(args.root, "root"), requiredString(args.path, "path"), requiredString(args.content, "content"));
       case "create_directory":
@@ -318,8 +324,62 @@ export class DesktopBackend {
 
   shutdown(): void {
     for (const id of this.projectConsoles.keys()) this.stopProjectConsole(id);
+    for (const child of this.webProjects.values()) child.kill();
+    this.webProjects.clear();
     this.pool?.shutdown();
     this.files.shutdown();
+  }
+
+  private async startWebProject(root: string, path: string): Promise<{ id: string; url: string }> {
+    const workspaceRoot = resolve(root);
+    const directory = resolve(workspaceRoot, path);
+    if (!isPathInside(workspaceRoot, directory) && directory !== workspaceRoot)
+      throw new Error("Web project path is outside the active workspace");
+    const manifest = asObject(JSON.parse(await readFile(join(directory, "package.json"), "utf8")));
+    const hasDevScript = typeof asObject(manifest.scripts).dev === "string";
+    const hasViteConfig = ["vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"]
+      .some((name) => existsSync(join(directory, name)));
+    if (!hasDevScript && !hasViteConfig)
+      throw new Error("This project has neither an npm dev script nor a Vite config");
+    // Windows cannot execute npm.cmd directly through CreateProcess. Invoke the
+    // fixed command through cmd.exe instead; the project path remains `cwd`, so
+    // no user-supplied value is interpolated into the command string.
+    const environment = { ...process.env, BROWSER: "none", CI: "true", VITE_OPEN: "false" };
+    const port = await new Promise<number>((resolvePort, rejectPort) => {
+      const reservation = createServer();
+      reservation.once("error", rejectPort);
+      reservation.listen(0, "127.0.0.1", () => {
+        const address = reservation.address();
+        if (!address || typeof address === "string") {
+          reservation.close();
+          rejectPort(new Error("Unable to reserve a local web preview port"));
+          return;
+        }
+        reservation.close((error) => error ? rejectPort(error) : resolvePort(address.port));
+      });
+    });
+    // Ask compatible dev servers (Vite, Vue CLI, Next, etc.) for an ephemeral
+    // port. Each preview then owns a distinct URL instead of accidentally
+    // reusing an already-running project's common development port.
+    const command = hasDevScript ? `npm run dev -- --host 127.0.0.1 --port ${port}` : `npm exec vite -- --host 127.0.0.1 --port ${port}`;
+    const child = process.platform === "win32"
+      ? spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", command], { cwd: directory, env: environment, shell: false, windowsHide: true })
+      : spawn("npm", hasDevScript ? ["run", "dev", "--", "--host", "127.0.0.1", "--port", String(port)] : ["exec", "vite", "--", "--host", "127.0.0.1", "--port", String(port)], { cwd: directory, env: environment, shell: false, windowsHide: true });
+    const id = randomId("web-"); this.webProjects.set(id, child);
+    return await new Promise((resolve, reject) => {
+      let output = ""; let settled = false;
+      const done = (url?: string, error?: Error) => { if (settled) return; settled = true; clearTimeout(timeout); clearInterval(probeTimer); if (url) resolve({ id, url }); else { this.webProjects.delete(id); child.kill(); reject(error ?? new Error("Web development server did not report a local URL")); } };
+      const scan = (chunk: Buffer) => { output = `${output}${chunk.toString("utf8")}`.slice(-12000); const match = /https?:\/\/(?:127\.0\.0\.1|localhost):\d+(?:\/[^\s]*)?/i.exec(output); if (match) done(match[0]); };
+      const timeout = setTimeout(() => done(undefined, new Error("Timed out waiting for the web development server")), 20_000);
+      const probeTimer = setInterval(() => {
+        void fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(350) })
+          .then((response) => { if (response.ok || response.status < 500) done(`http://127.0.0.1:${port}/`); })
+          .catch(() => undefined);
+      }, 300);
+      child.stdout.on("data", scan); child.stderr.on("data", scan);
+      child.once("error", (error) => done(undefined, error));
+      child.once("exit", (code) => done(undefined, new Error(`Web development server exited (${code ?? "unknown"})`)));
+    });
   }
 
   private startProjectConsole(root: string, cols: number, rows: number): string {

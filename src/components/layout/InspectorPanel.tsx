@@ -8,7 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { desktop, type FileEntry } from "../../lib/desktop";
-import { platform } from "../../lib/platform";
+import { desktopWindow, platform } from "../../lib/platform";
 import { ProjectConsole } from "./ProjectConsole";
 import {
   ReviewPanel,
@@ -39,6 +39,8 @@ type Tab = {
   format?: FileFormatPlugin;
   previewMode?: boolean;
   runtimeDirty?: boolean;
+  webPreviewUrl?: string;
+  webPreviewReloadToken?: number;
 };
 type WorkspaceEditorState = {
   active?: string;
@@ -46,6 +48,48 @@ type WorkspaceEditorState = {
 };
 type PluginEditorProps = ComponentPropsWithoutRef<typeof PluginEditorFrame>;
 const EDITOR_RUNTIME_CACHE_LIMIT = 40;
+type PluginMenuAction = { id: string; label: string; pluginId: string };
+
+async function createPluginMenuActions(
+  root: string,
+  entry: FileEntry,
+  plugins: readonly FileFormatPlugin[],
+): Promise<PluginMenuAction[]> {
+  let packageJson: string | undefined;
+  if (entry.isDir) {
+    try { packageJson = await desktop.read(root, `${entry.path ? `${entry.path}/` : ""}package.json`); } catch { /* optional context */ }
+  }
+  const viteConfig = entry.isDir && await Promise.all(["vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"].map(async (name) => {
+    try { await desktop.read(root, `${entry.path ? `${entry.path}/` : ""}${name}`); return true; } catch { return false; }
+  })).then((matches) => matches.some(Boolean));
+  const context = { absolutePath: absoluteWorkspacePath(root, entry.path), isDirectory: entry.isDir, packageJson, path: entry.path, viteConfig };
+  const results = await Promise.all(plugins.filter((plugin) => plugin.runtime.menu).map(async (plugin) => {
+    const runtime = await desktop.editorPluginRuntime(root, plugin.id);
+    const menuJavascript = runtime.menuJavascript;
+    if (!menuJavascript) return [];
+    return await new Promise<PluginMenuAction[]>((resolve) => {
+      const nonce = `${Date.now()}-${Math.random()}`;
+      const frame = document.createElement("iframe");
+      frame.hidden = true;
+      frame.sandbox.add("allow-scripts");
+      const finish = (value: PluginMenuAction[]) => { window.removeEventListener("message", receive); frame.remove(); resolve(value); };
+      const receive = (event: MessageEvent) => {
+        if (event.source !== frame.contentWindow || event.data?.nonce !== nonce) return;
+        if (!Array.isArray(event.data.items)) return;
+        const items = event.data.items;
+        finish(items.flatMap((item: unknown): PluginMenuAction[] => item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" && typeof (item as { label?: unknown }).label === "string" ? [{ id: (item as { id: string }).id, label: (item as { label: string }).label, pluginId: plugin.id }] : []));
+      };
+      window.addEventListener("message", receive);
+      window.setTimeout(() => finish([]), 800);
+      const source = menuJavascript.replace(/<\/script/gi, "<\\/script");
+      frame.srcdoc = `<script>${source}</script><script>window.addEventListener('message',async e=>{try{const fn=globalThis.AgentKContextMenu;const items=typeof fn==='function'?await fn(e.data.context):[];parent.postMessage({nonce:e.data.nonce,items},'*')}catch{parent.postMessage({nonce:e.data.nonce,items:[]},'*')}});parent.postMessage({nonce:${JSON.stringify(nonce)},ready:true},'*')</script>`;
+      document.body.append(frame);
+      const ready = (event: MessageEvent) => { if (event.source === frame.contentWindow && event.data?.nonce === nonce && event.data.ready) { window.removeEventListener("message", ready); frame.contentWindow?.postMessage({ nonce, context }, "*"); } };
+      window.addEventListener("message", ready);
+    });
+  }));
+  return results.flat();
+}
 
 function insertCachedEditorRuntime(
   keys: string[],
@@ -138,6 +182,21 @@ function absoluteWorkspacePath(root: string, relativePath: string) {
   if (!relativePath) return root;
   const separator = root.includes("\\") ? "\\" : "/";
   return `${root.replace(/[\\/]+$/, "")}${separator}${relativePath.replace(/[\\/]/g, separator)}`;
+}
+
+function relativeWorkspacePath(root: string, path: string): string | undefined {
+  const requested = path.trim().replaceAll("\\", "/");
+  if (!requested) return undefined;
+  const normalizedRoot = root.replaceAll("\\", "/").replace(/\/+$/, "");
+  const isAbsolute = /^(?:[a-z]:\/|\/\/|\/)/i.test(requested);
+  if (isAbsolute) {
+    const rootKey = normalizedRoot.toLocaleLowerCase("en-US");
+    const requestedKey = requested.toLocaleLowerCase("en-US");
+    if (!requestedKey.startsWith(`${rootKey}/`)) return undefined;
+    return requested.slice(normalizedRoot.length + 1);
+  }
+  const relative = requested.replace(/^\.\//, "");
+  return relative.split("/").some((part) => part === "..") ? undefined : relative;
 }
 function pathIsWithin(path: string, parent: string) {
   return (
@@ -506,6 +565,7 @@ export function InspectorPanel({
     x: number;
     y: number;
   }>();
+  const [pluginMenuActions, setPluginMenuActions] = useState<PluginMenuAction[]>([]);
   const inspectorRef = useRef<HTMLElement>(null);
   const pluginEditorRef = useRef<PluginEditorHandle | null>(null);
   const activePathRef = useRef<string | undefined>(undefined);
@@ -743,6 +803,20 @@ export function InspectorPanel({
       window.dispatchEvent(new CustomEvent("agent-k-file-format-capabilities", { detail: undefined }));
       return;
     }
+    if (active.startsWith("web-preview:")) {
+      window.dispatchEvent(new CustomEvent("agent-k-file-format-capabilities", {
+        detail: {
+          capabilities: [{
+            id: "capture-preview",
+            description: "Save the currently visible web-project preview as a PNG image.",
+          }],
+          name: "Web project preview",
+          path: active.slice("web-preview:".length),
+          skillEnabled: true,
+        },
+      }));
+      return;
+    }
     const plugin = root ? resolveFileFormat(
       fileMatchContext(active, absoluteWorkspacePath(root, active)),
       fileFormatPlugins,
@@ -837,6 +911,43 @@ export function InspectorPanel({
       window.removeEventListener("agent-k-open-file-line", openReferencedLine);
   }, [root, tabs]);
   useEffect(() => {
+    const runWebProject = (event: Event) => {
+      const detail = (event as CustomEvent<{ action?: string; path?: string }>).detail;
+      if (detail?.action !== "run-web-project" || !root || typeof detail.path !== "string") return;
+      const projectPath = relativeWorkspacePath(root, detail.path);
+      if (projectPath === undefined) return;
+      void desktop.startWebProject(root, projectPath).then(({ url }) => {
+        const path = `web-preview:${projectPath}`;
+        setTabs((currentTabs) => currentTabs.some((tab) => tab.path === path)
+          ? currentTabs.map((tab) => tab.path === path ? { ...tab, webPreviewUrl: url } : tab)
+          : [...currentTabs, { content: "", path, saved: "", webPreviewUrl: url }]);
+        activateTab(path);
+      }).catch((cause) => onError(`无法启动 Web 项目：${String(cause)}`));
+    };
+    window.addEventListener("agent-k-file-format-action", runWebProject);
+    return () => window.removeEventListener("agent-k-file-format-action", runWebProject);
+  }, [root, tabs]);
+  useEffect(() => {
+    const openFromAgent = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        action?: string;
+        path?: string;
+        preview?: boolean;
+      }>).detail;
+      if (detail?.action !== "open" || !root || typeof detail.path !== "string") return;
+      const path = relativeWorkspacePath(root, detail.path);
+      if (!path) return;
+      void open(path).then(() => {
+        if (detail.preview !== true) return;
+        setTabs((currentTabs) => currentTabs.map((tab) =>
+          tab.path === path ? { ...tab, previewMode: true } : tab,
+        ));
+      });
+    };
+    window.addEventListener("agent-k-file-format-action", openFromAgent);
+    return () => window.removeEventListener("agent-k-file-format-action", openFromAgent);
+  }, [root, tabs]);
+  useEffect(() => {
     if (
       !lineNavigation ||
       lineNavigation.path !== active?.replaceAll("\\", "/")
@@ -867,6 +978,79 @@ export function InspectorPanel({
   const current = tabsRoot.current === root
     ? tabs.find((tab) => tab.path === active)
     : undefined;
+  const captureRenderedPreview = (requestedOutputPath?: string) => {
+    const target = current?.webPreviewUrl
+      ? inspectorRef.current?.querySelector<HTMLElement>(".web-project-preview")
+      : current?.previewMode && current.format?.id === "agent-k.html"
+        ? inspectorRef.current?.querySelector<HTMLElement>(".cached-plugin-editor.is-active .plugin-editor-frame")
+        : undefined;
+    if (!target) {
+      onError(en ? "Open an HTML or web-project preview before capturing it." : "请先打开 HTML 或网站预览，再进行抓图。");
+      return Promise.resolve(undefined);
+    }
+    const bounds = target.getBoundingClientRect();
+    if (!root) {
+      onError(en ? "A project is required to save the preview screenshot." : "抓图需要先打开一个项目。");
+      return Promise.resolve(undefined);
+    }
+    const baseName = (current?.path ?? "agent-k-preview")
+      .replace(/^web-preview:/, "")
+      .split(/[\\/]/)
+      .pop()
+      ?.replace(/\.[^.]+$/, "") || "agent-k-preview";
+    const fallbackOutputPath = `screenshot/${baseName}-preview-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
+    const relativeOutputPath = relativeWorkspacePath(root, requestedOutputPath ?? fallbackOutputPath);
+    if (!relativeOutputPath || !relativeOutputPath.toLowerCase().endsWith(".png")) {
+      onError(en ? "Preview screenshots must be saved as PNG files inside the current project." : "预览截图必须保存为当前项目内的 PNG 文件。");
+      return Promise.resolve(undefined);
+    }
+    return desktopWindow.capturePreview({
+      height: Math.round(bounds.height),
+      width: Math.round(bounds.width),
+      x: Math.round(bounds.left),
+      y: Math.round(bounds.top),
+    }, absoluteWorkspacePath(root, relativeOutputPath)).catch((cause) => {
+      onError(`${en ? "Unable to capture preview" : "抓图失败"}：${String(cause)}`);
+      return undefined;
+    });
+  };
+  useEffect(() => {
+    const captureFromAgent = (event: Event) => {
+      const detail = (event as CustomEvent<{ action?: string; outputPath?: string }>).detail;
+      if (detail?.action === "capture-preview") void captureRenderedPreview(detail.outputPath);
+    };
+    window.addEventListener("agent-k-file-format-action", captureFromAgent);
+    return () => window.removeEventListener("agent-k-file-format-action", captureFromAgent);
+  }, [current]);
+  useEffect(() => {
+    const getPreviewConsole = (event: Event) => {
+      const request = event as CustomEvent<{
+        limit?: number;
+        respond?: (value: string) => void;
+      }>;
+      if (typeof request.detail?.respond !== "function") return;
+      const respond = request.detail.respond;
+      event.preventDefault();
+      if (!current?.webPreviewUrl) {
+        respond(en
+          ? "No active Agent K web-project preview is available."
+          : "当前没有打开 Agent K 网站预览。");
+        return;
+      }
+      void desktopWindow.getPreviewConsole(current.webPreviewUrl, request.detail.limit).then((entries) => {
+        respond(entries.length
+          ? entries.map((entry) => {
+              const location = entry.frameUrl
+                ? `${entry.frameUrl}${entry.line === undefined ? "" : `:${entry.line + 1}${entry.column === undefined ? "" : `:${entry.column + 1}`}`}`
+                : "";
+              return `[${entry.level}] ${entry.text}${location ? `\n  at ${location}` : ""}`;
+            }).join("\n")
+          : (en ? "No console output has been captured for this preview yet." : "此预览目前没有捕获到控制台输出。"));
+      }).catch((cause) => respond(`Unable to read preview console: ${String(cause)}`));
+    };
+    window.addEventListener("agent-k-preview-console-request", getPreviewConsole);
+    return () => window.removeEventListener("agent-k-preview-console-request", getPreviewConsole);
+  }, [current, en]);
   const activeEditorRuntimeKey =
     root && current?.format?.editor === "plugin"
       ? `${root}\0${current.format.id}\0${current.path}`
@@ -960,11 +1144,15 @@ export function InspectorPanel({
     const availableWidth = bounds?.width ?? window.innerWidth;
     const availableHeight = bounds?.height ?? window.innerHeight;
     setSelectedEntry(entry);
+    setPluginMenuActions([]);
     setContextMenu({
       entry,
       x: Math.max(6, Math.min(localX, availableWidth - 224)),
       y: Math.max(6, Math.min(localY, availableHeight - 196)),
     });
+    if (root) void createPluginMenuActions(root, entry, fileFormatPlugins)
+      .then(setPluginMenuActions)
+      .catch(() => setPluginMenuActions([]));
   };
   const openInFileManager = async (entry: FileEntry) => {
     try {
@@ -1483,6 +1671,58 @@ export function InspectorPanel({
                         : en ? "Preview" : "预览"}
                     </button>
                   ) : null}
+                  {current.previewMode && ["agent-k.html", "agent-k.markdown"].includes(current.format.id) ? (
+                    <button
+                      onClick={() => void desktopWindow.openDevTools()}
+                      title={en ? "Open DevTools" : "打开开发者工具"}
+                      type="button"
+                    >
+                      <i aria-hidden="true" className="fa-solid fa-code" />
+                      {en ? "DevTools" : "开发者工具"}
+                    </button>
+                  ) : null}
+                  {current.previewMode && current.format.id === "agent-k.html" && root ? (
+                    <button
+                      className="external-browser-action"
+                      onClick={() => void desktop.startPreview(root, current.path, current.content)
+                        .then((url) => desktop.openExternalUrl(url, settings.browserId))
+                        .catch((cause) => onError(`无法在外部浏览器中打开：${String(cause)}`))}
+                      title={en ? "Open in external browser" : "在外部浏览器中打开"}
+                      type="button"
+                    >
+                      <i aria-hidden="true" className="fa-solid fa-arrow-up-right-from-square" />
+                      {en ? "Browser" : "外部浏览器"}
+                    </button>
+                  ) : null}
+                  {current.previewMode && current.format.id === "agent-k.html" ? (
+                    <button
+                      onClick={() => void captureRenderedPreview()}
+                      title={en ? "Capture preview as PNG" : "抓取预览图像 (PNG)"}
+                      type="button"
+                    >
+                      <i aria-hidden="true" className="fa-solid fa-camera" />
+                      {en ? "Capture" : "抓图"}
+                    </button>
+                  ) : null}
+                  {current.previewMode && current.format.id === "agent-k.html" ? (
+                    <button
+                      onClick={() => {
+                        setTabs((currentTabs) => currentTabs.map((tab) =>
+                          tab.path === current.path ? { ...tab, previewMode: false } : tab,
+                        ));
+                        window.requestAnimationFrame(() => {
+                          setTabs((currentTabs) => currentTabs.map((tab) =>
+                            tab.path === current.path ? { ...tab, previewMode: true } : tab,
+                          ));
+                        });
+                      }}
+                      title={en ? "Refresh preview" : "刷新预览"}
+                      type="button"
+                    >
+                      <i aria-hidden="true" className="fa-solid fa-rotate-right" />
+                      {en ? "Refresh" : "刷新"}
+                    </button>
+                  ) : null}
                   {!current.previewMode ? (
                     <button
                       aria-label={t("revertFile")}
@@ -1532,7 +1772,60 @@ export function InspectorPanel({
               </>
             </div>
           ) : null}
-          {current?.unsupported ? (
+          {current?.webPreviewUrl ? (
+            <>
+              <div className="web-project-preview-actions">
+                <span>{en ? "Web Preview" : "网站预览"}</span>
+                <div className="web-project-preview-left-actions">
+                  <button
+                    onClick={() => void desktop.openExternalUrl(current.webPreviewUrl!, settings.browserId)
+                      .catch((cause) => onError(`无法在外部浏览器中打开：${String(cause)}`))}
+                    title={en ? "Open in external browser" : "在外部浏览器中打开"}
+                    type="button"
+                  >
+                    <i aria-hidden="true" className="fa-solid fa-arrow-up-right-from-square" />
+                    {en ? "Browser" : "外部浏览器"}
+                  </button>
+                  <button
+                    onClick={() => setTabs((currentTabs) => currentTabs.map((tab) =>
+                      tab.path === current.path
+                        ? { ...tab, webPreviewReloadToken: Date.now() }
+                        : tab,
+                    ))}
+                    title={en ? "Refresh preview" : "刷新预览"}
+                    type="button"
+                  >
+                    <i aria-hidden="true" className="fa-solid fa-rotate-right" />
+                    {en ? "Refresh" : "刷新"}
+                  </button>
+                  <button
+                    onClick={() => void captureRenderedPreview()}
+                    title={en ? "Capture preview as PNG" : "抓取预览图像 (PNG)"}
+                    type="button"
+                  >
+                    <i aria-hidden="true" className="fa-solid fa-camera" />
+                    {en ? "Capture" : "抓图"}
+                  </button>
+                </div>
+                <button
+                  className="web-project-preview-devtools"
+                  onClick={() => void desktopWindow.openDevTools()}
+                  title={en ? "Open DevTools" : "打开开发者工具"}
+                  type="button"
+                >
+                  <i aria-hidden="true" className="fa-solid fa-code" />
+                  {en ? "DevTools" : "开发者工具"}
+                </button>
+              </div>
+              <iframe
+                allow="autoplay; fullscreen"
+                className="web-project-preview"
+                key={current.webPreviewReloadToken ?? 0}
+                src={current.webPreviewUrl}
+                title={en ? "Web project preview" : "Web 项目预览"}
+              />
+            </>
+          ) : current?.unsupported ? (
             <div className="unsupported-editor">
               <i aria-hidden="true" className="fa-regular fa-file" />
               <strong>暂不支持此文件类型</strong>
@@ -1645,34 +1938,22 @@ export function InspectorPanel({
             <i className="fa-solid fa-terminal" />
             在外部控制台中打开目录
           </button>
-          {(() => {
-            const plugin = root ? resolveFileFormat(
-              fileMatchContext(
-                contextMenu.entry.path,
-                absoluteWorkspacePath(root, contextMenu.entry.path),
-              ),
-              fileFormatPlugins,
-              settings.disabledFileEditors,
-            ) : undefined;
-            return plugin?.contextActions
-              ?.filter((action) => !action.when || action.when === "both" || (action.when === "directory") === contextMenu.entry.isDir)
-              .map((action) => (
-                <button
-                  key={`${plugin.id}:${action.id}`}
-                  onClick={() => {
-                    window.dispatchEvent(new CustomEvent("agent-k-file-format-action", {
-                      detail: { action: action.id, path: contextMenu.entry.path, pluginId: plugin.id },
-                    }));
-                    setContextMenu(undefined);
-                  }}
-                  role="menuitem"
-                  type="button"
-                >
-                  <i className="fa-solid fa-puzzle-piece" />
-                  {action.label}
-                </button>
-              ));
-          })()}
+          {pluginMenuActions.map((action) => (
+            <button
+              key={`${action.pluginId}:${action.id}`}
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("agent-k-file-format-action", {
+                  detail: { action: action.id, path: contextMenu.entry.path, pluginId: action.pluginId },
+                }));
+                setContextMenu(undefined);
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <i className="fa-solid fa-puzzle-piece" />
+              {action.label}
+            </button>
+          ))}
         </div>
       )}
       {newFileDialogOpen ? (

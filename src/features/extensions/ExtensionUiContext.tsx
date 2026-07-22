@@ -71,6 +71,7 @@ const ExtensionUiContext = createContext<ExtensionUiContextValue | undefined>(
 const ansiSequencePattern =
   /[\u001b\u009b](?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[0-?]*[ -/]*[@-~])/g;
 const fileFormatActionPrefix = "agent-k-file-format-action:";
+const previewConsoleRequestPrefix = "agent-k-preview-console:";
 
 // Extension UI strings are often authored for Pi's terminal renderer. Strip
 // ANSI CSI/OSC control sequences before displaying them in the WebView.
@@ -380,13 +381,30 @@ export function ExtensionUiProvider({ children }: { children: ReactNode }) {
         if (event.type !== "extension_ui_request") return;
         const runtimeId =
           typeof event.runtimeId === "string" ? event.runtimeId : "default";
+        const method = String(event.method ?? "");
+        const title = typeof event.title === "string" ? event.title : "";
+        if (method === "input" && title.startsWith(previewConsoleRequestPrefix)) {
+          const limit = Math.max(1, Math.min(200, Number(title.slice(previewConsoleRequestPrefix.length)) || 80));
+          const requestId = typeof event.id === "string" ? event.id : "";
+          const respond = (value: string) => void desktop.extensionResponse({
+            type: "extension_ui_response",
+            id: requestId,
+            value,
+          }, runtimeId);
+          const bridgeEvent = new CustomEvent("agent-k-preview-console-request", {
+            cancelable: true,
+            detail: { limit, respond },
+          });
+          if (window.dispatchEvent(bridgeEvent))
+            respond("No active Agent K web-project preview is available.");
+          return;
+        }
         const request = dialogFromEvent(event);
         if (request) {
           if (!dialogsRef.current.some((entry) => entry.id === request.id))
             replaceDialogs([...dialogsRef.current, request]);
           return;
         }
-        const method = String(event.method ?? "");
         if (method === "notify") {
           const message = String(event.message ?? "");
           if (message.startsWith(fileFormatActionPrefix)) {

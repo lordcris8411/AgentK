@@ -104,6 +104,8 @@ for (const entry of entries.filter((candidate) => candidate.isDirectory())) {
     ...(manifest.runtime.style ? [join(packageDirectory, manifest.runtime.style)] : []),
     ...(manifest.runtime.assets ? [join(packageDirectory, manifest.runtime.assets)] : []),
   ];
+  const menuSource = join(packageDirectory, "menu.ts");
+  if (existsSync(menuSource)) outputs.push(join(packageDirectory, "dist", "menu.iife.js"));
   const inputs = [
     manifestPath,
     source,
@@ -112,6 +114,7 @@ for (const entry of entries.filter((candidate) => candidate.isDirectory())) {
     buildScriptPath,
     join(root, "package-lock.json"),
   ];
+  if (existsSync(menuSource)) inputs.push(menuSource);
   if (await upToDate(inputs, outputs)) continue;
   await rm(outDir, { force: true, recursive: true });
 
@@ -140,6 +143,10 @@ for (const entry of entries.filter((candidate) => candidate.isDirectory())) {
       sourcemap: false,
       target: "chrome142",
     },
+  });
+  if (existsSync(menuSource)) await build({
+    configFile: false, logLevel: "warn", publicDir: false, root,
+    build: { emptyOutDir: false, lib: { entry: menuSource, formats: ["iife"], name: `AgentKContext_${entry.name.replace(/[^a-z0-9_$]/gi, "_")}`, fileName: "menu", }, minify: "esbuild", outDir, rollupOptions: { output: { inlineDynamicImports: true } }, sourcemap: false, target: "chrome142" },
   });
   const missingOutputs = outputs.filter((path) => !existsSync(path));
   if (missingOutputs.length)

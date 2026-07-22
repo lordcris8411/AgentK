@@ -375,6 +375,14 @@ function previewTools(turn: Item[]): ToolCall[] {
 }
 function toolLabel(call: ToolCall) {
   const path = toolPath(call.args);
+  if (call.name === "agent_k_file_editor") {
+    const action = typeof call.args.action === "string" ? call.args.action : "";
+    const name = path?.split(/[\\/]/).pop() ?? "文件";
+    if (action === "open") return `预览：${name}`;
+    if (action === "run-web-project") return `运行网站：${name}`;
+    if (action === "capture-preview") return "抓取预览图像";
+    if (action === "get-preview-console") return "读取网站控制台";
+  }
   if (path && call.name === "read") return `读取 ${path}`;
   if (path && ["write", "edit"].includes(call.name)) return `修改 ${path}`;
   if (path && ["copy", "move", "delete"].includes(call.name))
@@ -1242,6 +1250,10 @@ export function ConversationWorkspace({
   activeRuntimeIdRef.current = session?.runtimeId;
   const [draft, setDraftState] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [pendingSteer, setPendingSteer] = useState<{
+    attachments: ComposerAttachment[];
+    value: string;
+  }>();
   const [composerDragActive, setComposerDragActive] = useState(false);
   const [running, setRunning] = useState(false);
   const [runStartedAt, setRunStartedAt] = useState<number>();
@@ -1436,6 +1448,7 @@ export function ConversationWorkspace({
   useLayoutEffect(() => {
     let cancelled = false;
     setAttachments([]);
+    setPendingSteer(undefined);
     if (!session || session.path === "__new__") {
       setItems([]);
       return;
@@ -2292,10 +2305,12 @@ export function ConversationWorkspace({
   const submit = async (
     mode: "steer" | "queue" = "steer",
     draftOverride?: string,
+    attachmentOverride?: ComposerAttachment[],
   ) => {
     const input = draftOverride ?? draftValueRef.current;
+    const activeAttachments = attachmentOverride ?? attachments;
     if (
-      (!input.trim() && attachments.length === 0) ||
+      (!input.trim() && activeAttachments.length === 0) ||
       !session ||
       !connected ||
       submitting
@@ -2315,7 +2330,7 @@ export function ConversationWorkspace({
         setSubmitting(false);
       }
     }
-    if (attachments.some((attachment) => attachment.kind === "image") && !modelSupportsImages) {
+    if (activeAttachments.some((attachment) => attachment.kind === "image") && !modelSupportsImages) {
       onError(
         en
           ? "The current model does not support image input."
@@ -2324,10 +2339,10 @@ export function ConversationWorkspace({
       return;
     }
     const value = input.trim();
-    const imagePaths = attachments
+    const imagePaths = activeAttachments
       .filter((attachment) => attachment.kind === "image")
       .map((attachment) => attachment.path);
-    const filePaths = attachments
+    const filePaths = activeAttachments
       .filter((attachment) => attachment.kind !== "image")
       .map((attachment) => attachment.path);
     const withFileReferences = (message: string) => {
@@ -2338,13 +2353,19 @@ export function ConversationWorkspace({
               .join("\n")}\n</attached_files>\nUse the available file tools to inspect these local files when needed.`
           : "",
         fileFormatContext
-          ? `<agent_k_file_format>\nThe active Agent K ${fileFormatContext.name} editor is showing ${JSON.stringify(fileFormatContext.path)}.${fileFormatContext.capabilities.length ? ` Use the agent_k_file_editor tool only with one of these capabilities:\n${fileFormatContext.capabilities.map((capability) => `- ${capability.id}: ${capability.description}${capability.parameters ? `; parameters ${JSON.stringify(capability.parameters)}` : ""}`).join("\n")}` : " No callable editor actions are available for this category."}\n</agent_k_file_format>`
+          ? `<agent_k_file_format>\nThe active Agent K ${fileFormatContext.name} editor is showing ${JSON.stringify(fileFormatContext.path)}. The agent_k_file_editor tool always supports open for a workspace file path, run-web-project for a project directory with an npm dev script, capture-preview for the currently visible HTML or web-project preview, and get-preview-console for the current web-project preview. For the active editor,${fileFormatContext.capabilities.length ? ` use only one of these additional capabilities:\n${fileFormatContext.capabilities.map((capability) => `- ${capability.id}: ${capability.description}${capability.parameters ? `; parameters ${JSON.stringify(capability.parameters)}` : ""}`).join("\n")}` : " no additional editor actions are available."}\n</agent_k_file_format>`
           : "",
       ].filter(Boolean);
       return additions.length
         ? `${message}${message.trim() ? "\n\n" : ""}${additions.join("\n\n")}`
         : message;
     };
+    if (running && mode === "steer" && attachmentOverride === undefined) {
+      setPendingSteer({ attachments: activeAttachments, value });
+      commitDraft("");
+      setAttachments([]);
+      return;
+    }
     setSubmitting(true);
     try {
       const modelMessage = await beforeSend(value);
@@ -2358,10 +2379,10 @@ export function ConversationWorkspace({
           id: crypto.randomUUID(),
           role: "user",
           content: value,
-          localImageUrls: attachments
+          localImageUrls: activeAttachments
             .filter((attachment) => attachment.kind === "image")
             .flatMap((attachment) => attachment.previewUrl ? [attachment.previewUrl] : []),
-          localFiles: attachments
+          localFiles: activeAttachments
             .filter(
               (attachment): attachment is ComposerAttachment & { kind: "document" | "text" } =>
                 attachment.kind !== "image",
@@ -2379,7 +2400,7 @@ export function ConversationWorkspace({
           : { type: "prompt", message: withFileReferences(modelMessage), imagePaths },
         session.runtimeId,
       );
-      onUserMessage(value || attachments.map((attachment) => attachment.name).join(", "));
+      onUserMessage(value || activeAttachments.map((attachment) => attachment.name).join(", "));
     } catch (cause) {
       if (!running) setRunning(false);
       onError(String(cause));
@@ -3137,6 +3158,28 @@ export function ConversationWorkspace({
               ))}
             </section>
           ))}
+        {pendingSteer ? (
+          <section className="pending-steer-card">
+            <span className="pending-steer-text">{pendingSteer.value || pendingSteer.attachments.map((attachment) => attachment.name).join(", ")}</span>
+            <div className="pending-steer-actions">
+              <button
+                aria-label={en ? "Steer" : "引导"}
+                onClick={() => {
+                  const pending = pendingSteer;
+                  setPendingSteer(undefined);
+                  void submit("steer", pending.value, pending.attachments);
+                }}
+                type="button"
+              ><i aria-hidden="true" className="fa-solid fa-turn-up" /> {en ? "Steer" : "引导"}</button>
+              <button
+                aria-label={en ? "Discard" : "撤销发送"}
+                onClick={() => setPendingSteer(undefined)}
+                title={en ? "Discard" : "撤销发送"}
+                type="button"
+              ><i aria-hidden="true" className="fa-regular fa-trash-can" /></button>
+            </div>
+          </section>
+        ) : null}
         <div
           aria-disabled={!session || !connected || submitting}
           aria-multiline="true"
@@ -3175,6 +3218,21 @@ export function ConversationWorkspace({
             else queueDraftCommit(value);
           }}
           onKeyDown={(event) => {
+            if (event.key === "ArrowUp" && pendingSteer && !draftValueRef.current.trim()) {
+              event.preventDefault();
+              const pending = pendingSteer;
+              setPendingSteer(undefined);
+              setAttachments(pending.attachments);
+              commitDraft(pending.value);
+              requestAnimationFrame(() => {
+                const editor = composerRef.current;
+                if (!editor) return;
+                populateComposer(editor, pending.value);
+                placeCaretAtEnd(editor);
+                editor.focus();
+              });
+              return;
+            }
             if (slashMenuVisible) {
               if (event.key === "Escape") {
                 event.preventDefault();

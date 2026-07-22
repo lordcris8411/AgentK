@@ -9,5 +9,5 @@
   "editor": "plugin",
   "editable": true,
   "languageId": "markdown",
-  "runtime": { "dependencies": ["monaco-editor@0.55.1"], "entry": "dist/editor.iife.js", "style": "dist/editor.css" }
+  "runtime": { "dependencies": ["monaco-editor@0.55.1"], "entry": "dist/editor.iife.js", "menu": "dist/menu.iife.js", "style": "dist/editor.css" }
 }

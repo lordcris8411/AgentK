@@ -8,7 +8,7 @@
   },
   "editor": "plugin",
   "mediaKind": "audio",
-  "runtime": { "entry": "dist/editor.iife.js", "style": "dist/editor.css" },
+  "runtime": { "entry": "dist/editor.iife.js", "menu": "dist/menu.iife.js", "style": "dist/editor.css" },
   "capabilities": [
     { "id": "play", "label": "Play", "description": "Start playing the current audio" },
     { "id": "pause", "label": "Pause", "description": "Pause the current audio" },

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdirSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   app,
@@ -52,6 +53,18 @@ let splashWindow: BrowserWindow | undefined;
 let backend: DesktopBackend | undefined;
 let backendReady: Promise<void> | undefined;
 let quitting = false;
+type PreviewConsoleEntry = {
+  column?: number;
+  frameUrl?: string;
+  level: "debug" | "error" | "info" | "log" | "warning";
+  line?: number;
+  text: string;
+  timestamp: number;
+};
+const previewConsoleEntries: PreviewConsoleEntry[] = [];
+const previewConsoleFrames = new Map<string, string>();
+const previewConsoleContexts = new Map<number, string>();
+const PREVIEW_CONSOLE_LIMIT = 500;
 
 type ResizeDirection =
   | "East" | "North" | "NorthEast" | "NorthWest"
@@ -151,6 +164,111 @@ function createWindows(): void {
     mainWindow = undefined;
     if (!quitting) app.quit();
   });
+  enablePreviewConsole(mainWindow);
+}
+
+function pushPreviewConsole(entry: PreviewConsoleEntry): void {
+  previewConsoleEntries.push(entry);
+  if (previewConsoleEntries.length > PREVIEW_CONSOLE_LIMIT)
+    previewConsoleEntries.splice(0, previewConsoleEntries.length - PREVIEW_CONSOLE_LIMIT);
+}
+
+function remoteValue(value: unknown): string {
+  if (!value || typeof value !== "object") return String(value ?? "");
+  const remote = value as { description?: unknown; unserializableValue?: unknown; value?: unknown };
+  if (typeof remote.value === "string") return remote.value;
+  if (remote.value !== undefined) {
+    try { return JSON.stringify(remote.value); } catch { /* use description below */ }
+  }
+  if (typeof remote.unserializableValue === "string") return remote.unserializableValue;
+  return typeof remote.description === "string" ? remote.description : "";
+}
+
+function enablePreviewConsole(window: BrowserWindow): void {
+  const debuggerApi = window.webContents.debugger;
+  try {
+    debuggerApi.attach("1.3");
+  } catch (cause) {
+    console.warn(`Preview console capture is unavailable: ${errorMessage(cause)}`);
+    return;
+  }
+  debuggerApi.on("message", (_event, method, raw) => {
+    const payload = asObject(raw);
+    if (method === "Page.frameNavigated") {
+      const frame = asObject(payload.frame);
+      if (typeof frame.id === "string" && typeof frame.url === "string")
+        previewConsoleFrames.set(frame.id, frame.url);
+      return;
+    }
+    if (method === "Page.frameDetached") {
+      if (typeof payload.frameId === "string") previewConsoleFrames.delete(payload.frameId);
+      return;
+    }
+    if (method === "Runtime.executionContextCreated") {
+      const context = asObject(payload.context);
+      const auxiliary = asObject(context.auxData);
+      if (typeof context.id === "number" && typeof auxiliary.frameId === "string")
+        previewConsoleContexts.set(context.id, auxiliary.frameId);
+      return;
+    }
+    if (method === "Runtime.executionContextDestroyed") {
+      if (typeof payload.executionContextId === "number")
+        previewConsoleContexts.delete(payload.executionContextId);
+      return;
+    }
+    if (method === "Runtime.consoleAPICalled") {
+      const frameUrl = previewConsoleFrames.get(previewConsoleContexts.get(Number(payload.executionContextId)) ?? "");
+      const type = typeof payload.type === "string" ? payload.type : "log";
+      pushPreviewConsole({
+        frameUrl,
+        level: (["debug", "error", "info", "log", "warning"] as string[]).includes(type)
+          ? type as PreviewConsoleEntry["level"]
+          : "log",
+        text: (Array.isArray(payload.args) ? payload.args : []).map(remoteValue).join(" "),
+        timestamp: typeof payload.timestamp === "number" ? Math.round(payload.timestamp) : Date.now(),
+      });
+      return;
+    }
+    if (method === "Runtime.exceptionThrown") {
+      const details = asObject(payload.exceptionDetails);
+      const frameUrl = previewConsoleFrames.get(previewConsoleContexts.get(Number(details.executionContextId)) ?? "");
+      pushPreviewConsole({
+        column: typeof details.columnNumber === "number" ? details.columnNumber : undefined,
+        frameUrl,
+        level: "error",
+        line: typeof details.lineNumber === "number" ? details.lineNumber : undefined,
+        text: remoteValue(details.exception) || String(details.text ?? "Uncaught exception"),
+        timestamp: Date.now(),
+      });
+    }
+  });
+  const rememberFrameTree = (value: unknown) => {
+    const visit = (tree: unknown) => {
+      const record = asObject(tree);
+      const frame = asObject(record.frame);
+      if (typeof frame.id === "string" && typeof frame.url === "string")
+        previewConsoleFrames.set(frame.id, frame.url);
+      for (const child of Array.isArray(record.childFrames) ? record.childFrames : []) visit(child);
+    };
+    visit(asObject(value).frameTree);
+  };
+  void Promise.all([
+    debuggerApi.sendCommand("Page.enable"),
+    debuggerApi.sendCommand("Runtime.enable"),
+    debuggerApi.sendCommand("Log.enable"),
+  ]).then(() => debuggerApi.sendCommand("Page.getFrameTree"))
+    .then(rememberFrameTree)
+    .catch((cause) => console.warn(`Preview console capture setup failed: ${errorMessage(cause)}`));
+}
+
+function previewConsoleFor(url: string, limit: number): PreviewConsoleEntry[] {
+  let origin: string;
+  try { origin = new URL(url).origin; } catch { throw new Error("Invalid preview URL"); }
+  return previewConsoleEntries
+    .filter((entry) => {
+      try { return entry.frameUrl ? new URL(entry.frameUrl).origin === origin : false; } catch { return false; }
+    })
+    .slice(-Math.max(1, Math.min(limit, 200)));
 }
 
 function notifyWindowState(): void {
@@ -225,7 +343,7 @@ function registerIpc(): void {
     if (result.canceled || !result.filePaths.length) return null;
     return source.multiple === true ? result.filePaths : result.filePaths[0];
   });
-  ipcMain.handle("agent-k:window", (event, action: unknown, payload: unknown) => {
+  ipcMain.handle("agent-k:window", async (event, action: unknown, payload: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || typeof action !== "string") return;
     const data = asObject(payload);
@@ -247,6 +365,30 @@ function registerIpc(): void {
       case "close":
         window.close();
         break;
+      case "open-devtools":
+        window.webContents.openDevTools({ mode: "detach" });
+        break;
+      case "capture-preview": {
+        const x = Math.max(0, number(data.x));
+        const y = Math.max(0, number(data.y));
+        const width = number(data.width);
+        const height = number(data.height);
+        if (width < 1 || height < 1) throw new Error("Preview has no visible area to capture");
+        const outputPath = typeof data.outputPath === "string" ? data.outputPath : "";
+        if (!outputPath || !isAbsolute(outputPath) || !outputPath.toLowerCase().endsWith(".png"))
+          throw new Error("A PNG output path is required");
+        const image = await window.webContents.capturePage({ height, width, x, y });
+        await mkdir(dirname(outputPath), { recursive: true });
+        await writeFile(outputPath, image.toPNG());
+        return outputPath;
+      }
+      case "get-preview-console": {
+        const url = typeof data.url === "string" ? data.url : "";
+        const limit = typeof data.limit === "number" && Number.isFinite(data.limit)
+          ? Math.round(data.limit)
+          : 80;
+        return previewConsoleFor(url, limit);
+      }
       case "resize-begin": {
         const direction = String(data.direction) as ResizeDirection;
         if (![

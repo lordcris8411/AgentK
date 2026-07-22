@@ -413,7 +413,29 @@ export function App() {
 
   useEffect(() => {
     let stop: (() => void) | undefined;
+    let finishReload: (() => void) | undefined;
     void desktop.onEvent((event) => {
+      if (event.type === "pi_reload_progress") {
+        const total = typeof event.total === "number" && event.total > 0
+          ? Math.floor(event.total)
+          : 0;
+        const completed = typeof event.completed === "number"
+          ? Math.max(0, Math.min(total, Math.floor(event.completed)))
+          : 0;
+        if (!total) return;
+        const message = en
+          ? `Reloading Pi workers (${completed}/${total})…`
+          : `正在重载 Pi worker（${completed}/${total}）…`;
+        if (completed === 0) {
+          finishReload?.();
+          finishReload = beginBusy(message, 0, 420);
+        } else setBusyMessage(message);
+        if (completed >= total) {
+          finishReload?.();
+          finishReload = undefined;
+        }
+        return;
+      }
       const runtimeId =
         typeof event.runtimeId === "string" ? event.runtimeId : undefined;
       const sessionPath =
@@ -475,8 +497,11 @@ export function App() {
     }).then((unlisten) => {
       stop = unlisten;
     });
-    return () => stop?.();
-  }, []);
+    return () => {
+      stop?.();
+      finishReload?.();
+    };
+  }, [en]);
   const nameNewSession = (message: string) => {
     const current = activeRef.current;
     if (!current || current.name !== "New session") return;
@@ -577,11 +602,15 @@ export function App() {
       finishBusy();
     }
   };
-  const hideSession = async (session: SessionSummary) => {
+  const deleteSession = async (session: SessionSummary) => {
     try {
       const runtimeId = session.runtimeId ?? runtimeIds.current.get(session.path);
-      if (runtimeId) runtimeIds.current.delete(session.path);
-      await desktop.hideSession(session.path, true);
+      if (runtimeId) {
+        desktop.abort(runtimeId);
+        await desktop.closeRuntime(runtimeId);
+        runtimeIds.current.delete(session.path);
+      }
+      await desktop.deleteSession(session.path);
       const current = activeRef.current;
       if (current?.path === session.path) createSession(current.cwd);
       await reload();
@@ -788,7 +817,7 @@ export function App() {
             activePath={active?.path}
             onAddWorkspace={() => void addWorkspace()}
             onClone={cloneSession}
-            onDelete={hideSession}
+            onDelete={deleteSession}
             onNew={createSession}
             onOpenFolder={openSessionFolder}
             onRename={renameSession}
