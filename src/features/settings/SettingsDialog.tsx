@@ -7,6 +7,8 @@ import {
   type PiResource,
   type PiResourceChange,
   type RuntimeInfo,
+  type SkillHubPreview,
+  type SkillHubScope,
 } from "../../lib/desktop";
 import { useSettings } from "./SettingsContext";
 import { platform } from "../../lib/platform";
@@ -15,6 +17,14 @@ export type SettingsPage = "models" | "appearance" | "agentSettings" | "skills" 
 
 let aboutDataPromise: Promise<[string, RuntimeInfo]> | undefined;
 let browserDataPromise: Promise<BrowserOption[]> | undefined;
+
+const featuredSkills = [
+  {
+    name: "Find Skills",
+    description: "Vercel Labs 的技能发现助手",
+    sourceUrl: "https://github.com/vercel-labs/skills/tree/main/skills/find-skills",
+  },
+];
 
 function loadAboutData() {
   aboutDataPromise ??= Promise.all([platform.appVersion(), desktop.runtimeInfo()]).catch(
@@ -73,6 +83,10 @@ export function SettingsDialog({
   });
   const [manualModel, setManualModel] = useState("");
   const [pendingDelete, setPendingDelete] = useState<ProviderCatalogItem>();
+  const [skillHubUrl, setSkillHubUrl] = useState("");
+  const [skillHubPreview, setSkillHubPreview] = useState<SkillHubPreview>();
+  const [skillHubScope, setSkillHubScope] = useState<SkillHubScope>(cwd ? "project" : "user");
+  const [selectedSkill, setSelectedSkill] = useState<PiResource>();
   const [authTarget, setAuthTarget] = useState<ProviderCatalogItem>();
   const [authKey, setAuthKey] = useState("");
   const [notice, setNotice] = useState<string>();
@@ -145,6 +159,9 @@ export function SettingsDialog({
     setResourceChanges([]);
     resourceBaselineRef.current.clear();
   }, [initialPage, open]);
+  useEffect(() => {
+    if (!cwd) setSkillHubScope("user");
+  }, [cwd]);
   useEffect(() => {
     if (!open || (page !== "skills" && page !== "extensions") || !runtimeId || !cwd) return;
     setBusy(true);
@@ -374,6 +391,40 @@ export function SettingsDialog({
       return next;
     });
   };
+  const previewSkill = async () => {
+    if (!skillHubUrl.trim()) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      setSkillHubPreview(await desktop.previewSkillHub(skillHubUrl.trim()));
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const installSkill = async () => {
+    if (!skillHubPreview || !cwd) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await desktop.installSkillHub(
+        skillHubPreview.sourceUrl,
+        skillHubPreview.hash,
+        skillHubScope,
+        cwd,
+      );
+      await desktop.reloadPiRuntimes();
+      setSkillHubPreview(undefined);
+      setSkillHubUrl("");
+      setResources(await desktop.piResources(cwd, runtimeId));
+      setNotice(t("skillHubInstalled"));
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && closeDialog()}>
@@ -516,6 +567,45 @@ export function SettingsDialog({
                     <i className="fa-solid fa-spinner fa-spin" /> {t("resourcesLocked")}
                   </p>
                 )}
+                {page === "skills" && (
+                  <section className="skill-hub">
+                    <div className="skill-hub-heading">
+                      <div>
+                        <h3><i className="fa-solid fa-store" /> {t("skillHub")}</h3>
+                        <p>{t("skillHubDescription")}</p>
+                      </div>
+                      <button
+                        onClick={() => void desktop.openExternalUrl("https://skills.sh/", settings.browserId)}
+                        type="button"
+                      >
+                        <i className="fa-solid fa-arrow-up-right-from-square" /> skills.sh
+                      </button>
+                    </div>
+                    <div className="skill-hub-import">
+                      <input
+                        aria-label={t("skillHubUrl")}
+                        onChange={(event) => setSkillHubUrl(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") void previewSkill();
+                        }}
+                        placeholder={t("skillHubUrlPlaceholder")}
+                        value={skillHubUrl}
+                      />
+                      <button disabled={busy || !skillHubUrl.trim()} onClick={() => void previewSkill()} type="button">
+                        <i className="fa-regular fa-eye" /> {t("skillHubPreview")}
+                      </button>
+                    </div>
+                    <div className="skill-hub-featured">
+                      <span>{t("skillHubFeatured")}</span>
+                      {featuredSkills.map((skill) => (
+                        <button key={skill.sourceUrl} onClick={() => setSkillHubUrl(skill.sourceUrl)} type="button">
+                          <strong>{skill.name}</strong><small>{skill.description}</small>
+                        </button>
+                      ))}
+                    </div>
+                    <small>{t("skillHubSafety")}</small>
+                  </section>
+                )}
                 <div className="resource-list">
                   {resources
                     .filter((resource) => resource.kind === (page === "skills" ? "skill" : "extension"))
@@ -526,16 +616,19 @@ export function SettingsDialog({
                           <small>{resource.description || resource.path}</small>
                           <span>{resource.scope === "project" ? t("projectScope") : t("userScope")} · {resource.origin === "package" ? resource.source : resource.path}</span>
                         </div>
-                        <button
-                          aria-checked={resource.enabled}
-                          className={resource.enabled ? "resource-toggle is-active" : "resource-toggle"}
-                          disabled={!cwd || resourcesLocked}
-                          onClick={() => toggleResource(resource)}
-                          role="switch"
-                          type="button"
-                        >
-                          <span />
-                        </button>
+                        <div className="resource-card-actions">
+                          {resource.kind === "skill" && <button onClick={() => setSelectedSkill(resource)} type="button">{t("skillDetails")}</button>}
+                          <button
+                            aria-checked={resource.enabled}
+                            className={resource.enabled ? "resource-toggle is-active" : "resource-toggle"}
+                            disabled={!cwd || resourcesLocked}
+                            onClick={() => toggleResource(resource)}
+                            role="switch"
+                            type="button"
+                          >
+                            <span />
+                          </button>
+                        </div>
                       </article>
                     ))}
                   {!busy && resources.every((resource) => resource.kind !== (page === "skills" ? "skill" : "extension")) && (
@@ -566,6 +659,8 @@ export function SettingsDialog({
         {editor && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{editor === "local" ? t("localAdd") : t("providerAdd")}</h3><label>{t("providerId")}<input value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} /></label><label>{t("displayName")}<input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label><label>{t("baseUrl")}<input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} /></label><label>{t("apiProtocol")}<select value={draft.api} onChange={(e) => setDraft({ ...draft, api: e.target.value })}><option value="openai-completions">OpenAI Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option></select></label><label>{t("apiKey")}<input autoComplete="off" type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} /></label><label>{t("modelId")}<div className="inline-field"><input value={manualModel} onChange={(e) => setManualModel(e.target.value)} /><button disabled={!draft.baseUrl || busy} onClick={() => void discoverLocal()} type="button">{t("discover")}</button></div></label>{draft.models.length > 0 && <div className="discovered-models">{draft.models.map((id) => <button key={id} onClick={() => setManualModel(id)} type="button">{id}</button>)}</div>}<footer><button onClick={() => setEditor(undefined)} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy} onClick={() => void saveDraft()} type="button">{t("save")}</button></footer></div></div>}
         {authTarget && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{providerDisplayName(authTarget)} · {t("apiKey")}</h3><label>{t("apiKey")}<input autoComplete="off" autoFocus type="password" value={authKey} onChange={(event) => setAuthKey(event.target.value)} /></label><footer><button onClick={() => { setAuthTarget(undefined); setAuthKey(""); }} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy || !authKey.trim()} onClick={() => void saveAuthKey()} type="button">{t("save")}</button></footer></div></div>}
         {pendingDelete && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{t("delete")} {pendingDelete.name}?</h3><p className="settings-description">{pendingDelete.id} will be removed from models.json.</p><footer><button onClick={() => setPendingDelete(undefined)} type="button">{t("cancel")}</button><button className="danger-button" onClick={() => { setBusy(true); void desktop.deleteProvider(pendingDelete.id).then(() => desktop.reloadPiRuntimes()).then(() => refresh()).catch((cause) => setError(String(cause))).finally(() => { setPendingDelete(undefined); setBusy(false); }); }} type="button">{t("delete")}</button></footer></div></div>}
+        {selectedSkill && <div className="settings-subdialog"><div className="settings-subdialog-card skill-details"><h3>{t("skillDetails")}</h3><dl><div><dt>{t("displayName")}</dt><dd>{selectedSkill.name}</dd></div><div><dt>{t("skillDescriptionLabel")}</dt><dd>{selectedSkill.description || t("noSkillDescription")}</dd></div><div><dt>{t("skillScopeLabel")}</dt><dd>{selectedSkill.scope === "project" ? t("projectScope") : t("userScope")}</dd></div><div><dt>{t("skillPathLabel")}</dt><dd>{selectedSkill.path}</dd></div></dl><footer><button className="primary-button" onClick={() => setSelectedSkill(undefined)} type="button">{t("close")}</button></footer></div></div>}
+        {skillHubPreview && <div className="settings-subdialog"><div className="settings-subdialog-card skill-hub-preview"><h3>{t("skillHubReview")}</h3><div className="skill-hub-preview-meta"><strong>{skillHubPreview.name}</strong>{skillHubPreview.description && <span>{skillHubPreview.description}</span>}<small>{skillHubPreview.source} · {skillHubPreview.files.length} {t("skillHubFiles")}</small></div><label>{t("skillHubInstallScope")}<select disabled={!cwd} onChange={(event) => setSkillHubScope(event.target.value as SkillHubScope)} value={skillHubScope}><option value="project">{t("projectScope")}</option><option value="user">{t("userScope")}</option></select></label><div className="skill-hub-file-list">{skillHubPreview.files.map((file) => <span key={file.path}>{file.path}<small>{Math.ceil(file.bytes / 1024)} KB</small></span>)}</div><label>{t("skillHubContent")}<textarea readOnly value={skillHubPreview.skillMarkdown} /></label><footer><button onClick={() => setSkillHubPreview(undefined)} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy || !cwd} onClick={() => void installSkill()} type="button">{t("skillHubInstall")}</button></footer></div></div>}
       </section>
     </div>
   );

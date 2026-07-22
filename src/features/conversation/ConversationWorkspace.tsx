@@ -1267,6 +1267,11 @@ export function ConversationWorkspace({
   const [branching, setBranching] = useState<string>();
   const [accessMenu, setAccessMenu] = useState(false);
   const [sessionGranted, setSessionGranted] = useState(false);
+  const [fileFormatContext, setFileFormatContext] = useState<{
+    capabilities: Array<{ id: string; description: string; parameters?: Record<string, string> }>;
+    name: string;
+    path: string;
+  }>();
   const streamingId = useRef<string | undefined>(undefined);
   const messageListRef = useRef<HTMLElement | null>(null);
   const scrollbarRef = useRef<HTMLDivElement | null>(null);
@@ -1327,6 +1332,33 @@ export function ConversationWorkspace({
     const refresh = () => setCommandRevision((revision) => revision + 1);
     window.addEventListener("agent-k-resources-changed", refresh);
     return () => window.removeEventListener("agent-k-resources-changed", refresh);
+  }, []);
+  useEffect(() => {
+    const updateFileFormatContext = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        capabilities?: Array<{ id?: unknown; description?: unknown; parameters?: unknown }>;
+        name?: unknown;
+        path?: unknown;
+      }>).detail;
+      if (!detail || typeof detail.name !== "string" || typeof detail.path !== "string") {
+        setFileFormatContext(undefined);
+        return;
+      }
+      const capabilities = (detail.capabilities ?? []).flatMap((capability) =>
+        typeof capability.id === "string" && typeof capability.description === "string"
+          ? [{
+              id: capability.id,
+              description: capability.description,
+              ...(capability.parameters && typeof capability.parameters === "object"
+                ? { parameters: capability.parameters as Record<string, string> }
+                : {}),
+            }]
+          : [],
+      );
+      setFileFormatContext(capabilities.length ? { capabilities, name: detail.name, path: detail.path } : undefined);
+    };
+    window.addEventListener("agent-k-file-format-capabilities", updateFileFormatContext);
+    return () => window.removeEventListener("agent-k-file-format-capabilities", updateFileFormatContext);
   }, []);
   const builtinCommands = useMemo<SlashCommand[]>(() => [
     { name: "settings", description: en ? "Open Agent K settings" : "打开 Agent K 设置", source: "builtin" },
@@ -2269,12 +2301,21 @@ export function ConversationWorkspace({
     const filePaths = attachments
       .filter((attachment) => attachment.kind !== "image")
       .map((attachment) => attachment.path);
-    const withFileReferences = (message: string) =>
-      filePaths.length
-        ? `${message}${message.trim() ? "\n\n" : ""}<attached_files>\n${filePaths
-            .map((path) => `- ${JSON.stringify(path)}`)
-            .join("\n")}\n</attached_files>\nUse the available file tools to inspect these local files when needed.`
+    const withFileReferences = (message: string) => {
+      const additions = [
+        filePaths.length
+          ? `<attached_files>\n${filePaths
+              .map((path) => `- ${JSON.stringify(path)}`)
+              .join("\n")}\n</attached_files>\nUse the available file tools to inspect these local files when needed.`
+          : "",
+        fileFormatContext
+          ? `<agent_k_file_format>\nThe active Agent K ${fileFormatContext.name} editor is showing ${JSON.stringify(fileFormatContext.path)}. Use the agent_k_file_editor tool only with one of these capabilities:\n${fileFormatContext.capabilities.map((capability) => `- ${capability.id}: ${capability.description}${capability.parameters ? `; parameters ${JSON.stringify(capability.parameters)}` : ""}`).join("\n")}\n</agent_k_file_format>`
+          : "",
+      ].filter(Boolean);
+      return additions.length
+        ? `${message}${message.trim() ? "\n\n" : ""}${additions.join("\n\n")}`
         : message;
+    };
     setSubmitting(true);
     try {
       const modelMessage = await beforeSend(value);

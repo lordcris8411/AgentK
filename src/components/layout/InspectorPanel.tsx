@@ -24,6 +24,12 @@ import {
   type ReviewCall,
 } from "../../features/conversation/ReviewPanel";
 import { useSettings } from "../../features/settings/SettingsContext";
+import {
+  mediaMimeTypeFor,
+  monacoLanguageFor,
+  resolveFileFormat,
+} from "../../features/file-formats/builtins";
+import type { FileFormatPlugin } from "../../features/file-formats/sdk";
 
 type Tab = {
   path: string;
@@ -36,101 +42,10 @@ type Tab = {
   previewCodec?: string;
   previewMode?: boolean;
   documentPreviewUrl?: string;
+  format?: FileFormatPlugin;
 };
-const imageExtensions = new Set([
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "webp",
-  "bmp",
-  "ico",
-  "svg",
-]);
-const audioExtensions = new Set([
-  "mp3",
-  "wav",
-  "flac",
-  "ogg",
-  "oga",
-  "m4a",
-  "aac",
-  "wma",
-  "opus",
-]);
-const videoExtensions = new Set([
-  "mp4",
-  "m4v",
-  "mkv",
-  "mov",
-  "avi",
-  "webm",
-  "wmv",
-  "flv",
-  "mpeg",
-  "mpg",
-  "3gp",
-  "ogv",
-]);
-function previewKindFor(path: string): PreviewKind | undefined {
-  const extension = path.split(".").pop()?.toLowerCase() ?? "";
-  if (imageExtensions.has(extension)) return "image";
-  if (audioExtensions.has(extension)) return "audio";
-  if (videoExtensions.has(extension)) return "video";
-  if (extension === "pdf") return "pdf";
-  return undefined;
-}
-function isMarkdownFile(path: string) {
-  return ["md", "markdown", "mdown", "mkd"].includes(
-    path.split(".").pop()?.toLowerCase() ?? "",
-  );
-}
-function isHtmlFile(path: string) {
-  return ["html", "htm"].includes(
-    path.split(".").pop()?.toLowerCase() ?? "",
-  );
-}
-function isPreviewableDocument(path: string) {
-  return isMarkdownFile(path) || isHtmlFile(path);
-}
 function mediaTypeFor(path: string) {
-  const extension = path.split(".").pop()?.toLowerCase() ?? "";
-  return (
-    (
-      {
-        png: "image/png",
-        jpg: "image/jpeg",
-        jpeg: "image/jpeg",
-        gif: "image/gif",
-        webp: "image/webp",
-        bmp: "image/bmp",
-        ico: "image/x-icon",
-        svg: "image/svg+xml",
-        pdf: "application/pdf",
-        mp3: "audio/mpeg",
-        wav: "audio/wav",
-        flac: "audio/flac",
-        ogg: "audio/ogg",
-        oga: "audio/ogg",
-        m4a: "audio/mp4",
-        aac: "audio/aac",
-        wma: "audio/x-ms-wma",
-        opus: "audio/opus",
-        mp4: "video/mp4",
-        m4v: "video/mp4",
-        mov: "video/quicktime",
-        webm: "video/webm",
-        ogv: "video/ogg",
-        mpeg: "video/mpeg",
-        mpg: "video/mpeg",
-        "3gp": "video/3gpp",
-        mkv: "video/x-matroska",
-        avi: "video/x-msvideo",
-        wmv: "video/x-ms-wmv",
-        flv: "video/x-flv",
-      } as Record<string, string>
-    )[extension] ?? "application/octet-stream"
-  );
+  return mediaMimeTypeFor(path);
 }
 
 function detectVideoCodec(data: ArrayBuffer) {
@@ -166,88 +81,6 @@ function detectVideoCodec(data: ArrayBuffer) {
   return signatures.find(([signature]) =>
     searchable.some((chunk) => chunk.includes(signature)),
   )?.[1];
-}
-const editableExtensions = new Set([
-  "py",
-  "pyw",
-  "js",
-  "jsx",
-  "ts",
-  "tsx",
-  "mjs",
-  "cjs",
-  "rs",
-  "go",
-  "java",
-  "c",
-  "cc",
-  "cpp",
-  "h",
-  "hpp",
-  "cs",
-  "sh",
-  "bash",
-  "zsh",
-  "ps1",
-  "bat",
-  "cmd",
-  "html",
-  "htm",
-  "css",
-  "scss",
-  "sass",
-  "less",
-  "vue",
-  "svelte",
-  "php",
-  "rb",
-  "swift",
-  "kt",
-  "kts",
-  "dart",
-  "lua",
-  "r",
-  "sql",
-  "graphql",
-  "gql",
-  "md",
-  "mdx",
-  "txt",
-  "log",
-  "json",
-  "jsonc",
-  "yaml",
-  "yml",
-  "toml",
-  "xml",
-  "ini",
-  "cfg",
-  "conf",
-  "env",
-  "properties",
-  "csv",
-  "tsv",
-]);
-const editableNames = new Set([
-  "dockerfile",
-  "makefile",
-  "license",
-  "readme",
-  ".gitignore",
-  ".gitattributes",
-  ".editorconfig",
-  ".npmrc",
-  ".prettierrc",
-  ".eslintrc",
-]);
-function isEditableTextFile(path: string) {
-  const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
-  const extension = name.includes(".") ? (name.split(".").pop() ?? "") : "";
-  return (
-    editableExtensions.has(extension) ||
-    editableNames.has(name) ||
-    name.endsWith(".lock")
-  );
 }
 function replacePathName(path: string, name: string) {
   const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
@@ -302,29 +135,7 @@ function replaceTreeEntry(
   };
 }
 const languageFor = (path: string) => {
-  const extension = path.split(".").pop()?.toLowerCase();
-  return (
-    (
-      {
-        py: "python",
-        pyw: "python",
-        ts: "typescript",
-        tsx: "typescript",
-        js: "javascript",
-        jsx: "javascript",
-        json: "json",
-        md: "markdown",
-        yml: "yaml",
-        yaml: "yaml",
-        sh: "shell",
-        ps1: "powershell",
-        rs: "rust",
-        css: "css",
-        html: "html",
-        xml: "xml",
-      } as Record<string, string>
-    )[extension ?? ""] ?? "plaintext"
-  );
+  return monacoLanguageFor(path);
 };
 function FileIcon({ path }: { path: string }) {
   const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
@@ -590,6 +401,7 @@ export function InspectorPanel({
   const en = settings.locale === "en-US";
   const editorTheme = resolvedTheme === "dark" ? "agent-k-dark" : "agent-k-light";
   const [tree, setTree] = useState<FileEntry>();
+  const [fileFormatPlugins, setFileFormatPlugins] = useState<FileFormatPlugin[]>([]);
   const [loading, setLoading] = useState(false);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [active, setActive] = useState<string>();
@@ -752,6 +564,15 @@ export function InspectorPanel({
     treeRef.current = undefined;
     setSelectedEntry(undefined);
     refresh(false);
+    if (root) {
+      void desktop.fileFormatPlugins(root)
+        .then((plugins) => setFileFormatPlugins(
+          [...plugins]
+            .sort((left, right) => left.scope === right.scope ? 0 : left.scope === "project" ? -1 : 1)
+            .map((plugin) => plugin as FileFormatPlugin),
+        ))
+        .catch(() => setFileFormatPlugins([]));
+    } else setFileFormatPlugins([]);
     const interval = window.setInterval(() => refresh(true), 5_000);
     return () => window.clearInterval(interval);
   }, [root]);
@@ -834,17 +655,33 @@ export function InspectorPanel({
     const frame = requestAnimationFrame(() => restoreEditorView(active));
     return () => cancelAnimationFrame(frame);
   }, [active]);
+  useEffect(() => {
+    if (!active) {
+      window.dispatchEvent(new CustomEvent("agent-k-file-format-capabilities", { detail: undefined }));
+      return;
+    }
+    const plugin = resolveFileFormat(active, fileFormatPlugins);
+    window.dispatchEvent(new CustomEvent("agent-k-file-format-capabilities", {
+      detail: {
+        capabilities: plugin.capabilities ?? [],
+        name: plugin.name,
+        path: active,
+        pluginId: plugin.id,
+      },
+    }));
+  }, [active, fileFormatPlugins]);
   const open = async (path: string) => {
     if (!root || tabs.some((tab) => tab.path === path)) {
       activateTab(path);
       return;
     }
-    const previewKind = previewKindFor(path);
+    const format = resolveFileFormat(path, fileFormatPlugins);
+    const previewKind = format.mediaKind;
     if (previewKind) {
       try {
         const data = await desktop.readBinary(root, path);
         const previewUrl = URL.createObjectURL(
-          new Blob([data], { type: mediaTypeFor(path) }),
+          new Blob([data], { type: format.mimeType ?? mediaTypeFor(path) }),
         );
         previewUrls.current.add(previewUrl);
         setTabs((current) => [
@@ -858,6 +695,7 @@ export function InspectorPanel({
             previewKind,
             previewUrl,
             saved: "",
+            format,
           },
         ]);
         activateTab(path);
@@ -866,17 +704,17 @@ export function InspectorPanel({
       }
       return;
     }
-    if (!isEditableTextFile(path)) {
+    if (!(format.editable === true || path.toLowerCase().endsWith(".lock"))) {
       setTabs((current) => [
         ...current,
-        { path, content: "", saved: "", unsupported: true },
+        { path, content: "", saved: "", unsupported: true, format },
       ]);
       activateTab(path);
       return;
     }
     try {
       const content = await desktop.read(root, path);
-      setTabs((current) => [...current, { path, content, saved: content }]);
+      setTabs((current) => [...current, { path, content, saved: content, format }]);
       activateTab(path);
     } catch (cause) {
       onError(`无法打开文件：${String(cause)}`);
@@ -977,7 +815,7 @@ export function InspectorPanel({
     editorRef.current?.focus();
   };
   const toggleDocumentPreview = async () => {
-    if (!current || !isPreviewableDocument(current.path)) return;
+    if (!current || !["markdown", "html"].includes(current.format?.editor ?? "")) return;
     if (current.previewMode) {
       setLoadingPreviewPath(undefined);
       setTabs((currentTabs) =>
@@ -989,7 +827,7 @@ export function InspectorPanel({
     }
     if (current.content !== current.saved && !(await save())) return;
     let documentPreviewUrl = current.documentPreviewUrl;
-    if (isHtmlFile(current.path)) {
+    if (current.format?.editor === "html") {
       if (!root) return;
       setLoadingPreviewPath(current.path);
       try {
@@ -1018,7 +856,7 @@ export function InspectorPanel({
       !root ||
       !current ||
       !current.previewMode ||
-      !isHtmlFile(current.path) ||
+      current.format?.editor !== "html" ||
       refreshingPreview
     )
       return;
@@ -1520,7 +1358,7 @@ export function InspectorPanel({
           </div>
           {current && !current.unsupported && !current.previewKind ? (
             <div className="editor-floating-actions">
-              {isPreviewableDocument(current.path) ? (
+              {["markdown", "html"].includes(current.format?.editor ?? "") ? (
                 <button
                   aria-pressed={Boolean(current.previewMode)}
                   onClick={() => void toggleDocumentPreview()}
@@ -1592,7 +1430,7 @@ export function InspectorPanel({
               ) : null}
             </div>
           ) : null}
-          {current?.previewMode && isHtmlFile(current.path) ? (
+          {current?.previewMode && current.format?.editor === "html" ? (
             <div className="html-preview-actions">
               <button
                 aria-label={en ? "Refresh HTML preview" : "刷新 HTML 预览"}
@@ -1628,6 +1466,7 @@ export function InspectorPanel({
               codec={current.previewCodec}
               kind={current.previewKind}
               name={current.path.split(/[\\/]/).pop() ?? current.path}
+              path={current.path}
               url={current.previewUrl}
             />
           ) : current?.unsupported ? (
@@ -1638,7 +1477,7 @@ export function InspectorPanel({
                 {current.path.split(/[\\/]/).pop()} 无法在文本编辑器中预览或编辑
               </p>
             </div>
-          ) : current?.previewMode && isMarkdownFile(current.path) ? (
+          ) : current?.previewMode && current.format?.editor === "markdown" ? (
             <article className="markdown-file-preview message-content">
               <ReactMarkdown
                 components={{
@@ -1664,7 +1503,7 @@ export function InspectorPanel({
                 {current.content}
               </ReactMarkdown>
             </article>
-          ) : current?.previewMode && isHtmlFile(current.path) ? (
+          ) : current?.previewMode && current.format?.editor === "html" ? (
             <div className="html-preview-stage">
               <iframe
                 className="html-file-preview"
@@ -1698,7 +1537,7 @@ export function InspectorPanel({
               <Editor
                 beforeMount={defineAgentKTheme}
                 height="100%"
-                language={languageFor(current.path)}
+                language={current.format?.monacoLanguage ?? languageFor(current.path)}
                 onChange={(value) => update(value ?? "")}
                 onMount={(editor, monaco) => {
                   editorRef.current = editor;
@@ -1852,6 +1691,27 @@ export function InspectorPanel({
             <i className="fa-solid fa-terminal" />
             在外部控制台中打开目录
           </button>
+          {(() => {
+            const plugin = resolveFileFormat(contextMenu.entry.path, fileFormatPlugins);
+            return plugin.contextActions
+              ?.filter((action) => !action.when || action.when === "both" || (action.when === "directory") === contextMenu.entry.isDir)
+              .map((action) => (
+                <button
+                  key={`${plugin.id}:${action.id}`}
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("agent-k-file-format-context-action", {
+                      detail: { action: action.id, path: contextMenu.entry.path, pluginId: plugin.id },
+                    }));
+                    setContextMenu(undefined);
+                  }}
+                  role="menuitem"
+                  type="button"
+                >
+                  <i className="fa-solid fa-puzzle-piece" />
+                  {action.label}
+                </button>
+              ));
+          })()}
         </div>
       )}
       {newFileDialogOpen ? (

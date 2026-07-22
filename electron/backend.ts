@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { cp } from "node:fs/promises";
 import { join } from "node:path";
-import type { JsonObject, PiResourceChange } from "./types.js";
+import type { JsonObject, PiResourceChange, SkillHubScope } from "./types.js";
 import { RpcPool } from "./agent/pool.js";
 import { resolvePiLaunch, type PiLaunch } from "./pi-runtime.js";
 import { FileService } from "./files.js";
@@ -23,6 +23,8 @@ import {
   type ProviderDraft,
 } from "./settings.js";
 import { applyPiResourceChanges, getPiResources } from "./resources.js";
+import { getFileFormatPlugins } from "./file-formats.js";
+import { installSkillHub, previewSkillHub } from "./skill-hub.js";
 import { asArray, asObject, asString, atomicWrite, errorMessage, randomId } from "./utils.js";
 
 export interface DesktopBackendOptions {
@@ -124,6 +126,8 @@ export class DesktopBackend {
           this.bundledSkillsDirectory,
           optionalString(args.runtimeId),
         );
+      case "get_file_format_plugins":
+        return getFileFormatPlugins(requiredString(args.cwd, "cwd"));
       case "apply_pi_resource_changes":
         return applyPiResourceChanges(
           this.options.appDataPath,
@@ -131,6 +135,17 @@ export class DesktopBackend {
           requiredString(args.cwd, "cwd"),
           asArray(args.changes) as PiResourceChange[],
         );
+      case "preview_skill_hub":
+        return previewSkillHub(requiredString(args.sourceUrl, "sourceUrl"));
+      case "install_skill_hub": {
+        const scope = requiredSkillHubScope(args.scope);
+        return installSkillHub(
+          requiredString(args.sourceUrl, "sourceUrl"),
+          requiredString(args.hash, "hash"),
+          scope,
+          requiredString(args.cwd, "cwd"),
+        );
+      }
       case "detect_local_service":
         return detectLocalService(requiredString(args.baseUrl, "baseUrl"));
       case "discover_local_models":
@@ -429,6 +444,11 @@ function stringArray(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
     throw new Error("Expected a string array");
   return value as string[];
+}
+
+function requiredSkillHubScope(value: unknown): SkillHubScope {
+  if (value === "user" || value === "project") return value;
+  throw new Error("scope must be user or project");
 }
 
 function numberArray(value: unknown): number[] {

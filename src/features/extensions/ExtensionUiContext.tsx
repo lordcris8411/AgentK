@@ -70,6 +70,7 @@ const ExtensionUiContext = createContext<ExtensionUiContextValue | undefined>(
 
 const ansiSequencePattern =
   /[\u001b\u009b](?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[0-?]*[ -/]*[@-~])/g;
+const fileFormatActionPrefix = "agent-k-file-format-action:";
 
 // Extension UI strings are often authored for Pi's terminal renderer. Strip
 // ANSI CSI/OSC control sequences before displaying them in the WebView.
@@ -387,9 +388,20 @@ export function ExtensionUiProvider({ children }: { children: ReactNode }) {
         }
         const method = String(event.method ?? "");
         if (method === "notify") {
+          const message = String(event.message ?? "");
+          if (message.startsWith(fileFormatActionPrefix)) {
+            try {
+              const detail = JSON.parse(message.slice(fileFormatActionPrefix.length)) as Record<string, unknown>;
+              if (typeof detail.action === "string")
+                window.dispatchEvent(new CustomEvent("agent-k-file-format-action", { detail }));
+            } catch {
+              // A malformed extension notification must not affect normal UI notifications.
+            }
+            return;
+          }
           const notifyType = String(event.notifyType ?? "info");
           pushNotification(
-            String(event.message ?? ""),
+            message,
             (["info", "warning", "error"] as string[]).includes(notifyType)
               ? (notifyType as NotificationType)
               : "info",

@@ -1,8 +1,36 @@
 import { readFileSync } from "node:fs";
 import { basename, isAbsolute, normalize } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
+import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type Settings = { locale?: "zh-CN" | "en-US"; permissionMode?: "ask" | "full" };
+
+const fileFormatActionPrefix = "agent-k-file-format-action:";
+
+const fileFormatTool = defineTool({
+  name: "agent_k_file_editor",
+  label: "Agent K file editor",
+  description: "Control the active Agent K file-format editor. Only capabilities advertised in the current file-format context are accepted.",
+  parameters: Type.Object({
+    action: Type.String({ description: "Capability id, for example play, pause, or seek." }),
+    path: Type.Optional(Type.String({ description: "The active file path advertised in the file-format context." })),
+    seconds: Type.Optional(Type.Number({ description: "Seek offset in seconds; positive is forward and negative is backward." })),
+  }),
+  async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    if (!ctx.hasUI) {
+      return { content: [{ type: "text", text: "Agent K file editor UI is unavailable." }] };
+    }
+    const action = typeof params.action === "string" ? params.action : "";
+    if (!action) return { content: [{ type: "text", text: "Missing file editor action." }] };
+    const payload = {
+      action,
+      ...(typeof params.path === "string" ? { path: params.path } : {}),
+      ...(typeof params.seconds === "number" ? { seconds: params.seconds } : {}),
+    };
+    ctx.ui.notify(`${fileFormatActionPrefix}${JSON.stringify(payload)}`, "info");
+    return { content: [{ type: "text", text: `Requested Agent K file editor action: ${action}.` }], details: payload };
+  },
+});
 
 function readJson<T>(path: string | undefined, fallback: T): T {
   if (!path) return fallback;
@@ -68,6 +96,7 @@ function declaredOutputPath(ctx: {
 }
 
 export default function agentKPermissions(pi: ExtensionAPI) {
+  pi.registerTool(fileFormatTool);
   pi.on("tool_call", async (event, ctx) => {
     if ((["write", "edit"] as string[]).includes(event.toolName)) {
       const requested = declaredOutputPath(ctx);

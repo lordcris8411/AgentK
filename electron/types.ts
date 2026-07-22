@@ -59,6 +59,34 @@ export interface PiResourceChange {
   enabled: boolean;
 }
 
+export interface FileFormatPluginResource {
+  id: string;
+  name: string;
+  path: string;
+  scope: "user" | "project";
+  match: { extensions?: string[]; fileNames?: string[] };
+  editor: "text" | "markdown" | "html" | "media" | "unsupported";
+  editable?: boolean;
+  monacoLanguage?: string;
+  mimeType?: string;
+  mediaKind?: "image" | "audio" | "video" | "pdf";
+  capabilities?: Array<{ id: string; label: string; description: string }>;
+  contextActions?: Array<{ id: string; label: string; when: "file" | "directory" | "both" }>;
+}
+
+export type SkillHubScope = "user" | "project";
+
+export interface SkillHubPreview {
+  sourceUrl: string;
+  source: string;
+  name: string;
+  description?: string;
+  directoryName: string;
+  hash: string;
+  skillMarkdown: string;
+  files: Array<{ path: string; bytes: number }>;
+}
+
 export interface WorkerPoolStatus {
   total: number;
   idle: number;

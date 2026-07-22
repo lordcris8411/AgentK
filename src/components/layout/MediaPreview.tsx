@@ -359,10 +359,12 @@ function ImagePreview({
 function AudioPreview({
   byteSize,
   name,
+  path,
   url,
 }: {
   byteSize?: number;
   name: string;
+  path: string;
   url: string;
 }) {
   const { settings } = useSettings();
@@ -385,6 +387,17 @@ function AudioPreview({
     if (audio.paused) await audio.play();
     else audio.pause();
   };
+  useEffect(() => {
+    const action = (event: Event) => {
+      const detail = (event as CustomEvent<{ action?: string; path?: string; seconds?: number }>).detail;
+      if (detail?.path && detail.path !== path) return;
+      if (detail?.action === "play") void audioRef.current?.play();
+      else if (detail?.action === "pause") audioRef.current?.pause();
+      else if (detail?.action === "seek" && typeof detail.seconds === "number") seekBy(detail.seconds);
+    };
+    window.addEventListener("agent-k-file-format-action", action);
+    return () => window.removeEventListener("agent-k-file-format-action", action);
+  }, [path]);
   return (
     <section className="audio-preview">
       <audio
@@ -469,11 +482,13 @@ function VideoPreview({
   byteSize,
   codec,
   name,
+  path,
   url,
 }: {
   byteSize?: number;
   codec?: string;
   name: string;
+  path: string;
   url: string;
 }) {
   const { settings } = useSettings();
@@ -497,6 +512,17 @@ function VideoPreview({
     if (video.paused) await video.play();
     else video.pause();
   };
+  useEffect(() => {
+    const action = (event: Event) => {
+      const detail = (event as CustomEvent<{ action?: string; path?: string; seconds?: number }>).detail;
+      if (detail?.path && detail.path !== path) return;
+      if (detail?.action === "play") void videoRef.current?.play();
+      else if (detail?.action === "pause") videoRef.current?.pause();
+      else if (detail?.action === "seek" && typeof detail.seconds === "number") seekBy(detail.seconds);
+    };
+    window.addEventListener("agent-k-file-format-action", action);
+    return () => window.removeEventListener("agent-k-file-format-action", action);
+  }, [path]);
   return (
     <section className="video-preview">
       <div className="video-stage">
@@ -601,21 +627,23 @@ export function MediaPreview({
   codec,
   kind,
   name,
+  path,
   url,
 }: {
   byteSize?: number;
   codec?: string;
   kind: PreviewKind;
   name: string;
+  path: string;
   url: string;
 }) {
   if (kind === "image")
     return <ImagePreview byteSize={byteSize} name={name} url={url} />;
   if (kind === "audio")
-    return <AudioPreview byteSize={byteSize} name={name} url={url} />;
+    return <AudioPreview byteSize={byteSize} name={name} path={path} url={url} />;
   if (kind === "video")
     return (
-      <VideoPreview byteSize={byteSize} codec={codec} name={name} url={url} />
+      <VideoPreview byteSize={byteSize} codec={codec} name={name} path={path} url={url} />
     );
   return (
     <iframe className="pdf-preview" src={url} title={`${name} PDF 预览`} />

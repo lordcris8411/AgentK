@@ -82,6 +82,34 @@ export type PiResourceChange = {
   enabled: boolean;
 };
 
+export type FileFormatPluginResource = {
+  id: string;
+  name: string;
+  path: string;
+  scope: "user" | "project";
+  match: { extensions?: string[]; fileNames?: string[] };
+  editor: "text" | "markdown" | "html" | "media" | "unsupported";
+  editable?: boolean;
+  monacoLanguage?: string;
+  mimeType?: string;
+  mediaKind?: "image" | "audio" | "video" | "pdf";
+  capabilities?: Array<{ id: string; label: string; description: string }>;
+  contextActions?: Array<{ id: string; label: string; when: "file" | "directory" | "both" }>;
+};
+
+export type SkillHubScope = "user" | "project";
+
+export type SkillHubPreview = {
+  sourceUrl: string;
+  source: string;
+  name: string;
+  description?: string;
+  directoryName: string;
+  hash: string;
+  skillMarkdown: string;
+  files: Array<{ path: string; bytes: number }>;
+};
+
 export type ProviderCatalogItem = {
   id: string;
   name: string;
@@ -133,10 +161,16 @@ export const desktop = {
   reloadPiRuntimes: () => invoke<void>("reload_pi_runtimes"),
   piResources: (cwd: string, runtimeId?: string) =>
     invoke<PiResource[]>("get_pi_resources", { cwd, runtimeId }),
+  fileFormatPlugins: (cwd: string) =>
+    invoke<FileFormatPluginResource[]>("get_file_format_plugins", { cwd }),
   applyPiResourceChanges: (
     cwd: string,
     changes: PiResourceChange[],
   ) => invoke<void>("apply_pi_resource_changes", { cwd, changes }),
+  previewSkillHub: (sourceUrl: string) =>
+    invoke<SkillHubPreview>("preview_skill_hub", { sourceUrl }),
+  installSkillHub: (sourceUrl: string, hash: string, scope: SkillHubScope, cwd: string) =>
+    invoke<void>("install_skill_hub", { sourceUrl, hash, scope, cwd }),
   detectLocalService: (baseUrl: string) =>
     invoke<LocalServiceInfo>("detect_local_service", { baseUrl }),
   discoverModels: (baseUrl: string, ollama = false) =>
