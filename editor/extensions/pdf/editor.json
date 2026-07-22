@@ -1,0 +1,10 @@
+{
+  "apiVersion": 1,
+  "id": "agent-k.pdf",
+  "name": "PDF preview",
+  "match": { "extensions": ["pdf"], "mimeTypes": ["application/pdf"] },
+  "editor": "plugin",
+  "mediaKind": "pdf",
+  "mimeType": "application/pdf",
+  "runtime": { "entry": "dist/editor.iife.js", "style": "dist/editor.css" }
+}

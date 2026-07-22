@@ -1,0 +1,13 @@
+:root { color-scheme: light; --md-background: #f6f4f1; --md-border: #d7d1ca; --md-text: #302e2b; --md-muted: #756f68; --md-raised: #fff; }
+:root[data-theme="dark"] { color-scheme: dark; --md-background: #252422; --md-border: #45413d; --md-text: #e8e4df; --md-muted: #aaa39b; --md-raised: #302f2c; }
+html, body, #agent-k-editor-root { height: 100%; margin: 0; overflow: hidden; width: 100%; }
+body { background: var(--md-background); color: var(--md-text); font: 13px/1.6 "Noto Sans SC", "Segoe UI", sans-serif; }
+.markdown-editor { display: flex; flex-direction: column; }
+.markdown-stage { display: flex; flex: 1; min-height: 0; }
+.markdown-source { flex: 1; min-height: 0; }
+.markdown-preview { background: var(--md-background); box-sizing: border-box; color: var(--md-text); flex: 1; margin: 0; min-height: 0; overflow: auto; padding: 20px 26px 60px; width: 100%; }
+.markdown-preview h1, .markdown-preview h2 { border-bottom: 1px solid var(--md-border); padding-bottom: .25em; }
+.markdown-preview pre, .markdown-preview code { background: var(--md-raised); border-radius: 5px; font-family: "Cascadia Code", Consolas, monospace; }
+.markdown-preview code { padding: 2px 5px; }
+.markdown-preview pre { overflow: auto; padding: 12px; }
+.markdown-preview blockquote { border-left: 3px solid var(--md-border); color: var(--md-muted); margin-left: 0; padding-left: 12px; }

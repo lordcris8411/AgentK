@@ -1,0 +1,13 @@
+{
+  "apiVersion": 1,
+  "id": "agent-k.markdown",
+  "name": "Markdown",
+  "match": {
+    "extensions": ["md", "markdown", "mdown", "mkd"],
+    "mimeTypes": ["text/markdown"]
+  },
+  "editor": "plugin",
+  "editable": true,
+  "languageId": "markdown",
+  "runtime": { "dependencies": ["monaco-editor@0.55.1"], "entry": "dist/editor.iife.js", "style": "dist/editor.css" }
+}

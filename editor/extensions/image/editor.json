@@ -1,0 +1,12 @@
+{
+  "apiVersion": 1,
+  "id": "agent-k.image",
+  "name": "Image preview",
+  "match": {
+    "extensions": ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"],
+    "mimeTypes": ["image/*"]
+  },
+  "editor": "plugin",
+  "mediaKind": "image",
+  "runtime": { "entry": "dist/editor.iife.js", "style": "dist/editor.css" }
+}

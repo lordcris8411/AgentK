@@ -1,0 +1,6 @@
+:root { color-scheme: light; --pdf-background: #e8e5e0; }
+:root[data-theme="dark"] { color-scheme: dark; --pdf-background: #1f1e1c; }
+html, body, #agent-k-editor-root { height: 100%; margin: 0; overflow: hidden; width: 100%; }
+body { background: var(--pdf-background); }
+.pdf-editor { display: flex; }
+.pdf-frame { border: 0; flex: 1; height: 100%; width: 100%; }

@@ -26,7 +26,7 @@ export interface ProviderDraft {
 }
 
 const DEFAULT_SETTINGS: ClientSettings = {
-  version: 5,
+  version: 6,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
@@ -34,6 +34,8 @@ const DEFAULT_SETTINGS: ClientSettings = {
   piExecutable: "",
   workerPoolSize: 4,
   editorWordWrap: false,
+  disabledFileEditors: [],
+  disabledFileEditorSkills: [],
   leftPanelWidth: 304,
   rightPanelWidth: 420,
   leftPanelHidden: false,
@@ -49,6 +51,28 @@ function safeBrowserId(value: unknown): value is string {
     value.length > 0 &&
     value.length <= 64 &&
     /^[A-Za-z0-9_-]+$/.test(value)
+  );
+}
+
+function editorSettingIds(value: unknown): string[] {
+  return [
+    ...new Set(
+      asArray(value).filter(
+        (entry): entry is string =>
+          typeof entry === "string" &&
+          entry.length >= 2 &&
+          entry.length <= 128 &&
+          /^[a-z0-9][a-z0-9._-]+$/i.test(entry),
+      ),
+    ),
+  ];
+}
+
+function sameStringArray(value: unknown, expected: string[]): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length === expected.length &&
+    value.every((entry, index) => entry === expected[index])
   );
 }
 
@@ -68,6 +92,13 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.workerPoolSize = Number(source.workerPoolSize) as 2 | 3 | 4;
   if (typeof source.editorWordWrap === "boolean")
     settings.editorWordWrap = source.editorWordWrap;
+  settings.disabledFileEditors = editorSettingIds(source.disabledFileEditors);
+  settings.disabledFileEditorSkills = [
+    ...new Set([
+      ...editorSettingIds(source.disabledFileEditorSkills),
+      ...settings.disabledFileEditors,
+    ]),
+  ];
   if (Number(source.leftPanelWidth) >= 240 && Number(source.leftPanelWidth) <= 2400)
     settings.leftPanelWidth = Number(source.leftPanelWidth);
   if (Number(source.rightPanelWidth) >= 420 && Number(source.rightPanelWidth) <= 3200)
@@ -82,7 +113,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.windowHeight = Number(source.windowHeight);
   if (typeof source.windowMaximized === "boolean")
     settings.windowMaximized = source.windowMaximized;
-  settings.version = Math.max(5, Number(source.version) || 5);
+  settings.version = Math.max(6, Number(source.version) || 6);
   return settings;
 }
 
@@ -106,6 +137,8 @@ export async function saveClientSettings(
     settings.piExecutable === original.piExecutable &&
     settings.workerPoolSize === original.workerPoolSize &&
     settings.editorWordWrap === original.editorWordWrap &&
+    sameStringArray(original.disabledFileEditors, settings.disabledFileEditors) &&
+    sameStringArray(original.disabledFileEditorSkills, settings.disabledFileEditorSkills) &&
     settings.leftPanelWidth === original.leftPanelWidth &&
     settings.rightPanelWidth === original.rightPanelWidth &&
     settings.leftPanelHidden === original.leftPanelHidden &&

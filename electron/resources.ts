@@ -10,14 +10,55 @@ import {
   asString,
   atomicWrite,
   homeDirectory,
+  isPathInside,
   piAgentDirectory,
   readJson,
 } from "./utils.js";
 
-function resourceName(path: string, kind: PiResource["kind"]): string {
+function normalizedResourceName(name: string): string {
+  return name.toLocaleLowerCase("en-US");
+}
+
+function npmPackageName(source: string | undefined): string | undefined {
+  if (!source?.startsWith("npm:")) return undefined;
+  const specifier = source.slice(4);
+  const match = specifier.startsWith("@")
+    ? /^(@[^/]+\/[^@/]+)/.exec(specifier)
+    : /^([^@/]+)/.exec(specifier);
+  return match?.[1];
+}
+
+function extensionDirectoryName(path: string): string | undefined {
+  let directory = dirname(path);
+  for (let depth = 0; depth < 4; depth += 1) {
+    const name = basename(directory);
+    const normalized = name.toLocaleLowerCase("en-US");
+    if (
+      name &&
+      !name.startsWith(".") &&
+      !["dist", "extension", "extensions", "lib", "node_modules", "src"].includes(normalized)
+    ) return name;
+    if (name.startsWith(".")) break;
+    directory = dirname(directory);
+  }
+  return undefined;
+}
+
+function resourceName(
+  path: string,
+  kind: PiResource["kind"],
+  source?: string,
+): string {
   if (kind === "skill" && basename(path) === "SKILL.md")
     return basename(resolve(path, "..")) || "skill";
-  return parse(path).name || kind;
+  const entryName = parse(path).name;
+  if (
+    kind === "extension" &&
+    ["index", "main"].includes(entryName.toLocaleLowerCase("en-US"))
+  ) {
+    return npmPackageName(source) ?? extensionDirectoryName(path) ?? entryName;
+  }
+  return entryName || kind;
 }
 
 function resourcesFromCommands(value: unknown): PiResource[] {
@@ -29,6 +70,7 @@ function resourcesFromCommands(value: unknown): PiResource[] {
     const info = asObject(command.sourceInfo);
     const path = asString(info.path);
     if (!path) continue;
+    const source = asString(info.source) ?? path;
     const existing = resources.find(
       (resource) => resource.kind === kind && resource.path === path,
     );
@@ -39,12 +81,12 @@ function resourcesFromCommands(value: unknown): PiResource[] {
     }
     resources.push({
       kind,
-      name: resourceName(path, kind),
+      name: resourceName(path, kind, source),
       ...(typeof command.description === "string"
         ? { description: command.description }
         : {}),
       path,
-      source: asString(info.source) ?? path,
+      source,
       scope: info.scope === "project" ? "project" : "user",
       origin: info.origin === "package" ? "package" : "top-level",
       ...(typeof info.baseDir === "string" ? { baseDir: info.baseDir } : {}),
@@ -170,12 +212,41 @@ async function discoverTopLevel(resources: PiResource[], cwd: string): Promise<v
   ]);
 }
 
+export async function discoverTopLevelSkillNames(cwd: string): Promise<Set<string>> {
+  const resources: PiResource[] = [];
+  const userBase = piAgentDirectory();
+  await Promise.all([
+    discoverSkills(resources, join(userBase, "skills"), "user", userBase, true),
+    discoverSkills(
+      resources,
+      join(homeDirectory(), ".agents", "skills"),
+      "user",
+      join(homeDirectory(), ".agents"),
+      false,
+    ),
+    discoverSkills(resources, join(cwd, ".pi", "skills"), "project", join(cwd, ".pi"), true),
+    discoverSkills(
+      resources,
+      join(cwd, ".agents", "skills"),
+      "project",
+      join(cwd, ".agents"),
+      false,
+    ),
+  ]);
+  return new Set(
+    resources
+      .filter((resource) => resource.kind === "skill")
+      .map((resource) => normalizedResourceName(resource.name)),
+  );
+}
+
 export async function getPiResources(
   appDataPath: string,
   pool: RpcPool,
   cwd: string,
   bundledExtensionsDirectory: string,
   bundledSkillsDirectory: string,
+  firstPartyEditorExtensionsDirectory: string,
   runtimeId?: string,
 ): Promise<PiResource[]> {
   const active = resourcesFromCommands(
@@ -183,6 +254,17 @@ export async function getPiResources(
   );
   const loaded = new Set(active.map((resource) => `${resource.kind}\0${resource.path}`));
   await discoverTopLevel(active, cwd);
+  // Bundled skills are fallbacks. Pi's user/project skills take precedence by
+  // name so the manager does not show two copies of the same skill.
+  const shadowedBundledSkills = new Set(
+    active
+      .filter(
+        (resource) =>
+          resource.kind === "skill" &&
+          !isPathInside(bundledSkillsDirectory, resource.path),
+      )
+      .map((resource) => normalizedResourceName(resource.name)),
+  );
   await discoverExtensions(
     active,
     bundledExtensionsDirectory,
@@ -241,7 +323,13 @@ export async function getPiResources(
       left.name.localeCompare(right.name, undefined, { sensitivity: "base" }),
   );
   await atomicWrite(registryPath, JSON.stringify(registry, null, 2));
-  return registry;
+  return registry.filter(
+    (resource) =>
+      !isPathInside(firstPartyEditorExtensionsDirectory, resource.path) &&
+      (resource.kind !== "skill" ||
+        !isPathInside(bundledSkillsDirectory, resource.path) ||
+        !shadowedBundledSkills.has(normalizedResourceName(resource.name))),
+  );
 }
 
 function updateFilterList(list: unknown[], path: string, enabled: boolean): void {
@@ -297,8 +385,12 @@ export async function applyPiResourceChanges(
   pool: RpcPool,
   cwd: string,
   changes: PiResourceChange[],
+  forceReload = false,
 ): Promise<void> {
-  if (!changes.length) return;
+  if (!changes.length) {
+    if (forceReload) await pool.reload();
+    return;
+  }
   for (const change of changes) {
     const resource = change.resource;
     if (
@@ -387,8 +479,8 @@ export async function applyPiResourceChanges(
     else registry.push(next);
   }
   await atomicWrite(registryPath, JSON.stringify(registry, null, 2));
-  if (piResourcesChanged) {
+  if (piResourcesChanged || forceReload) {
     const onlyProject = changes.every((change) => change.resource.scope === "project");
-    await pool.reload(onlyProject ? cwd : undefined);
+    await pool.reload(!forceReload && onlyProject ? cwd : undefined);
   }
 }

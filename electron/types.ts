@@ -9,6 +9,8 @@ export interface ClientSettings {
   piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
   editorWordWrap: boolean;
+  disabledFileEditors: string[];
+  disabledFileEditorSkills: string[];
   leftPanelWidth: number;
   rightPanelWidth: number;
   leftPanelHidden: boolean;
@@ -66,18 +68,45 @@ export interface PiResourceChange {
 }
 
 export interface FileFormatPluginResource {
+  apiVersion: 1;
   id: string;
   name: string;
   path: string;
-  scope: "user" | "project";
-  match: { extensions?: string[]; fileNames?: string[] };
-  editor: "text" | "markdown" | "html" | "media" | "unsupported";
+  scope: "builtin" | "user" | "project";
+  skillEnabled?: boolean;
+  match: {
+    absolutePaths?: string[];
+    extensions?: string[];
+    fileNames?: string[];
+    mimeTypes?: string[];
+  };
+  editor: "plugin";
+  runtime: { assets?: string; dependencies?: string[]; entry: string; style?: string };
   editable?: boolean;
-  monacoLanguage?: string;
+  languageId?: string;
   mimeType?: string;
   mediaKind?: "image" | "audio" | "video" | "pdf";
-  capabilities?: Array<{ id: string; label: string; description: string }>;
+  capabilities?: Array<{
+    id: string;
+    label: string;
+    description: string;
+    parameters?: Record<string, "string" | "number" | "boolean">;
+  }>;
   contextActions?: Array<{ id: string; label: string; when: "file" | "directory" | "both" }>;
+}
+
+export interface EditorPluginRuntime {
+  assets: Record<string, string>;
+  css: string;
+  dependencies: string[];
+  javascript: string;
+  pluginId: string;
+}
+
+export interface EditorPluginDependency {
+  cssUrl: string;
+  dependencyId: string;
+  javascriptUrl: string;
 }
 
 export type SkillHubScope = "user" | "project";

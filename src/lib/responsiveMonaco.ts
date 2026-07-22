@@ -116,6 +116,7 @@ export function registerResponsiveMonacoEditor(
 export function suspendResponsiveMonacoLayouts() {
   if (panelResizeSuspended) return;
   panelResizeSuspended = true;
+  window.dispatchEvent(new CustomEvent("agent-k-editor-layout-suspended", { detail: true }));
   if (layoutFrame !== undefined) {
     cancelAnimationFrame(layoutFrame);
     layoutFrame = undefined;
@@ -127,6 +128,7 @@ export function resumeResponsiveMonacoLayouts() {
   if (!panelResizeSuspended) return;
   for (const record of editors) releaseEditorHost(record);
   panelResizeSuspended = false;
+  window.dispatchEvent(new CustomEvent("agent-k-editor-layout-suspended", { detail: false }));
   for (const record of editors) measure(record);
   scheduleLayouts();
 }

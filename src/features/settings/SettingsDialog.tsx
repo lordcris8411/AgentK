@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   desktop,
   type BrowserOption,
+  type FileFormatPluginResource,
   type ProviderCatalogItem,
   type ProviderDraft,
   type PiResource,
@@ -13,7 +14,7 @@ import {
 import { useSettings } from "./SettingsContext";
 import { platform } from "../../lib/platform";
 
-export type SettingsPage = "models" | "appearance" | "agentSettings" | "skills" | "extensions" | "permissions" | "about";
+export type SettingsPage = "models" | "appearance" | "agentSettings" | "skills" | "extensions" | "editors" | "permissions" | "about";
 
 let aboutDataPromise: Promise<[string, RuntimeInfo]> | undefined;
 let browserDataPromise: Promise<BrowserOption[]> | undefined;
@@ -58,6 +59,12 @@ function withPendingResourceChanges(
   }));
 }
 
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const expected = new Set(left);
+  return right.every((value) => expected.has(value));
+}
+
 function loadAboutData() {
   aboutDataPromise ??= Promise.all([platform.appVersion(), desktop.runtimeInfo()]).catch(
     (error) => {
@@ -85,7 +92,7 @@ export function SettingsDialog({
   sessionId,
 }: {
   open: boolean;
-  onClose(changes: PiResourceChange[]): void;
+  onClose(changes: PiResourceChange[], editorSettingsChanged: boolean): void;
   initialPage?: SettingsPage;
   cwd?: string;
   runtimeId?: string;
@@ -97,6 +104,19 @@ export function SettingsDialog({
   const [resourceChanges, setResourceChanges] = useState<PiResourceChange[]>([]);
   const [resourcesLocked, setResourcesLocked] = useState(false);
   const resourceBaselineRef = useRef(new Map<string, boolean>());
+  const editorSettingsBaselineRef = useRef({
+    disabledEditors: settings.disabledFileEditors,
+    disabledSkills: settings.disabledFileEditorSkills,
+  });
+  const [disabledFileEditors, setDisabledFileEditors] = useState(
+    settings.disabledFileEditors,
+  );
+  const [disabledFileEditorSkills, setDisabledFileEditorSkills] = useState(
+    settings.disabledFileEditorSkills,
+  );
+  const [firstPartyEditors, setFirstPartyEditors] = useState<
+    FileFormatPluginResource[]
+  >([]);
   const [providers, setProviders] = useState<ProviderCatalogItem[]>([]);
   const [models, setModels] = useState<Array<{ provider: string; id: string; name?: string }>>([]);
   const [state, setState] = useState<{ model?: { provider: string; id: string }; thinkingLevel?: string }>({});
@@ -190,12 +210,18 @@ export function SettingsDialog({
     setPage(initialPage);
     setResourceChanges([]);
     resourceBaselineRef.current.clear();
+    editorSettingsBaselineRef.current = {
+      disabledEditors: settings.disabledFileEditors,
+      disabledSkills: settings.disabledFileEditorSkills,
+    };
+    setDisabledFileEditors([...settings.disabledFileEditors]);
+    setDisabledFileEditorSkills([...settings.disabledFileEditorSkills]);
   }, [initialPage, open]);
   useEffect(() => {
     if (!cwd) setSkillHubScope("user");
   }, [cwd]);
   useEffect(() => {
-    if (!open || (page !== "skills" && page !== "extensions") || !runtimeId || !cwd) return;
+    if (!open || !["skills", "extensions", "editors"].includes(page) || !runtimeId || !cwd) return;
     setBusy(true);
     setError(undefined);
     void desktop.piResources(cwd, runtimeId)
@@ -216,7 +242,24 @@ export function SettingsDialog({
       .finally(() => setBusy(false));
   }, [cwd, open, page, runtimeId]);
   useEffect(() => {
-    if (!open || (page !== "skills" && page !== "extensions")) return;
+    if (!open || page !== "editors") return;
+    let cancelled = false;
+    void desktop.firstPartyFileFormatPlugins()
+      .then((plugins) => {
+        if (!cancelled)
+          setFirstPartyEditors(
+            [...plugins].sort((left, right) => left.name.localeCompare(right.name)),
+          );
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(String(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, page]);
+  useEffect(() => {
+    if (!open || !["skills", "extensions", "editors"].includes(page)) return;
     let cancelled = false;
     setResourcesLocked(true);
     const refreshStatus = () => {
@@ -277,24 +320,48 @@ export function SettingsDialog({
     }, 80);
     return () => window.clearTimeout(timeout);
   }, [open]);
-  const closeDialog = () => {
-    if (resourcesLocked && resourceChanges.length > 0) {
+  const closeDialog = async () => {
+    const editorSettingsChanged =
+      !sameStringSet(
+        editorSettingsBaselineRef.current.disabledEditors,
+        disabledFileEditors,
+      ) ||
+      !sameStringSet(
+        editorSettingsBaselineRef.current.disabledSkills,
+        disabledFileEditorSkills,
+      );
+    if (resourcesLocked && (resourceChanges.length > 0 || editorSettingsChanged)) {
       setError(t("resourcesLocked"));
       return;
     }
     const changes = resourceChanges;
+    if (editorSettingsChanged) {
+      setBusy(true);
+      setError(undefined);
+      try {
+        await update({
+          disabledFileEditors,
+          disabledFileEditorSkills,
+        });
+      } catch (cause) {
+        setError(String(cause));
+        setBusy(false);
+        return;
+      }
+    }
     setResourceChanges([]);
     resourceBaselineRef.current.clear();
-    onClose(changes);
+    setBusy(false);
+    onClose(changes, editorSettingsChanged);
   };
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeDialog();
+      if (event.key === "Escape") void closeDialog();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, resourceChanges, resourcesLocked]);
+  }, [disabledFileEditors, disabledFileEditorSkills, open, resourceChanges, resourcesLocked]);
   const modelValue = state.model ? `${state.model.provider}/${state.model.id}` : "";
   const sessionAllowed = Boolean(
     sessionId && sessionStorage.getItem(`agent-k-permission:${sessionId}`) === "allow",
@@ -455,6 +522,24 @@ export function SettingsDialog({
     const enabled = !resource.fileFormat.enabled;
     setResourceState(resource, enabled ? resource.enabled : false, enabled);
   };
+  const toggleBuiltinEditor = (id: string) => {
+    const enabled = !disabledFileEditors.includes(id);
+    if (enabled) {
+      setDisabledFileEditors((current) => [...new Set([...current, id])]);
+      setDisabledFileEditorSkills((current) => [...new Set([...current, id])]);
+      return;
+    }
+    setDisabledFileEditors((current) => current.filter((value) => value !== id));
+  };
+  const toggleBuiltinEditorSkill = (id: string) => {
+    const enabled = !disabledFileEditorSkills.includes(id);
+    if (enabled) {
+      setDisabledFileEditorSkills((current) => [...new Set([...current, id])]);
+      return;
+    }
+    setDisabledFileEditorSkills((current) => current.filter((value) => value !== id));
+    setDisabledFileEditors((current) => current.filter((value) => value !== id));
+  };
   const previewSkill = async () => {
     if (!skillHubUrl.trim()) return;
     setBusy(true);
@@ -491,17 +576,19 @@ export function SettingsDialog({
   };
 
   return (
-    <div className="settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && closeDialog()}>
+    <div className="settings-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) void closeDialog();
+    }}>
       <section aria-label={t("settings")} aria-modal="true" className="settings-dialog" role="dialog">
         <header className="settings-header">
           <strong>{t("settings")}</strong>
-          <button aria-label={t("close")} className="settings-close" onClick={closeDialog} type="button">×</button>
+          <button aria-label={t("close")} className="settings-close" onClick={() => void closeDialog()} type="button">×</button>
         </header>
         <div className="settings-body">
           <nav className="settings-nav">
-            {(["models", "appearance", "agentSettings", "skills", "extensions", "permissions", "about"] as SettingsPage[]).map((item) => (
+            {(["models", "appearance", "agentSettings", "skills", "extensions", "editors", "permissions", "about"] as SettingsPage[]).map((item) => (
               <button className={page === item ? "is-active" : ""} key={item} onClick={() => setPage(item)} type="button">
-                <i className={`fa-solid ${item === "models" ? "fa-microchip" : item === "appearance" ? "fa-circle-half-stroke" : item === "agentSettings" ? "fa-sliders" : item === "skills" ? "fa-wand-magic-sparkles" : item === "extensions" ? "fa-puzzle-piece" : item === "permissions" ? "fa-shield-halved" : "fa-circle-info"}`} />
+                <i className={`fa-solid ${item === "models" ? "fa-microchip" : item === "appearance" ? "fa-circle-half-stroke" : item === "agentSettings" ? "fa-sliders" : item === "skills" ? "fa-wand-magic-sparkles" : item === "extensions" ? "fa-puzzle-piece" : item === "editors" ? "fa-pen-ruler" : item === "permissions" ? "fa-shield-halved" : "fa-circle-info"}`} />
                 {t(item)}
               </button>
             ))}
@@ -624,9 +711,6 @@ export function SettingsDialog({
                   </button>
                 </div>
                 <p className="settings-description">{t("resourceDescription")}</p>
-                {page === "skills" && resources.some((resource) => resource.fileFormat) && (
-                  <p className="file-format-dependency"><i className="fa-solid fa-link" /> {t("filePluginDependency")}</p>
-                )}
                 {resourcesLocked && (
                   <p className="resource-lock-notice" role="status">
                     <i className="fa-solid fa-spinner fa-spin" /> {t("resourcesLocked")}
@@ -680,26 +764,9 @@ export function SettingsDialog({
                           <strong>{resource.name}</strong>
                           <small>{resource.description || resource.path}</small>
                           <span>{resource.scope === "project" ? t("projectScope") : t("userScope")} · {resource.origin === "package" ? resource.source : resource.path}</span>
-                          {resource.fileFormat && <span>{t("filePlugin")}: {resource.fileFormat.name}</span>}
                         </div>
                         <div className="resource-card-actions">
                           {resource.kind === "skill" && <button onClick={() => setSelectedSkill(resource)} type="button">{t("skillDetails")}</button>}
-                          {resource.fileFormat && (
-                            <div className="resource-switch">
-                              <span>{t("filePlugin")}</span>
-                              <button
-                                aria-checked={resource.fileFormat.enabled}
-                                aria-label={`${t("filePlugin")}: ${resource.name}`}
-                                className={resource.fileFormat.enabled ? "resource-toggle is-active" : "resource-toggle"}
-                                disabled={!cwd || resourcesLocked}
-                                onClick={() => toggleFileFormat(resource)}
-                                role="switch"
-                                type="button"
-                              >
-                                <span />
-                              </button>
-                            </div>
-                          )}
                           <div className="resource-switch">
                             <span>{resource.kind === "skill" ? t("piSkill") : t("extensions")}</span>
                             <button
@@ -719,6 +786,144 @@ export function SettingsDialog({
                     ))}
                   {!busy && resources.every((resource) => resource.kind !== (page === "skills" ? "skill" : "extension")) && (
                     <p className="empty-settings">{t("noResources")}</p>
+                  )}
+                </div>
+              </>
+            )}
+            {page === "editors" && (
+              <>
+                <div className="settings-title-row">
+                  <h2>{t("editors")}</h2>
+                  <button
+                    disabled={busy || !runtimeId || resourcesLocked}
+                    onClick={() => {
+                      if (!runtimeId || !cwd) return;
+                      setBusy(true);
+                      void desktop.piResources(cwd, runtimeId)
+                        .then((found) => {
+                          for (const resource of found) {
+                            const resourceKey = resourceChangeKey(resource, "resource");
+                            if (!resourceBaselineRef.current.has(resourceKey))
+                              resourceBaselineRef.current.set(resourceKey, resource.enabled);
+                            if (resource.fileFormat) {
+                              const pluginKey = resourceChangeKey(resource, "file-format");
+                              if (!resourceBaselineRef.current.has(pluginKey))
+                                resourceBaselineRef.current.set(pluginKey, resource.fileFormat.enabled);
+                            }
+                          }
+                          setResources(withPendingResourceChanges(found, resourceChanges));
+                        })
+                        .catch((cause) => setError(String(cause)))
+                        .finally(() => setBusy(false));
+                    }}
+                    type="button"
+                  >
+                    <i className="fa-solid fa-rotate" /> {t("refresh")}
+                  </button>
+                </div>
+                <p className="settings-description">{t("editorManagerDescription")}</p>
+                {resourcesLocked && (
+                  <p className="resource-lock-notice" role="status">
+                    <i className="fa-solid fa-spinner fa-spin" /> {t("resourcesLocked")}
+                  </p>
+                )}
+                <div className="editor-manager-heading">
+                  <h3>{t("builtinEditors")}</h3>
+                  <p>{t("builtinEditorsDescription")}</p>
+                </div>
+                <div className="resource-list editor-builtin-list">
+                  {firstPartyEditors.map((plugin) => {
+                    const editorEnabled = !disabledFileEditors.includes(plugin.id);
+                    const skillEnabled = !disabledFileEditorSkills.includes(plugin.id);
+                    return (
+                      <article className="resource-card" key={plugin.id}>
+                        <div>
+                          <strong>{plugin.name}</strong>
+                          <small title={plugin.path}>{plugin.id} · {plugin.path}</small>
+                          <span>{t("builtIn")} · {plugin.editor}</span>
+                        </div>
+                        <div className="resource-card-actions">
+                          <div className="resource-switch">
+                            <span>{t("editorHost")}</span>
+                            <button
+                              aria-checked={editorEnabled}
+                              aria-label={`${t("editorHost")}: ${plugin.name}`}
+                              className={editorEnabled ? "resource-toggle is-active" : "resource-toggle"}
+                              disabled={busy || resourcesLocked}
+                              onClick={() => toggleBuiltinEditor(plugin.id)}
+                              role="switch"
+                              type="button"
+                            >
+                              <span />
+                            </button>
+                          </div>
+                          <div className="resource-switch">
+                            <span>{t("editorSkill")}</span>
+                            <button
+                              aria-checked={skillEnabled}
+                              aria-label={`${t("editorSkill")}: ${plugin.name}`}
+                              className={skillEnabled ? "resource-toggle is-active" : "resource-toggle"}
+                              disabled={busy || resourcesLocked}
+                              onClick={() => toggleBuiltinEditorSkill(plugin.id)}
+                              role="switch"
+                              type="button"
+                            >
+                              <span />
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+                <div className="editor-manager-heading">
+                  <h3>{t("installedEditors")}</h3>
+                  <p>{t("filePluginDependency")}</p>
+                </div>
+                <div className="resource-list editor-extension-list">
+                  {resources
+                    .filter((resource) => resource.kind === "skill" && resource.fileFormat)
+                    .map((resource) => (
+                      <article className="resource-card" key={`editor:${resource.path}`}>
+                        <div>
+                          <strong>{resource.fileFormat?.name ?? resource.name}</strong>
+                          <small>{resource.description || resource.path}</small>
+                          <span>{resource.scope === "project" ? t("projectScope") : t("userScope")} · {resource.path}</span>
+                        </div>
+                        <div className="resource-card-actions">
+                          <div className="resource-switch">
+                            <span>{t("editorHost")}</span>
+                            <button
+                              aria-checked={resource.fileFormat?.enabled ?? false}
+                              aria-label={`${t("editorHost")}: ${resource.name}`}
+                              className={resource.fileFormat?.enabled ? "resource-toggle is-active" : "resource-toggle"}
+                              disabled={!cwd || resourcesLocked}
+                              onClick={() => toggleFileFormat(resource)}
+                              role="switch"
+                              type="button"
+                            >
+                              <span />
+                            </button>
+                          </div>
+                          <div className="resource-switch">
+                            <span>{t("editorSkill")}</span>
+                            <button
+                              aria-checked={resource.enabled}
+                              aria-label={`${t("editorSkill")}: ${resource.name}`}
+                              className={resource.enabled ? "resource-toggle is-active" : "resource-toggle"}
+                              disabled={!cwd || resourcesLocked}
+                              onClick={() => toggleResource(resource)}
+                              role="switch"
+                              type="button"
+                            >
+                              <span />
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  {!busy && resources.every((resource) => !resource.fileFormat) && (
+                    <p className="empty-settings">{t("noEditorExtensions")}</p>
                   )}
                 </div>
               </>

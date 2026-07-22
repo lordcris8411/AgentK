@@ -1,0 +1,8 @@
+{
+  "id": "monaco-editor@0.55.1",
+  "runtime": {
+    "assets": "dist/assets",
+    "entry": "dist/dependency.iife.js",
+    "style": "dist/dependency.css"
+  }
+}

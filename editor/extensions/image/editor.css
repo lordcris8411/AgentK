@@ -1,0 +1,12 @@
+:root { color-scheme: light; --image-background: #f6f4f1; --image-border: #d7d1ca; --image-text: #302e2b; --image-raised: #fff; }
+:root[data-theme="dark"] { color-scheme: dark; --image-background: #252422; --image-border: #45413d; --image-text: #e8e4df; --image-raised: #302f2c; }
+html, body, #agent-k-editor-root { height: 100%; margin: 0; overflow: hidden; width: 100%; }
+body { background: var(--image-background); color: var(--image-text); font: 12px/1.5 "Noto Sans SC", "Segoe UI", sans-serif; }
+.image-editor { display: flex; flex-direction: column; }
+.image-toolbar { align-items: center; border-bottom: 1px solid var(--image-border); display: flex; flex: 0 0 40px; gap: 5px; padding: 0 10px; }
+.image-toolbar button { background: var(--image-raised); border: 1px solid var(--image-border); border-radius: 5px; color: var(--image-text); padding: 3px 8px; }
+.image-toolbar button.active { outline: 2px solid #7095bc; }
+.image-toolbar span { margin-left: auto; }
+.image-stage { flex: 1; min-height: 0; overflow: hidden; position: relative; }
+.image-stage canvas { left: 50%; max-height: none; max-width: none; position: absolute; top: 50%; transform-origin: center; will-change: transform; }
+.image-info { border-top: 1px solid var(--image-border); flex: 0 0 auto; padding: 7px 12px; }

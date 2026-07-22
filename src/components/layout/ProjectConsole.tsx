@@ -68,7 +68,12 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   const terminalIdRef = useRef<string | undefined>(undefined);
   const pendingOutputRef = useRef(new Map<string, string>());
   const resizeFrameRef = useRef<number | undefined>(undefined);
-  const resizeStart = useRef<{ height: number; y: number } | undefined>(undefined);
+  const resizeStart = useRef<{
+    element: HTMLElement;
+    height: number;
+    pointerId: number;
+    y: number;
+  } | undefined>(undefined);
   const lastDimensionsRef = useRef<{ cols: number; rows: number } | undefined>(undefined);
   enRef.current = en;
   onErrorRef.current = onError;
@@ -215,19 +220,30 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   useEffect(() => {
     const move = (event: PointerEvent) => {
       const start = resizeStart.current;
-      if (!start) return;
+      if (!start || event.pointerId !== start.pointerId) return;
+      event.preventDefault();
       setHeight(Math.max(100, Math.min(window.innerHeight - 180, start.height + start.y - event.clientY)));
     };
-    const stop = () => {
+    const stop = (event?: PointerEvent) => {
+      const start = resizeStart.current;
+      if (!start || (event && event.pointerId !== start.pointerId)) return;
       resizeStart.current = undefined;
+      if (start.element.hasPointerCapture(start.pointerId))
+        start.element.releasePointerCapture(start.pointerId);
       document.body.classList.remove("is-resizing-console");
       fitTerminal();
     };
-    window.addEventListener("pointermove", move);
+    const cancel = () => stop();
+    window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    window.addEventListener("blur", cancel);
     return () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      window.removeEventListener("blur", cancel);
+      cancel();
     };
   }, [fitTerminal]);
 
@@ -241,8 +257,16 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
         aria-label={en ? "Resize console" : "调整控制台高度"}
         className="project-console-resizer"
         onPointerDown={(event) => {
+          if (event.button !== 0) return;
           event.preventDefault();
-          resizeStart.current = { height, y: event.clientY };
+          const element = event.currentTarget;
+          element.setPointerCapture(event.pointerId);
+          resizeStart.current = {
+            element,
+            height,
+            pointerId: event.pointerId,
+            y: event.clientY,
+          };
           document.body.classList.add("is-resizing-console");
         }}
         role="separator"

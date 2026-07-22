@@ -138,11 +138,26 @@ export function App() {
       }
     };
   };
-  const closeSettings = (changes: PiResourceChange[]) => {
+  const closeSettings = (
+    changes: PiResourceChange[],
+    editorSettingsChanged: boolean,
+  ) => {
     setSettingsOpen(false);
-    if (changes.length === 0) return;
+    if (changes.length === 0 && !editorSettingsChanged) return;
     const cwd = activeRef.current?.cwd;
     if (!cwd) {
+      if (editorSettingsChanged) {
+        const finishBusy = beginBusy(
+          en ? "Applying Editor settings…" : "正在应用 Editor 设置…",
+          0,
+          420,
+        );
+        void desktop.reloadPiRuntimes()
+          .then(() => window.dispatchEvent(new Event("agent-k-resources-changed")))
+          .catch((cause) => setError(String(cause)))
+          .finally(finishBusy);
+        return;
+      }
       setError(en ? "Select a workspace before changing Pi resources" : "请先选择工作区再修改 Pi 资源");
       return;
     }
@@ -151,7 +166,7 @@ export function App() {
       0,
       420,
     );
-    void desktop.applyPiResourceChanges(cwd, changes)
+    void desktop.applyPiResourceChanges(cwd, changes, editorSettingsChanged)
       .then(() => window.dispatchEvent(new Event("agent-k-resources-changed")))
       .catch((cause) => setError(String(cause)))
       .finally(finishBusy);
@@ -187,6 +202,22 @@ export function App() {
               ? "dark"
               : "light"
             : persistedSettings.theme;
+        const startupTotal = warmWorkerCount + 1;
+        const editorMessage = en
+          ? "Configuring Editor plugins…"
+          : "配置编辑器插件…";
+        setBootMessage(editorMessage);
+        await desktop.updateStartupProgress(
+          editorMessage,
+          0,
+          startupTotal,
+          startupTheme,
+        );
+        await desktop.firstPartyFileFormatPlugins();
+        // The main window stays hidden behind the native startup window.
+        // Chromium may stop delivering animation frames to hidden windows, so
+        // startup must never wait for requestAnimationFrame here.
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
         let completedWorkers = 0;
         const publishProgress = async () => {
           const message = en
@@ -196,8 +227,8 @@ export function App() {
           await desktop
             .updateStartupProgress(
               message,
-              completedWorkers,
-              warmWorkerCount,
+              completedWorkers + 1,
+              startupTotal,
               startupTheme,
             )
             .catch(() => undefined);

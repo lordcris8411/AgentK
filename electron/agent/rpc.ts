@@ -2,9 +2,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { JsonObject, PiResource } from "../types.js";
 import type { PiLaunch } from "../pi-runtime.js";
+import { discoverTopLevelSkillNames } from "../resources.js";
 import {
   asArray,
   asObject,
@@ -50,6 +51,7 @@ export interface RpcBridgeOptions {
   appDataPath: string;
   bundledExtensionsDirectory: string;
   bundledSkillsDirectory: string;
+  firstPartyEditorExtensions: Array<{ directory: string; id: string }>;
   cwd: string;
   launch: PiLaunch;
   permissionExtensionSource: string;
@@ -180,15 +182,26 @@ export class RpcBridge {
     const bashEnvironment = join(options.appDataPath, "agent-k-bash-env.sh");
     await writeFile(bashEnvironment, BASH_ENVIRONMENT, "utf8");
 
-    const registry = await (async () => {
-      try {
-        return JSON.parse(
-          await readFile(join(options.appDataPath, "pi-resources.json"), "utf8"),
-        ) as PiResource[];
-      } catch {
-        return [];
-      }
-    })();
+    const [registry, clientSettings] = await Promise.all([
+      (async () => {
+        try {
+          return JSON.parse(
+            await readFile(join(options.appDataPath, "pi-resources.json"), "utf8"),
+          ) as PiResource[];
+        } catch {
+          return [];
+        }
+      })(),
+      (async () => {
+        try {
+          return asObject(JSON.parse(
+            await readFile(join(options.appDataPath, "client-settings.json"), "utf8"),
+          ));
+        } catch {
+          return {};
+        }
+      })(),
+    ]);
     const disabledPaths = registry
       .filter((resource) => resource.enabled === false)
       .map((resource) => resolve(resource.path));
@@ -205,12 +218,25 @@ export class RpcBridge {
         continue;
       args.push("--extension", packagePath);
     }
+    const topLevelSkillNames = await discoverTopLevelSkillNames(options.cwd);
     for (const skillPath of await bundledSkillPaths(
       options.bundledSkillsDirectory,
     )) {
+      // Pi discovers top-level user/project skills itself. Treat AgentK's
+      // bundled copy as a fallback when a skill with the same name exists.
+      const skillName = basename(skillPath).toLocaleLowerCase("en-US");
+      if (topLevelSkillNames.has(skillName)) continue;
       if (disabledPaths.some((resource) => isPathInside(skillPath, resource)))
         continue;
       args.push("--skill", skillPath);
+    }
+    const disabledEditorSkills = new Set([
+      ...asArray(clientSettings.disabledFileEditors),
+      ...asArray(clientSettings.disabledFileEditorSkills),
+    ].filter((id): id is string => typeof id === "string"));
+    for (const editorExtension of options.firstPartyEditorExtensions) {
+      if (disabledEditorSkills.has(editorExtension.id)) continue;
+      args.push("--skill", editorExtension.directory);
     }
 
     let child: ChildProcessWithoutNullStreams;

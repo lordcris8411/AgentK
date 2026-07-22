@@ -1,0 +1,17 @@
+:root,
+body,
+#agent-k-editor-root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+body {
+  background: #f6f4f1;
+  font-family: "Noto Sans SC", "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  body { background: #252422; }
+}

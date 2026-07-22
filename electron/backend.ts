@@ -1,10 +1,15 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
-import type { JsonObject, PiResourceChange, SkillHubScope } from "./types.js";
+import type {
+  FileFormatPluginResource,
+  JsonObject,
+  PiResourceChange,
+  SkillHubScope,
+} from "./types.js";
 import { RpcPool } from "./agent/pool.js";
 import { resolvePiLaunch, type PiLaunch } from "./pi-runtime.js";
 import { FileService } from "./files.js";
@@ -26,13 +31,19 @@ import {
   type ProviderDraft,
 } from "./settings.js";
 import { applyPiResourceChanges, getPiResources } from "./resources.js";
-import { getFileFormatPlugins } from "./file-formats.js";
+import {
+  getEditorPluginDependency,
+  getEditorPluginRuntime,
+  getFileFormatPlugins,
+  loadFirstPartyFileFormatPlugins,
+} from "./file-formats.js";
 import { installSkillHub, previewSkillHub } from "./skill-hub.js";
 import { asArray, asObject, asString, atomicWrite, errorMessage, randomId } from "./utils.js";
 
 export interface DesktopBackendOptions {
   appDataPath: string;
   bundledExtensionsSource: string;
+  firstPartyEditorExtensionsSource: string;
   bundledSkillsSource: string;
   bundledPiCli: string;
   cachePath: string;
@@ -51,6 +62,7 @@ export class DesktopBackend {
   private readonly files: FileService;
   private readonly bundledExtensionsDirectory: string;
   private readonly bundledSkillsDirectory: string;
+  private firstPartyEditorPlugins: FileFormatPluginResource[] = [];
   private piLaunch?: PiLaunch;
   private pool?: RpcPool;
   private readonly projectConsoles = new Map<string, ProjectConsoleProcess>();
@@ -63,6 +75,10 @@ export class DesktopBackend {
   }
 
   async initialize(): Promise<void> {
+    const settings = await loadClientSettings(this.options.appDataPath);
+    const startupTheme = settings.theme;
+    const startupText = (english: string, chinese: string) =>
+      settings.locale === "en-US" ? english : chinese;
     await this.files.initialize();
     await migrateMisclassifiedVllm();
     await cp(this.options.bundledExtensionsSource, this.bundledExtensionsDirectory, {
@@ -73,12 +89,24 @@ export class DesktopBackend {
       recursive: true,
       force: true,
     });
-    const settings = await loadClientSettings(this.options.appDataPath);
+    this.options.updateSplash(
+      startupText("Configuring Editor plugins…", "配置编辑器插件…"),
+      0,
+      1,
+      startupTheme,
+    );
+    this.firstPartyEditorPlugins = await loadFirstPartyFileFormatPlugins(
+      this.options.firstPartyEditorExtensionsSource,
+    );
     this.piLaunch = resolvePiLaunch(settings.piExecutable, this.options.bundledPiCli);
     this.pool = new RpcPool({
       appDataPath: this.options.appDataPath,
       bundledExtensionsDirectory: this.bundledExtensionsDirectory,
       bundledSkillsDirectory: this.bundledSkillsDirectory,
+      firstPartyEditorExtensions: this.firstPartyEditorPlugins.map((plugin) => ({
+        directory: dirname(plugin.path),
+        id: plugin.id,
+      })),
       launch: this.piLaunch,
       minimum: settings.workerPoolSize,
       permissionExtensionSource: this.options.permissionExtensionSource,
@@ -125,19 +153,38 @@ export class DesktopBackend {
           requiredString(args.cwd, "cwd"),
           this.bundledExtensionsDirectory,
           this.bundledSkillsDirectory,
+          this.options.firstPartyEditorExtensionsSource,
           optionalString(args.runtimeId),
         );
       case "get_file_format_plugins":
         return getFileFormatPlugins(
           this.options.appDataPath,
           requiredString(args.cwd, "cwd"),
+          this.firstPartyEditorPlugins,
         );
+      case "get_first_party_file_format_plugins":
+        return this.firstPartyEditorPlugins;
+      case "get_editor_plugin_runtime":
+        return getEditorPluginRuntime(
+          this.options.appDataPath,
+          requiredString(args.cwd, "cwd"),
+          this.firstPartyEditorPlugins,
+          requiredString(args.pluginId, "pluginId"),
+        );
+      case "get_editor_plugin_dependency": {
+        const dependencyId = requiredString(args.dependencyId, "dependencyId");
+        return getEditorPluginDependency(
+          this.options.firstPartyEditorExtensionsSource,
+          dependencyId,
+        );
+      }
       case "apply_pi_resource_changes":
         return applyPiResourceChanges(
           this.options.appDataPath,
           pool,
           requiredString(args.cwd, "cwd"),
           asArray(args.changes) as PiResourceChange[],
+          args.reload === true,
         );
       case "preview_skill_hub":
         return previewSkillHub(requiredString(args.sourceUrl, "sourceUrl"));

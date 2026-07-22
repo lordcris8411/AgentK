@@ -1,0 +1,8 @@
+:root { color-scheme: light; --html-background: #f6f4f1; --html-border: #d7d1ca; --html-text: #302e2b; --html-raised: #fff; }
+:root[data-theme="dark"] { color-scheme: dark; --html-background: #252422; --html-border: #45413d; --html-text: #e8e4df; --html-raised: #302f2c; }
+html, body, #agent-k-editor-root { height: 100%; margin: 0; overflow: hidden; width: 100%; }
+body { background: var(--html-background); color: var(--html-text); font: 13px/1.6 "Noto Sans SC", "Segoe UI", sans-serif; }
+.html-editor { display: flex; flex-direction: column; }
+.html-stage { display: flex; flex: 1; min-height: 0; }
+.html-source { flex: 1; min-height: 0; }
+.html-preview { background: white; border: 0; box-sizing: border-box; flex: 1; height: 100%; margin: 0; width: 100%; }

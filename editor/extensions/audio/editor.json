@@ -1,0 +1,17 @@
+{
+  "apiVersion": 1,
+  "id": "agent-k.audio",
+  "name": "Audio player",
+  "match": {
+    "extensions": ["mp3", "wav", "flac", "ogg", "oga", "m4a", "aac", "wma", "opus"],
+    "mimeTypes": ["audio/*"]
+  },
+  "editor": "plugin",
+  "mediaKind": "audio",
+  "runtime": { "entry": "dist/editor.iife.js", "style": "dist/editor.css" },
+  "capabilities": [
+    { "id": "play", "label": "Play", "description": "Start playing the current audio" },
+    { "id": "pause", "label": "Pause", "description": "Pause the current audio" },
+    { "id": "seek", "label": "Seek", "description": "Move the current audio forward or backward by seconds", "parameters": { "seconds": "number" } }
+  ]
+}

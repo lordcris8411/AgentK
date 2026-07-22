@@ -1,0 +1,8 @@
+:root { color-scheme: light; --video-background: #f6f4f1; --video-border: #d7d1ca; --video-text: #302e2b; }
+:root[data-theme="dark"] { color-scheme: dark; --video-background: #252422; --video-border: #45413d; --video-text: #e8e4df; }
+html, body, #agent-k-editor-root { height: 100%; margin: 0; overflow: hidden; width: 100%; }
+body { background: var(--video-background); color: var(--video-text); font: 12px/1.5 "Noto Sans SC", "Segoe UI", sans-serif; }
+.video-editor { display: flex; flex-direction: column; }
+.video-stage { align-items: center; display: flex; flex: 1; justify-content: center; min-height: 0; overflow: hidden; padding: 20px; }
+.video-stage video { background: #000; max-height: 100%; max-width: 100%; }
+.video-info { border-top: 1px solid var(--video-border); overflow: hidden; padding: 7px 12px; text-overflow: ellipsis; white-space: nowrap; }

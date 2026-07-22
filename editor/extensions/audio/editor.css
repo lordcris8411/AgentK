@@ -1,0 +1,8 @@
+:root { color-scheme: light; --audio-background: #f6f4f1; --audio-border: #d7d1ca; --audio-text: #302e2b; --audio-card: #fff; }
+:root[data-theme="dark"] { color-scheme: dark; --audio-background: #252422; --audio-border: #45413d; --audio-text: #e8e4df; --audio-card: #302f2c; }
+html, body, #agent-k-editor-root { height: 100%; margin: 0; overflow: hidden; width: 100%; }
+body { background: var(--audio-background); color: var(--audio-text); font: 12px/1.5 "Noto Sans SC", "Segoe UI", sans-serif; }
+.audio-editor { display: flex; flex-direction: column; }
+.audio-stage { align-items: center; display: flex; flex: 1; justify-content: center; min-height: 0; padding: 24px; }
+.audio-stage audio { background: var(--audio-card); border: 1px solid var(--audio-border); border-radius: 24px; width: min(620px, 90%); }
+.audio-info { border-top: 1px solid var(--audio-border); overflow: hidden; padding: 7px 12px; text-overflow: ellipsis; white-space: nowrap; }

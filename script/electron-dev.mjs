@@ -39,6 +39,10 @@ const compile = run(bin("tsc"), ["-p", "tsconfig.electron.json"]);
 const compileCode = await new Promise((resolve) => compile.once("exit", resolve));
 if (compileCode !== 0) process.exit(Number(compileCode) || 1);
 
+const editorBuild = run(process.execPath, [join(root, "script", "build-editor-extensions.mjs")]);
+const editorBuildCode = await new Promise((resolve) => editorBuild.once("exit", resolve));
+if (editorBuildCode !== 0) process.exit(Number(editorBuildCode) || 1);
+
 // Vite enables interactive shortcuts by putting inherited stdin into raw mode.
 // If it is terminated together with Electron on Windows, that mode can leak
 // back to PowerShell (Backspace then prints as ^H). It only needs stdout and

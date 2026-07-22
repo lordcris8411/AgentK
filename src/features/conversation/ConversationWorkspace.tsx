@@ -1275,6 +1275,8 @@ export function ConversationWorkspace({
   const streamingId = useRef<string | undefined>(undefined);
   const messageListRef = useRef<HTMLElement | null>(null);
   const scrollbarRef = useRef<HTMLDivElement | null>(null);
+  const conversationLayoutRef = useRef<HTMLDivElement | null>(null);
+  const composerShellRef = useRef<HTMLFormElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const draftValueRef = useRef("");
   const draftCommitTimer = useRef<number | undefined>(undefined);
@@ -1339,6 +1341,7 @@ export function ConversationWorkspace({
         capabilities?: Array<{ id?: unknown; description?: unknown; parameters?: unknown }>;
         name?: unknown;
         path?: unknown;
+        skillEnabled?: unknown;
       }>).detail;
       if (!detail || typeof detail.name !== "string" || typeof detail.path !== "string") {
         setFileFormatContext(undefined);
@@ -1355,7 +1358,11 @@ export function ConversationWorkspace({
             }]
           : [],
       );
-      setFileFormatContext(capabilities.length ? { capabilities, name: detail.name, path: detail.path } : undefined);
+      setFileFormatContext(
+        detail.skillEnabled === true
+          ? { capabilities, name: detail.name, path: detail.path }
+          : undefined,
+      );
     };
     window.addEventListener("agent-k-file-format-capabilities", updateFileFormatContext);
     return () => window.removeEventListener("agent-k-file-format-capabilities", updateFileFormatContext);
@@ -1364,6 +1371,7 @@ export function ConversationWorkspace({
     { name: "settings", description: en ? "Open Agent K settings" : "打开 Agent K 设置", source: "builtin" },
     { name: "skills", description: en ? "Manage Pi skills" : "管理 Pi Skills", source: "builtin" },
     { name: "extensions", description: en ? "Manage Pi extensions" : "管理 Pi Extensions", source: "builtin" },
+    { name: "editors", description: en ? "Manage Editor extensions" : "管理 Editor 扩展", source: "builtin" },
     { name: "model", description: en ? "Select or change the current model" : "选择或切换当前模型", source: "builtin" },
     { name: "compact", description: en ? "Compact the current session context" : "压缩当前会话上下文", source: "builtin" },
     { name: "new", description: en ? "Start a new Pi session" : "新建 Pi 会话", source: "builtin" },
@@ -2124,14 +2132,35 @@ export function ConversationWorkspace({
       }
     };
   }, []);
+  useEffect(() => {
+    const layout = conversationLayoutRef.current;
+    const composer = composerShellRef.current;
+    if (!layout || !composer) return;
+    const updateReserve = () => {
+      layout.style.setProperty(
+        "--composer-reserve",
+        `${Math.ceil(composer.getBoundingClientRect().height + 32)}px`,
+      );
+      const list = messageListRef.current;
+      if (list && stickToBottom.current) list.scrollTop = list.scrollHeight;
+      scheduleScrollMetrics(list);
+    };
+    const observer = new ResizeObserver(updateReserve);
+    observer.observe(composer);
+    updateReserve();
+    return () => {
+      observer.disconnect();
+      layout.style.removeProperty("--composer-reserve");
+    };
+  }, []);
   const runBuiltinCommand = async (input: string): Promise<boolean> => {
     const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(input.trim());
     if (!match || !builtinCommands.some((command) => command.name === match[1]))
       return false;
     const [, name, rawArguments = ""] = match;
     const argumentsText = rawArguments.trim();
-    if (["settings", "skills", "extensions"].includes(name)) {
-      const page = name === "skills" || name === "extensions" ? name : "models";
+    if (["settings", "skills", "extensions", "editors"].includes(name)) {
+      const page = name === "skills" || name === "extensions" || name === "editors" ? name : "models";
       window.dispatchEvent(new CustomEvent("agent-k-open-settings", { detail: { page } }));
       return true;
     }
@@ -2309,7 +2338,7 @@ export function ConversationWorkspace({
               .join("\n")}\n</attached_files>\nUse the available file tools to inspect these local files when needed.`
           : "",
         fileFormatContext
-          ? `<agent_k_file_format>\nThe active Agent K ${fileFormatContext.name} editor is showing ${JSON.stringify(fileFormatContext.path)}. Use the agent_k_file_editor tool only with one of these capabilities:\n${fileFormatContext.capabilities.map((capability) => `- ${capability.id}: ${capability.description}${capability.parameters ? `; parameters ${JSON.stringify(capability.parameters)}` : ""}`).join("\n")}\n</agent_k_file_format>`
+          ? `<agent_k_file_format>\nThe active Agent K ${fileFormatContext.name} editor is showing ${JSON.stringify(fileFormatContext.path)}.${fileFormatContext.capabilities.length ? ` Use the agent_k_file_editor tool only with one of these capabilities:\n${fileFormatContext.capabilities.map((capability) => `- ${capability.id}: ${capability.description}${capability.parameters ? `; parameters ${JSON.stringify(capability.parameters)}` : ""}`).join("\n")}` : " No callable editor actions are available for this category."}\n</agent_k_file_format>`
           : "",
       ].filter(Boolean);
       return additions.length
@@ -2605,6 +2634,7 @@ export function ConversationWorkspace({
           ? "conversation-layout has-attachments"
           : "conversation-layout"
       }
+      ref={conversationLayoutRef}
     >
       <header
         className="workspace-header"
@@ -2946,7 +2976,9 @@ export function ConversationWorkspace({
         </div>
       )}
       <form
-        className={composerDragActive ? "composer is-dragging" : "composer"}
+        className={`composer${composerDragActive ? " is-dragging" : ""}${
+          running || submitting ? " is-working" : ""
+        }`}
         onDragEnter={(event) => {
           if (
             Array.from(event.dataTransfer.items).some((item) => item.kind === "file")
@@ -2979,7 +3011,21 @@ export function ConversationWorkspace({
           event.preventDefault();
           void submit();
         }}
+        ref={composerShellRef}
       >
+        {(running || submitting) && (
+          <div
+            aria-live="polite"
+            className="composer-working-indicator"
+            role="status"
+          >
+            <i
+              aria-hidden="true"
+              className="fa-solid fa-circle-notch fa-spin"
+            />
+            <span>Agent K Working</span>
+          </div>
+        )}
         {slashMenuVisible && (
           <section
             aria-label={t("commands")}
@@ -3093,6 +3139,7 @@ export function ConversationWorkspace({
           ))}
         <div
           aria-disabled={!session || !connected || submitting}
+          aria-multiline="true"
           className="composer-editor"
           contentEditable={Boolean(session && connected && !submitting)}
           data-placeholder={

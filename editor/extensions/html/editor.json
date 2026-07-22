@@ -1,0 +1,10 @@
+{
+  "apiVersion": 1,
+  "id": "agent-k.html",
+  "name": "HTML",
+  "match": { "extensions": ["html", "htm"], "mimeTypes": ["text/html"] },
+  "editor": "plugin",
+  "editable": true,
+  "languageId": "html",
+  "runtime": { "dependencies": ["monaco-editor@0.55.1"], "entry": "dist/editor.iife.js", "style": "dist/editor.css" }
+}

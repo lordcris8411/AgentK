@@ -1,0 +1,17 @@
+{
+  "apiVersion": 1,
+  "id": "agent-k.video",
+  "name": "Video player",
+  "match": {
+    "extensions": ["mp4", "m4v", "mkv", "mov", "avi", "webm", "wmv", "flv", "mpeg", "mpg", "3gp", "ogv"],
+    "mimeTypes": ["video/*"]
+  },
+  "editor": "plugin",
+  "mediaKind": "video",
+  "runtime": { "entry": "dist/editor.iife.js", "style": "dist/editor.css" },
+  "capabilities": [
+    { "id": "play", "label": "Play", "description": "Start playing the current video" },
+    { "id": "pause", "label": "Pause", "description": "Pause the current video" },
+    { "id": "seek", "label": "Seek", "description": "Move the current video forward or backward by seconds", "parameters": { "seconds": "number" } }
+  ]
+}

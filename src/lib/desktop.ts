@@ -33,6 +33,8 @@ export type ClientSettings = {
   piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
   editorWordWrap: boolean;
+  disabledFileEditors: string[];
+  disabledFileEditorSkills: string[];
   leftPanelWidth: number;
   rightPanelWidth: number;
   leftPanelHidden: boolean;
@@ -83,18 +85,45 @@ export type PiResourceChange = {
 };
 
 export type FileFormatPluginResource = {
+  apiVersion: 1;
   id: string;
   name: string;
   path: string;
-  scope: "user" | "project";
-  match: { extensions?: string[]; fileNames?: string[] };
-  editor: "text" | "markdown" | "html" | "media" | "unsupported";
+  scope: "builtin" | "user" | "project";
+  skillEnabled?: boolean;
+  match: {
+    absolutePaths?: string[];
+    extensions?: string[];
+    fileNames?: string[];
+    mimeTypes?: string[];
+  };
+  editor: "plugin";
+  runtime: { assets?: string; dependencies?: string[]; entry: string; style?: string };
   editable?: boolean;
-  monacoLanguage?: string;
+  languageId?: string;
   mimeType?: string;
   mediaKind?: "image" | "audio" | "video" | "pdf";
-  capabilities?: Array<{ id: string; label: string; description: string }>;
+  capabilities?: Array<{
+    id: string;
+    label: string;
+    description: string;
+    parameters?: Record<string, "string" | "number" | "boolean">;
+  }>;
   contextActions?: Array<{ id: string; label: string; when: "file" | "directory" | "both" }>;
+};
+
+export type EditorPluginRuntime = {
+  assets: Record<string, string>;
+  css: string;
+  dependencies: string[];
+  javascript: string;
+  pluginId: string;
+};
+
+export type EditorPluginDependency = {
+  cssUrl: string;
+  dependencyId: string;
+  javascriptUrl: string;
 };
 
 export type SkillHubScope = "user" | "project";
@@ -163,10 +192,17 @@ export const desktop = {
     invoke<PiResource[]>("get_pi_resources", { cwd, runtimeId }),
   fileFormatPlugins: (cwd: string) =>
     invoke<FileFormatPluginResource[]>("get_file_format_plugins", { cwd }),
+  firstPartyFileFormatPlugins: () =>
+    invoke<FileFormatPluginResource[]>("get_first_party_file_format_plugins"),
+  editorPluginRuntime: (cwd: string, pluginId: string) =>
+    invoke<EditorPluginRuntime>("get_editor_plugin_runtime", { cwd, pluginId }),
+  editorPluginDependency: (dependencyId: string) =>
+    invoke<EditorPluginDependency>("get_editor_plugin_dependency", { dependencyId }),
   applyPiResourceChanges: (
     cwd: string,
     changes: PiResourceChange[],
-  ) => invoke<void>("apply_pi_resource_changes", { cwd, changes }),
+    reload = false,
+  ) => invoke<void>("apply_pi_resource_changes", { cwd, changes, reload }),
   previewSkillHub: (sourceUrl: string) =>
     invoke<SkillHubPreview>("preview_skill_hub", { sourceUrl }),
   installSkillHub: (sourceUrl: string, hash: string, scope: SkillHubScope, cwd: string) =>

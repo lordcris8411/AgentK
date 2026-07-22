@@ -1,101 +1,61 @@
-import type { FileFormatPlugin } from "./sdk";
-import { matchesFileFormat } from "./sdk";
-
-const textExtensions = [
-  "py", "pyw", "js", "jsx", "ts", "tsx", "mjs", "cjs", "rs", "go", "java", "c", "cc", "cpp", "h", "hpp", "cs", "sh", "bash", "zsh", "ps1", "bat", "cmd", "css", "scss", "sass", "less", "vue", "svelte", "php", "rb", "swift", "kt", "kts", "dart", "lua", "r", "sql", "graphql", "gql", "mdx", "txt", "log", "json", "jsonc", "yaml", "yml", "toml", "xml", "ini", "cfg", "conf", "env", "properties", "csv", "tsv",
-] as const;
-
-export const builtinFileFormats: readonly FileFormatPlugin[] = [
-  {
-    id: "agent-k.markdown",
-    name: "Markdown",
-    match: { extensions: ["md", "markdown", "mdown", "mkd"] },
-    editor: "markdown",
-    editable: true,
-    monacoLanguage: "markdown",
-  },
-  {
-    id: "agent-k.html",
-    name: "HTML",
-    match: { extensions: ["html", "htm"] },
-    editor: "html",
-    editable: true,
-    monacoLanguage: "html",
-  },
-  {
-    id: "agent-k.image",
-    name: "Image preview",
-    match: { extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"] },
-    editor: "media",
-    mediaKind: "image",
-  },
-  {
-    id: "agent-k.audio",
-    name: "Audio player",
-    match: { extensions: ["mp3", "wav", "flac", "ogg", "oga", "m4a", "aac", "wma", "opus"] },
-    editor: "media",
-    mediaKind: "audio",
-    capabilities: [
-      { id: "play", label: "播放", description: "开始播放当前音频" },
-      { id: "pause", label: "暂停", description: "暂停当前音频" },
-      { id: "seek", label: "跳转", description: "按秒数前进或后退当前音频", parameters: { seconds: "number" } },
-    ],
-  },
-  {
-    id: "agent-k.video",
-    name: "Video player",
-    match: { extensions: ["mp4", "m4v", "mkv", "mov", "avi", "webm", "wmv", "flv", "mpeg", "mpg", "3gp", "ogv"] },
-    editor: "media",
-    mediaKind: "video",
-    capabilities: [
-      { id: "play", label: "播放", description: "开始播放当前视频" },
-      { id: "pause", label: "暂停", description: "暂停当前视频" },
-      { id: "seek", label: "跳转", description: "按秒数前进或后退当前视频", parameters: { seconds: "number" } },
-    ],
-  },
-  {
-    id: "agent-k.pdf",
-    name: "PDF preview",
-    match: { extensions: ["pdf"] },
-    editor: "media",
-    mediaKind: "pdf",
-  },
-  {
-    id: "agent-k.text",
-    name: "Text editor",
-    match: {
-      extensions: textExtensions,
-      fileNames: ["dockerfile", "makefile", "license", "readme", ".gitignore", ".gitattributes", ".editorconfig", ".npmrc", ".prettierrc", ".eslintrc"],
-    },
-    editor: "text",
-    editable: true,
-  },
-];
+import type { FileFormatPlugin, FileMatchContext } from "./sdk";
+import { fileFormatMatchRank } from "./sdk";
 
 export function resolveFileFormat(
-  path: string,
+  context: FileMatchContext,
   plugins: readonly FileFormatPlugin[] = [],
-): FileFormatPlugin {
-  return [...plugins, ...builtinFileFormats].find((plugin) => matchesFileFormat(plugin, path)) ?? {
-    id: "agent-k.unsupported",
-    name: "Unsupported file",
-    match: {},
-    editor: "unsupported",
-  };
+  disabledIds: readonly string[] = [],
+): FileFormatPlugin | undefined {
+  const disabled = new Set(disabledIds);
+  return plugins.reduce<{ plugin?: FileFormatPlugin; rank: number }>((best, plugin) => {
+    if (disabled.has(plugin.id)) return best;
+    const rank = fileFormatMatchRank(plugin, context);
+    return rank > best.rank ? { plugin, rank } : best;
+  }, { rank: 0 }).plugin;
 }
 
-export function monacoLanguageFor(path: string): string {
-  const matched = resolveFileFormat(path);
-  if (matched.monacoLanguage) return matched.monacoLanguage;
+const MIME_TYPES: Readonly<Record<string, string>> = {
+  "3gp": "video/3gpp", aac: "audio/aac", avi: "video/x-msvideo",
+  bmp: "image/bmp", c: "text/x-c", cc: "text/x-c++", conf: "text/plain",
+  cpp: "text/x-c++", cxx: "text/x-c++", css: "text/css", csv: "text/csv", flac: "audio/flac",
+  gif: "image/gif", go: "text/x-go", h: "text/x-c", hh: "text/x-c++", hpp: "text/x-c++", hxx: "text/x-c++",
+  htm: "text/html", html: "text/html", ico: "image/x-icon", java: "text/x-java-source",
+  jpeg: "image/jpeg", jpg: "image/jpeg", js: "text/javascript", json: "application/json",
+  jsonc: "application/json", jsx: "text/javascript", lock: "text/plain", log: "text/plain",
+  m4a: "audio/mp4", m4v: "video/mp4", markdown: "text/markdown", md: "text/markdown",
+  mkd: "text/markdown", mkv: "video/x-matroska", mov: "video/quicktime", mp3: "audio/mpeg",
+  mp4: "video/mp4", mpeg: "video/mpeg", mpg: "video/mpeg", oga: "audio/ogg",
+  ogg: "audio/ogg", ogv: "video/ogg", opus: "audio/opus", pdf: "application/pdf",
+  lua: "text/x-lua", php: "text/x-php", png: "image/png", py: "text/x-python", pyw: "text/x-python",
+  rb: "text/x-ruby", rs: "text/x-rust", sh: "text/x-shellscript", svg: "image/svg+xml",
+  toml: "application/toml", ts: "text/typescript", tsv: "text/tab-separated-values",
+  tsx: "text/typescript", txt: "text/plain", wav: "audio/wav", webm: "video/webm",
+  webp: "image/webp", xml: "application/xml", yaml: "application/yaml", yml: "application/yaml",
+};
+
+export function mimeTypeForPath(path: string): string {
+  const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  const extension = name.includes(".") ? name.split(".").pop() ?? "" : "";
+  return MIME_TYPES[extension] ?? "application/octet-stream";
+}
+
+export function fileMatchContext(
+  path: string,
+  absolutePath: string,
+): FileMatchContext {
+  return { absolutePath, mimeType: mimeTypeForPath(path), path };
+}
+
+export function languageIdFor(path: string, disabledIds: readonly string[] = []): string {
+  void disabledIds;
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
   return ({
-    py: "python", pyw: "python", ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", json: "json", yml: "yaml", yaml: "yaml", sh: "shell", ps1: "powershell", rs: "rust", css: "css", xml: "xml",
+    c: "cpp", cc: "cpp", cpp: "cpp", cxx: "cpp", h: "cpp", hh: "cpp", hpp: "cpp", hxx: "cpp",
+    cs: "csharp", go: "go", java: "java", lua: "lua", php: "php", py: "python", pyw: "python",
+    ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript",
+    json: "json", jsonc: "json", yml: "yaml", yaml: "yaml", sh: "shell", bash: "shell", zsh: "shell",
+    ps1: "powershell", rs: "rust", css: "css", scss: "scss", less: "less", xml: "xml",
+    rb: "ruby", swift: "swift", kt: "kotlin", kts: "kotlin", dart: "dart", r: "r", sql: "sql",
+    graphql: "graphql", gql: "graphql", mdx: "mdx", toml: "ini", ini: "ini", cfg: "ini", conf: "ini",
   } as Record<string, string>)[extension] ?? "plaintext";
-}
-
-export function mediaMimeTypeFor(path: string): string {
-  const extension = path.split(".").pop()?.toLowerCase() ?? "";
-  return ({
-    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp", ico: "image/x-icon", svg: "image/svg+xml", pdf: "application/pdf", mp3: "audio/mpeg", wav: "audio/wav", flac: "audio/flac", ogg: "audio/ogg", oga: "audio/ogg", m4a: "audio/mp4", aac: "audio/aac", wma: "audio/x-ms-wma", opus: "audio/opus", mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", ogv: "video/ogg", mpeg: "video/mpeg", mpg: "video/mpeg", "3gp": "video/3gpp", mkv: "video/x-matroska", avi: "video/x-msvideo", wmv: "video/x-msvideo", flv: "video/x-flv",
-  } as Record<string, string>)[extension] ?? "application/octet-stream";
 }

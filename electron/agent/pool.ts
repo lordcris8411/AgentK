@@ -21,6 +21,7 @@ export interface RpcPoolOptions {
   appDataPath: string;
   bundledExtensionsDirectory: string;
   bundledSkillsDirectory: string;
+  firstPartyEditorExtensions: Array<{ directory: string; id: string }>;
   launch: PiLaunch;
   minimum: number;
   permissionExtensionSource: string;

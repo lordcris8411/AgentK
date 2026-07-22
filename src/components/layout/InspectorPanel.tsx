@@ -1,23 +1,14 @@
-import Editor from "@monaco-editor/react";
-import type { editor as MonacoEditor } from "monaco-editor";
-import ReactMarkdown from "react-markdown";
 import { createPortal } from "react-dom";
-import rehypeKatex from "rehype-katex";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
 import {
   useEffect,
   useRef,
   useState,
+  type ComponentPropsWithoutRef,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { desktop, type FileEntry } from "../../lib/desktop";
-import { applyAgentKTheme, defineAgentKTheme } from "../../lib/monacoTheme";
-import { registerResponsiveMonacoEditor } from "../../lib/responsiveMonaco";
 import { platform } from "../../lib/platform";
-import { MediaPreview, type PreviewKind } from "./MediaPreview";
 import { ProjectConsole } from "./ProjectConsole";
 import {
   ReviewPanel,
@@ -25,29 +16,86 @@ import {
 } from "../../features/conversation/ReviewPanel";
 import { useSettings } from "../../features/settings/SettingsContext";
 import {
-  mediaMimeTypeFor,
-  monacoLanguageFor,
+  fileMatchContext,
+  languageIdFor,
   resolveFileFormat,
 } from "../../features/file-formats/builtins";
 import type { FileFormatPlugin } from "../../features/file-formats/sdk";
+import {
+  PluginEditorFrame,
+  preloadEditorPluginDependencies,
+  type PluginEditorHandle,
+} from "../../features/file-formats/PluginEditorFrame";
 
 type Tab = {
+  binary?: ArrayBuffer;
   path: string;
   content: string;
   saved: string;
   unsupported?: boolean;
-  previewKind?: PreviewKind;
-  previewUrl?: string;
   previewBytes?: number;
   previewCodec?: string;
-  previewMode?: boolean;
-  documentPreviewUrl?: string;
+  mimeType?: string;
   format?: FileFormatPlugin;
+  previewMode?: boolean;
+  runtimeDirty?: boolean;
 };
-function mediaTypeFor(path: string) {
-  return mediaMimeTypeFor(path);
+type WorkspaceEditorState = {
+  active?: string;
+  tabs: Tab[];
+};
+type PluginEditorProps = ComponentPropsWithoutRef<typeof PluginEditorFrame>;
+const EDITOR_RUNTIME_CACHE_LIMIT = 40;
+
+function insertCachedEditorRuntime(
+  keys: string[],
+  activeKey: string,
+  recency: string[],
+): string[] {
+  if (keys.includes(activeKey)) return keys;
+  if (keys.length < EDITOR_RUNTIME_CACHE_LIMIT) return [...keys, activeKey];
+  const evictionKey =
+    recency.find((key) => keys.includes(key)) ?? keys[0];
+  return [
+    ...keys.filter((key) => key !== evictionKey),
+    activeKey,
+  ];
 }
 
+function CachedPluginEditor({
+  active,
+  activeEditorRef,
+  frameProps,
+}: {
+  active: boolean;
+  activeEditorRef: { current: PluginEditorHandle | null };
+  frameProps?: PluginEditorProps;
+}) {
+  const editorRef = useRef<PluginEditorHandle | null>(null);
+  const lastFrameProps = useRef<PluginEditorProps | undefined>(frameProps);
+  if (frameProps) lastFrameProps.current = frameProps;
+
+  useEffect(() => {
+    if (active) activeEditorRef.current = editorRef.current;
+    else if (activeEditorRef.current === editorRef.current)
+      activeEditorRef.current = null;
+    return () => {
+      if (activeEditorRef.current === editorRef.current)
+        activeEditorRef.current = null;
+    };
+  }, [active, activeEditorRef]);
+
+  const retainedProps = lastFrameProps.current;
+  if (!retainedProps) return null;
+  return (
+    <div
+      aria-hidden={!active}
+      className={`cached-plugin-editor${active ? " is-active" : " is-hidden"}`}
+    >
+      <PluginEditorFrame {...retainedProps} ref={editorRef} />
+    </div>
+  );
+}
 function detectVideoCodec(data: ArrayBuffer) {
   const bytes = new Uint8Array(data);
   const windowSize = 8 * 1024 * 1024;
@@ -135,7 +183,7 @@ function replaceTreeEntry(
   };
 }
 const languageFor = (path: string) => {
-  return monacoLanguageFor(path);
+  return languageIdFor(path);
 };
 function FileIcon({ path }: { path: string }) {
   const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
@@ -173,11 +221,29 @@ function FileIcon({ path }: { path: string }) {
       "c",
       "cc",
       "cpp",
+      "cxx",
       "h",
+      "hh",
       "hpp",
+      "hxx",
       "cs",
       "sh",
+      "bash",
+      "zsh",
       "ps1",
+      "bat",
+      "cmd",
+      "php",
+      "rb",
+      "swift",
+      "kt",
+      "kts",
+      "dart",
+      "lua",
+      "r",
+      "sql",
+      "graphql",
+      "gql",
     ].includes(extension)
   ) {
     icon = "fa-regular fa-file-code";
@@ -399,11 +465,12 @@ export function InspectorPanel({
 }) {
   const { settings, resolvedTheme, t, update: updateSettings } = useSettings();
   const en = settings.locale === "en-US";
-  const editorTheme = resolvedTheme === "dark" ? "agent-k-dark" : "agent-k-light";
   const [tree, setTree] = useState<FileEntry>();
   const [fileFormatPlugins, setFileFormatPlugins] = useState<FileFormatPlugin[]>([]);
   const [loading, setLoading] = useState(false);
   const [tabs, setTabs] = useState<Tab[]>([]);
+  const [editorRuntimeKeys, setEditorRuntimeKeys] = useState<string[]>([]);
+  const editorRuntimeRecency = useRef<string[]>([]);
   const [active, setActive] = useState<string>();
   const [lineNavigation, setLineNavigation] = useState<{
     line: number;
@@ -423,8 +490,6 @@ export function InspectorPanel({
   const [renameName, setRenameName] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [mutatingPath, setMutatingPath] = useState(false);
-  const [refreshingPreview, setRefreshingPreview] = useState(false);
-  const [loadingPreviewPath, setLoadingPreviewPath] = useState<string>();
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [pointerDrag, setPointerDrag] = useState<{
     canDrop: boolean;
@@ -442,16 +507,14 @@ export function InspectorPanel({
     y: number;
   }>();
   const inspectorRef = useRef<HTMLElement>(null);
-  const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
-  const editorContextMenuLine = useRef<number | undefined>(undefined);
-  const editorViewStates = useRef(
-    new Map<string, MonacoEditor.ICodeEditorViewState>(),
-  );
+  const pluginEditorRef = useRef<PluginEditorHandle | null>(null);
   const activePathRef = useRef<string | undefined>(undefined);
+  const activationRequest = useRef(0);
   const resizingExplorer = useRef(false);
   const refreshInFlight = useRef(new Set<string>());
-  const previewUrls = useRef(new Set<string>());
   const currentRoot = useRef(root);
+  const tabsRoot = useRef(root);
+  const workspaceEditorStates = useRef(new Map<string, WorkspaceEditorState>());
   const treeRef = useRef<FileEntry | undefined>(undefined);
   currentRoot.current = root;
   treeRef.current = tree;
@@ -473,6 +536,7 @@ export function InspectorPanel({
     const stop = () => {
       resizingExplorer.current = false;
       document.body.classList.remove("is-resizing");
+      window.dispatchEvent(new CustomEvent("agent-k-editor-layout-suspended", { detail: false }));
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", stop);
@@ -553,12 +617,21 @@ export function InspectorPanel({
       });
   };
   useEffect(() => {
-    for (const url of previewUrls.current) URL.revokeObjectURL(url);
-    previewUrls.current.clear();
-    setTabs([]);
-    setActive(undefined);
-    activePathRef.current = undefined;
-    editorViewStates.current.clear();
+    const previousRoot = tabsRoot.current;
+    if (previousRoot) {
+      workspaceEditorStates.current.set(previousRoot, {
+        active: activePathRef.current,
+        tabs,
+      });
+    }
+    const restored = root
+      ? workspaceEditorStates.current.get(root)
+      : undefined;
+    tabsRoot.current = root;
+    activationRequest.current += 1;
+    setTabs(restored?.tabs ?? []);
+    setActive(restored?.active);
+    activePathRef.current = restored?.active;
     setResults([]);
     setTree(undefined);
     treeRef.current = undefined;
@@ -574,24 +647,26 @@ export function InspectorPanel({
         return;
       }
       void desktop.fileFormatPlugins(root)
-        .then((plugins) => setFileFormatPlugins(
-          [...plugins]
-            .sort((left, right) => left.scope === right.scope ? 0 : left.scope === "project" ? -1 : 1)
+        .then((plugins) => {
+          preloadEditorPluginDependencies(plugins);
+          setFileFormatPlugins(
+            [...plugins]
+            .sort((left, right) => {
+              const priority = { project: 0, user: 1, builtin: 2 } as const;
+              return priority[left.scope] - priority[right.scope];
+            })
             .map((plugin) => plugin as FileFormatPlugin),
-        ))
-        .catch(() => setFileFormatPlugins([]));
+          );
+        })
+        .catch((cause) => {
+          setFileFormatPlugins([]);
+          onError(`Editor 插件校验失败：${String(cause)}`);
+        });
     };
     refreshFileFormats();
     window.addEventListener("agent-k-resources-changed", refreshFileFormats);
     return () => window.removeEventListener("agent-k-resources-changed", refreshFileFormats);
   }, [root]);
-  useEffect(
-    () => () => {
-      for (const url of previewUrls.current) URL.revokeObjectURL(url);
-      previewUrls.current.clear();
-    },
-    [],
-  );
   useEffect(() => {
     const searchQuery = query.trim();
     if (!root || !searchQuery) {
@@ -638,71 +713,84 @@ export function InspectorPanel({
   };
   const activateTab = (path: string) => {
     const previousPath = activePathRef.current;
-    const editor = editorRef.current;
-    if (previousPath && editor) {
-      const viewState = editor.saveViewState();
-      if (viewState) editorViewStates.current.set(previousPath, viewState);
-    }
-    activePathRef.current = path;
-    setActive(path);
-  };
-  const restoreEditorView = (
-    path: string,
-    editor = editorRef.current,
-  ) => {
-    if (!editor || activePathRef.current !== path) return;
-    const saved = editorViewStates.current.get(path);
-    if (saved) {
-      editor.restoreViewState(saved);
+    const request = ++activationRequest.current;
+    const finish = () => {
+      if (request !== activationRequest.current) return;
+      activePathRef.current = path;
+      setActive(path);
+    };
+    const previousTab = tabs.find((tab) => tab.path === previousPath);
+    if (
+      previousPath !== path &&
+      previousTab?.format?.editor === "plugin" &&
+      previousTab.runtimeDirty &&
+      pluginEditorRef.current
+    ) {
+      void pluginEditorRef.current.readContent()
+        .then((content) => {
+          setTabs((currentTabs) => currentTabs.map((tab) =>
+            tab.path === previousPath ? { ...tab, content } : tab,
+          ));
+        })
+        .catch(() => undefined)
+        .finally(finish);
       return;
     }
-    editor.setScrollPosition({ scrollLeft: 0, scrollTop: 0 });
-    editor.setPosition({ column: 1, lineNumber: 1 });
+    finish();
   };
-  useEffect(() => {
-    if (!active) return;
-    const frame = requestAnimationFrame(() => restoreEditorView(active));
-    return () => cancelAnimationFrame(frame);
-  }, [active]);
   useEffect(() => {
     if (!active) {
       window.dispatchEvent(new CustomEvent("agent-k-file-format-capabilities", { detail: undefined }));
       return;
     }
-    const plugin = resolveFileFormat(active, fileFormatPlugins);
+    const plugin = root ? resolveFileFormat(
+      fileMatchContext(active, absoluteWorkspacePath(root, active)),
+      fileFormatPlugins,
+      settings.disabledFileEditors,
+    ) : undefined;
+    if (!plugin) {
+      window.dispatchEvent(new CustomEvent("agent-k-file-format-capabilities", { detail: undefined }));
+      return;
+    }
+    const skillEnabled =
+      plugin.skillEnabled !== false &&
+      !settings.disabledFileEditorSkills.includes(plugin.id);
     window.dispatchEvent(new CustomEvent("agent-k-file-format-capabilities", {
       detail: {
-        capabilities: plugin.capabilities ?? [],
+        capabilities: skillEnabled ? plugin.capabilities ?? [] : [],
         name: plugin.name,
         path: active,
         pluginId: plugin.id,
+        skillEnabled,
       },
     }));
-  }, [active, fileFormatPlugins]);
+  }, [active, fileFormatPlugins, root, settings.disabledFileEditors, settings.disabledFileEditorSkills]);
   const open = async (path: string) => {
     if (!root || tabs.some((tab) => tab.path === path)) {
       activateTab(path);
       return;
     }
-    const format = resolveFileFormat(path, fileFormatPlugins);
+    const match = fileMatchContext(path, absoluteWorkspacePath(root, path));
+    const format = resolveFileFormat(match, fileFormatPlugins, settings.disabledFileEditors);
+    if (!format) {
+      setTabs((current) => [...current, { path, content: "", saved: "", unsupported: true }]);
+      activateTab(path);
+      return;
+    }
     const previewKind = format.mediaKind;
-    if (previewKind) {
+    if (format.editor === "plugin" && previewKind) {
       try {
         const data = await desktop.readBinary(root, path);
-        const previewUrl = URL.createObjectURL(
-          new Blob([data], { type: format.mimeType ?? mediaTypeFor(path) }),
-        );
-        previewUrls.current.add(previewUrl);
         setTabs((current) => [
           ...current,
           {
+            binary: data,
             content: "",
             path,
             previewBytes: data.byteLength,
             previewCodec:
               previewKind === "video" ? detectVideoCodec(data) : undefined,
-            previewKind,
-            previewUrl,
+            mimeType: match.mimeType,
             saved: "",
             format,
           },
@@ -716,14 +804,17 @@ export function InspectorPanel({
     if (!(format.editable === true || path.toLowerCase().endsWith(".lock"))) {
       setTabs((current) => [
         ...current,
-        { path, content: "", saved: "", unsupported: true, format },
+        { path, content: "", saved: "", unsupported: true, format, mimeType: match.mimeType },
       ]);
       activateTab(path);
       return;
     }
     try {
       const content = await desktop.read(root, path);
-      setTabs((current) => [...current, { path, content, saved: content, format }]);
+      setTabs((current) => [
+        ...current,
+        { path, content, saved: content, format, mimeType: match.mimeType },
+      ]);
       activateTab(path);
     } catch (cause) {
       onError(`无法打开文件：${String(cause)}`);
@@ -751,55 +842,88 @@ export function InspectorPanel({
       lineNavigation.path !== active?.replaceAll("\\", "/")
     ) return;
     const frame = requestAnimationFrame(() => {
-      const editor = editorRef.current;
-      if (
-        !editor ||
-        activePathRef.current?.replaceAll("\\", "/") !== lineNavigation.path
-      ) return;
-      const model = editor.getModel();
-      const line = Math.min(
-        lineNavigation.line,
-        model?.getLineCount() ?? lineNavigation.line,
-      );
-      editor.setPosition({ column: 1, lineNumber: line });
-      editor.revealLineInCenter(line);
-      editor.focus();
+      setTabs((currentTabs) => currentTabs.map((tab) =>
+        tab.path.replaceAll("\\", "/") === lineNavigation.path
+          ? { ...tab, previewMode: false }
+          : tab,
+      ));
+      pluginEditorRef.current?.navigate(lineNavigation.line, 1);
     });
     return () => cancelAnimationFrame(frame);
   }, [active, lineNavigation, tabs]);
   const closeTab = (tab: Tab) => {
-    if (tab.previewUrl) {
-      URL.revokeObjectURL(tab.previewUrl);
-      previewUrls.current.delete(tab.previewUrl);
-    }
-    setTabs((currentTabs) =>
-      currentTabs.filter((item) => item.path !== tab.path),
-    );
+    const closingIndex = tabs.findIndex((item) => item.path === tab.path);
+    const remainingTabs = tabs.filter((item) => item.path !== tab.path);
+    setTabs(remainingTabs);
     if (active === tab.path) {
-      activePathRef.current = undefined;
-      setActive(undefined);
+      const nextActive = remainingTabs[
+        Math.min(closingIndex, remainingTabs.length - 1)
+      ]?.path;
+      activationRequest.current += 1;
+      activePathRef.current = nextActive;
+      setActive(nextActive);
     }
   };
-  const current = tabs.find((tab) => tab.path === active);
+  const current = tabsRoot.current === root
+    ? tabs.find((tab) => tab.path === active)
+    : undefined;
+  const activeEditorRuntimeKey =
+    root && current?.format?.editor === "plugin"
+      ? `${root}\0${current.format.id}\0${current.path}`
+      : undefined;
+  const displayedEditorRuntimeKeys = activeEditorRuntimeKey
+    ? insertCachedEditorRuntime(
+        editorRuntimeKeys,
+        activeEditorRuntimeKey,
+        editorRuntimeRecency.current,
+      )
+    : editorRuntimeKeys;
+  useEffect(() => {
+    if (!activeEditorRuntimeKey) return;
+    const recency = editorRuntimeRecency.current;
+    setEditorRuntimeKeys((keys) =>
+      insertCachedEditorRuntime(keys, activeEditorRuntimeKey, recency),
+    );
+    editorRuntimeRecency.current = [
+      ...recency.filter((key) => key !== activeEditorRuntimeKey),
+      activeEditorRuntimeKey,
+    ];
+  }, [activeEditorRuntimeKey]);
   const update = (content: string) =>
     setTabs((currentTabs) =>
       currentTabs.map((tab) =>
         tab.path === active ? { ...tab, content } : tab,
       ),
     );
-  const save = async (): Promise<boolean> => {
-    if (!root || !current || current.unsupported || current.previewKind)
-      return false;
+  const persistContent = async (tab: Tab, content: string): Promise<boolean> => {
+    if (!root) return false;
     try {
-      await desktop.write(root, current.path, current.content);
+      await desktop.write(root, tab.path, content);
       setTabs((currentTabs) =>
-        currentTabs.map((tab) =>
-          tab.path === current.path ? { ...tab, saved: tab.content } : tab,
+        currentTabs.map((candidate) =>
+          candidate.path === tab.path
+            ? { ...candidate, content, runtimeDirty: false, saved: content }
+            : candidate,
         ),
       );
+      if (tab.path === activePathRef.current)
+        pluginEditorRef.current?.markSaved(content);
       return true;
     } catch (cause) {
       onError(`保存失败：${String(cause)}`);
+      return false;
+    }
+  };
+  const save = async (): Promise<boolean> => {
+    if (!root || !current || current.unsupported)
+      return false;
+    try {
+      const content = current.format?.editor === "plugin"
+        ? await pluginEditorRef.current?.readContent() ?? current.content
+        : current.content;
+      return persistContent(current, content);
+    } catch (cause) {
+      onError(`无法读取编辑器内容：${String(cause)}`);
       return false;
     }
   };
@@ -807,7 +931,7 @@ export function InspectorPanel({
     const saveShortcut = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s")
         return;
-      if (!current || current.unsupported || current.previewKind) return;
+      if (!current || current.unsupported) return;
       event.preventDefault();
       void save();
     };
@@ -815,93 +939,16 @@ export function InspectorPanel({
     return () => window.removeEventListener("keydown", saveShortcut);
   }, [current, root]);
   const undo = () => {
-    if (!current || current.unsupported || current.previewKind) return;
+    if (!current || current.unsupported) return;
     // The toolbar action means "discard the unsaved edit", rather than a
     // single Monaco history step. Keeping React and Monaco on the saved value
     // also clears the tab's dirty marker deterministically.
     update(current.saved);
-    editorRef.current?.setValue(current.saved);
-    editorRef.current?.focus();
-  };
-  const toggleDocumentPreview = async () => {
-    if (!current || !["markdown", "html"].includes(current.format?.editor ?? "")) return;
-    if (current.previewMode) {
-      setLoadingPreviewPath(undefined);
-      setTabs((currentTabs) =>
-        currentTabs.map((tab) =>
-          tab.path === current.path ? { ...tab, previewMode: false } : tab,
-        ),
-      );
-      return;
-    }
-    if (current.content !== current.saved && !(await save())) return;
-    let documentPreviewUrl = current.documentPreviewUrl;
-    if (current.format?.editor === "html") {
-      if (!root) return;
-      setLoadingPreviewPath(current.path);
-      try {
-        documentPreviewUrl = await desktop.startPreview(
-          root,
-          current.path,
-          current.content,
-        );
-      } catch (cause) {
-        setLoadingPreviewPath(undefined);
-        onError(`无法启动 HTML 预览：${String(cause)}`);
-        return;
-      }
-    }
-    if (!current.previewMode) editorRef.current = null;
-    setTabs((currentTabs) =>
-      currentTabs.map((tab) =>
-        tab.path === current.path
-          ? { ...tab, documentPreviewUrl, previewMode: true }
-          : tab,
-      ),
-    );
-  };
-  const refreshHtmlPreview = async () => {
-    if (
-      !root ||
-      !current ||
-      !current.previewMode ||
-      current.format?.editor !== "html" ||
-      refreshingPreview
-    )
-      return;
-    setRefreshingPreview(true);
-    setLoadingPreviewPath(current.path);
-    try {
-      const url = await desktop.startPreview(
-        root,
-        current.path,
-        current.content,
-      );
-      setTabs((currentTabs) =>
-        currentTabs.map((tab) =>
-          tab.path === current.path
-            ? {
-                ...tab,
-                documentPreviewUrl: `${url}?reload=${Date.now()}`,
-              }
-            : tab,
-        ),
-      );
-    } catch (cause) {
-      setLoadingPreviewPath(undefined);
-      setRefreshingPreview(false);
-      onError(`无法刷新 HTML 预览：${String(cause)}`);
-    }
-  };
-  const openHtmlPreviewInBrowser = async () => {
-    const url = current?.documentPreviewUrl;
-    if (!url) return;
-    try {
-      await desktop.openExternalUrl(url, settings.browserId);
-    } catch (cause) {
-      onError(
-        `${en ? "Unable to open HTML preview" : "无法在浏览器中打开 HTML 预览"}：${String(cause)}`,
-      );
+    if (current.format?.editor === "plugin") {
+      pluginEditorRef.current?.setContent(current.saved);
+      setTabs((currentTabs) => currentTabs.map((tab) =>
+        tab.path === current.path ? { ...tab, runtimeDirty: false } : tab,
+      ));
     }
   };
   const showContextMenu = (entry: FileEntry, event: ReactMouseEvent) => {
@@ -1026,14 +1073,7 @@ export function InspectorPanel({
     try {
       await desktop.trash(root, deletedPath);
       setTabs((currentTabs) =>
-        currentTabs.filter((tab) => {
-          const removed = pathIsWithin(tab.path, deletedPath);
-          if (removed && tab.previewUrl) {
-            URL.revokeObjectURL(tab.previewUrl);
-            previewUrls.current.delete(tab.previewUrl);
-          }
-          return !removed;
-        }),
+        currentTabs.filter((tab) => !pathIsWithin(tab.path, deletedPath)),
       );
       setActive((current) =>
         current && pathIsWithin(current, deletedPath) ? undefined : current,
@@ -1211,19 +1251,65 @@ export function InspectorPanel({
       window.removeEventListener("drop", drop);
     };
   }, [root]);
-  if (review)
-    return (
-      <aside className="inspector-panel" ref={inspectorRef}>
-        <ReviewPanel
-          calls={review}
-          onClose={onCloseReview}
-          onError={onError}
-          root={root}
-        />
-      </aside>
-    );
+  const activePluginEditorProps: PluginEditorProps | undefined =
+    current?.format?.editor === "plugin" && root
+      ? {
+          actions: ["agent-k.html", "agent-k.markdown"].includes(current.format.id)
+            ? [{
+                id: "set-preview",
+                parameters: { enabled: current.previewMode === true },
+              }]
+            : [],
+          absolutePath: absoluteWorkspacePath(root, current.path),
+          binary: current.binary,
+          byteSize: current.previewBytes,
+          codec: current.previewCodec,
+          content: current.content,
+          language: current.format.languageId ?? languageFor(current.path),
+          locale: settings.locale,
+          mimeType: current.mimeType ?? fileMatchContext(
+            current.path,
+            absoluteWorkspacePath(root, current.path),
+          ).mimeType,
+          onContentChange(content) {
+            setTabs((currentTabs) => currentTabs.map((tab) =>
+              tab.path === current.path ? { ...tab, content } : tab,
+            ));
+          },
+          onDirtyChange(dirty) {
+            setTabs((currentTabs) => currentTabs.map((tab) =>
+              tab.path === current.path ? { ...tab, runtimeDirty: dirty } : tab,
+            ));
+          },
+          onError,
+          onReferenceLine(line) {
+            window.dispatchEvent(new CustomEvent("agent-k-add-line-reference", {
+              detail: { line, path: current.path },
+            }));
+          },
+          onSaveRequest(content) {
+            void persistContent(current, content);
+          },
+          path: current.path,
+          plugin: current.format,
+          readOnly: current.format.editable !== true,
+          root,
+          theme: resolvedTheme,
+          wordWrap: settings.editorWordWrap,
+        }
+      : undefined;
   return (
     <aside className="inspector-panel" ref={inspectorRef}>
+      {review ? (
+        <div className="inspector-review-overlay">
+          <ReviewPanel
+            calls={review}
+            onClose={onCloseReview}
+            onError={onError}
+            root={root}
+          />
+        </div>
+      ) : null}
       <div
         className="editor-body"
         style={
@@ -1340,6 +1426,7 @@ export function InspectorPanel({
             event.preventDefault();
             resizingExplorer.current = true;
             document.body.classList.add("is-resizing");
+            window.dispatchEvent(new CustomEvent("agent-k-editor-layout-suspended", { detail: true }));
           }}
           role="separator"
         />
@@ -1353,7 +1440,7 @@ export function InspectorPanel({
                 type="button"
               >
                 {tab.path.split(/[\\/]/).pop()}
-                {tab.content !== tab.saved ? " •" : ""}
+                {tab.content !== tab.saved || tab.runtimeDirty ? " •" : ""}
                 <span
                   onClick={(event) => {
                     event.stopPropagation();
@@ -1365,48 +1452,53 @@ export function InspectorPanel({
               </button>
             ))}
           </div>
-          {current && !current.unsupported && !current.previewKind ? (
+          {current && !current.unsupported && current.format?.editable ? (
             <div className="editor-floating-actions">
-              {["markdown", "html"].includes(current.format?.editor ?? "") ? (
-                <button
-                  aria-pressed={Boolean(current.previewMode)}
-                  onClick={() => void toggleDocumentPreview()}
-                  title={
-                    current.previewMode
-                      ? t("markdownEdit")
-                      : t("markdownPreview")
-                  }
-                  type="button"
-                >
-                  <i
-                    aria-hidden="true"
-                    className={
-                      current.previewMode
-                        ? "fa-regular fa-pen-to-square"
-                        : "fa-regular fa-eye"
-                    }
-                  />
-                  {current.previewMode
-                    ? t("markdownEdit")
-                    : t("markdownPreview")}
-                </button>
-              ) : null}
-              {!current.previewMode ? (
-                <>
-                  <button
-                    aria-label={t("revertFile")}
-                    disabled={current.content === current.saved}
-                    onClick={undo}
-                    title={
-                      en
-                        ? "Revert to the last saved version"
-                        : "恢复到最近保存的版本"
-                    }
-                    type="button"
-                  >
-                    <i aria-hidden="true" className="fa-solid fa-rotate-left" />
-                    {t("revertFile")}
-                  </button>
+              <>
+                  {["agent-k.html", "agent-k.markdown"].includes(current.format.id) ? (
+                    <button
+                      aria-pressed={current.previewMode === true}
+                      className={current.previewMode ? "is-active" : undefined}
+                      onClick={() => {
+                        const enabled = current.previewMode !== true;
+                        setTabs((currentTabs) => currentTabs.map((tab) =>
+                          tab.path === current.path
+                            ? { ...tab, previewMode: enabled }
+                            : tab,
+                        ));
+                      }}
+                      title={current.previewMode
+                        ? en ? "Return to editor" : "返回编辑器"
+                        : en ? "Preview" : "预览"}
+                      type="button"
+                    >
+                      <i
+                        aria-hidden="true"
+                        className={current.previewMode
+                          ? "fa-regular fa-pen-to-square"
+                          : "fa-regular fa-eye"}
+                      />
+                      {current.previewMode
+                        ? en ? "Edit" : "编辑"
+                        : en ? "Preview" : "预览"}
+                    </button>
+                  ) : null}
+                  {!current.previewMode ? (
+                    <button
+                      aria-label={t("revertFile")}
+                      disabled={current.content === current.saved && !current.runtimeDirty}
+                      onClick={undo}
+                      title={
+                        en
+                          ? "Revert to the last saved version"
+                          : "恢复到最近保存的版本"
+                      }
+                      type="button"
+                    >
+                      <i aria-hidden="true" className="fa-solid fa-rotate-left" />
+                      {t("revertFile")}
+                    </button>
+                  ) : null}
                   <button
                     aria-pressed={settings.editorWordWrap}
                     className={settings.editorWordWrap ? "is-active" : undefined}
@@ -1425,60 +1517,22 @@ export function InspectorPanel({
                     <i aria-hidden="true" className="fa-solid fa-text-width" />
                     {en ? "Wrap" : "自动换行"}
                   </button>
-                  <button
-                    className="primary"
-                    disabled={current.content === current.saved}
-                    onClick={() => void save()}
-                    title={en ? "Save (Ctrl+S)" : "保存 (Ctrl+S)"}
-                    type="button"
-                  >
-                    <i aria-hidden="true" className="fa-regular fa-floppy-disk" />
-                    {t("save")}
-                  </button>
-                </>
-              ) : null}
+                  {!current.previewMode ? (
+                    <button
+                      className="primary"
+                      disabled={current.content === current.saved && !current.runtimeDirty}
+                      onClick={() => void save()}
+                      title={en ? "Save (Ctrl+S)" : "保存 (Ctrl+S)"}
+                      type="button"
+                    >
+                      <i aria-hidden="true" className="fa-regular fa-floppy-disk" />
+                      {t("save")}
+                    </button>
+                  ) : null}
+              </>
             </div>
           ) : null}
-          {current?.previewMode && current.format?.editor === "html" ? (
-            <div className="html-preview-actions">
-              <button
-                aria-label={en ? "Refresh HTML preview" : "刷新 HTML 预览"}
-                disabled={refreshingPreview}
-                onClick={() => void refreshHtmlPreview()}
-                title={en ? "Refresh HTML preview" : "刷新 HTML 预览"}
-                type="button"
-              >
-                <i
-                  aria-hidden="true"
-                  className={`fa-solid fa-rotate-right${
-                    refreshingPreview ? " fa-spin" : ""
-                  }`}
-                />
-              </button>
-              <button
-                disabled={!current.documentPreviewUrl}
-                onClick={() => void openHtmlPreviewInBrowser()}
-                title={t("openInBrowser")}
-                type="button"
-              >
-                <i
-                  aria-hidden="true"
-                  className="fa-solid fa-arrow-up-right-from-square"
-                />
-                <span>{t("openInBrowser")}</span>
-              </button>
-            </div>
-          ) : null}
-          {current?.previewKind && current.previewUrl ? (
-            <MediaPreview
-              byteSize={current.previewBytes}
-              codec={current.previewCodec}
-              kind={current.previewKind}
-              name={current.path.split(/[\\/]/).pop() ?? current.path}
-              path={current.path}
-              url={current.previewUrl}
-            />
-          ) : current?.unsupported ? (
+          {current?.unsupported ? (
             <div className="unsupported-editor">
               <i aria-hidden="true" className="fa-regular fa-file" />
               <strong>暂不支持此文件类型</strong>
@@ -1486,128 +1540,19 @@ export function InspectorPanel({
                 {current.path.split(/[\\/]/).pop()} 无法在文本编辑器中预览或编辑
               </p>
             </div>
-          ) : current?.previewMode && current.format?.editor === "markdown" ? (
-            <article className="markdown-file-preview message-content">
-              <ReactMarkdown
-                components={{
-                  a: ({ children, href, ...props }) => (
-                    <a
-                      {...props}
-                      href={href}
-                      onClick={(event) => {
-                        if (!href || !/^https?:\/\//i.test(href)) return;
-                        event.preventDefault();
-                        void desktop
-                          .openExternalUrl(href, settings.browserId)
-                          .catch((cause) => onError(String(cause)));
-                      }}
-                    >
-                      {children}
-                    </a>
-                  ),
-                }}
-                rehypePlugins={[rehypeKatex]}
-                remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
-              >
-                {current.content}
-              </ReactMarkdown>
-            </article>
-          ) : current?.previewMode && current.format?.editor === "html" ? (
-            <div className="html-preview-stage">
-              <iframe
-                className="html-file-preview"
-                onError={() => {
-                  setLoadingPreviewPath(undefined);
-                  setRefreshingPreview(false);
-                }}
-                onLoad={() => {
-                  setLoadingPreviewPath((path) =>
-                    path === current.path ? undefined : path,
-                  );
-                  setRefreshingPreview(false);
-                }}
-                sandbox="allow-scripts"
-                src={current.documentPreviewUrl}
-                title={`${current.path.split(/[\\/]/).pop() ?? current.path} HTML preview`}
-              />
-              {loadingPreviewPath === current.path ? (
-                <div
-                  aria-label={en ? "Loading HTML preview" : "正在加载 HTML 预览"}
-                  className="html-preview-loading"
-                  role="status"
-                >
-                  <span className="html-preview-loader" />
-                  <span>{en ? "Loading preview…" : "正在加载预览…"}</span>
-                </div>
-              ) : null}
-            </div>
-          ) : current ? (
-            <>
-              <Editor
-                beforeMount={defineAgentKTheme}
-                height="100%"
-                language={current.format?.monacoLanguage ?? languageFor(current.path)}
-                onChange={(value) => update(value ?? "")}
-                onMount={(editor, monaco) => {
-                  editorRef.current = editor;
-                  const unregisterResponsiveLayout =
-                    registerResponsiveMonacoEditor(editor);
-                  applyAgentKTheme(editor, monaco);
-                  editor.onContextMenu((event) => {
-                    editorContextMenuLine.current = event.target.position?.lineNumber;
-                  });
-                  editor.addAction({
-                    contextMenuGroupId: "navigation",
-                    contextMenuOrder: 1.25,
-                    id: "agent-k-add-line-to-conversation",
-                    label: en
-                      ? "Add this line to conversation"
-                      : "添加本行到对话",
-                    run: (sourceEditor) => {
-                      const path = activePathRef.current;
-                      const line =
-                        editorContextMenuLine.current ??
-                        sourceEditor.getPosition()?.lineNumber;
-                      editorContextMenuLine.current = undefined;
-                      if (!path || !line) return;
-                      window.dispatchEvent(
-                        new CustomEvent("agent-k-add-line-reference", {
-                          detail: { line, path },
-                        }),
-                      );
-                    },
-                  });
-                  editor.onDidDispose(() => {
-                    unregisterResponsiveLayout();
-                    if (editorRef.current === editor) editorRef.current = null;
-                  });
-                  requestAnimationFrame(() => restoreEditorView(current.path, editor));
-                }}
-                options={{
-                  automaticLayout: false,
-                  inertialScroll: true,
-                  minimap: { enabled: false },
-                  mouseWheelScrollSensitivity: 1.5,
-                  scrollbar: {
-                    alwaysConsumeMouseWheel: false,
-                    handleMouseWheel: true,
-                  },
-                  smoothScrolling: true,
-                  wordWrap: settings.editorWordWrap ? "on" : "off",
-                }}
-                path={
-                  root
-                    ? absoluteWorkspacePath(root, current.path)
-                    : current.path
-                }
-                saveViewState
-                theme={editorTheme}
-                value={current.content}
-              />
-            </>
-          ) : (
+          ) : !activePluginEditorProps ? (
             <p className="empty-editor">从左侧打开一个文件</p>
-          )}
+          ) : null}
+          {displayedEditorRuntimeKeys.map((cacheKey) => (
+            <CachedPluginEditor
+              active={cacheKey === activeEditorRuntimeKey}
+              activeEditorRef={pluginEditorRef}
+              frameProps={cacheKey === activeEditorRuntimeKey
+                ? activePluginEditorProps
+                : undefined}
+              key={cacheKey}
+            />
+          ))}
         </section>
       </div>
       <ProjectConsole onError={onError} root={root} />
@@ -1701,14 +1646,21 @@ export function InspectorPanel({
             在外部控制台中打开目录
           </button>
           {(() => {
-            const plugin = resolveFileFormat(contextMenu.entry.path, fileFormatPlugins);
-            return plugin.contextActions
+            const plugin = root ? resolveFileFormat(
+              fileMatchContext(
+                contextMenu.entry.path,
+                absoluteWorkspacePath(root, contextMenu.entry.path),
+              ),
+              fileFormatPlugins,
+              settings.disabledFileEditors,
+            ) : undefined;
+            return plugin?.contextActions
               ?.filter((action) => !action.when || action.when === "both" || (action.when === "directory") === contextMenu.entry.isDir)
               .map((action) => (
                 <button
                   key={`${plugin.id}:${action.id}`}
                   onClick={() => {
-                    window.dispatchEvent(new CustomEvent("agent-k-file-format-context-action", {
+                    window.dispatchEvent(new CustomEvent("agent-k-file-format-action", {
                       detail: { action: action.id, path: contextMenu.entry.path, pluginId: plugin.id },
                     }));
                     setContextMenu(undefined);
