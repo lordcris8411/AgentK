@@ -1462,7 +1462,7 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
 }
 .message-content .message-code-block pre {
   margin: 0;
-  padding-top: 38px;
+  padding-top: 11px;
 }
 .message-code-block > button {
   align-items: center;
@@ -1476,6 +1476,7 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   font-size: 10px;
   height: 25px;
   justify-content: center;
+  opacity: 0;
   padding: 0;
   position: absolute;
   right: 7px;
@@ -1483,10 +1484,13 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   width: 25px;
   z-index: 1;
 }
+.message-code-block:hover > button,
+.message-code-block > button:focus-visible,
 .message-code-block > button:hover,
 .message-code-block > button.is-copied {
   background: rgb(255 255 255 / 15%);
   color: #fff;
+  opacity: 1;
 }
 .message-content table {
   border-collapse: collapse;
@@ -2403,8 +2407,10 @@ body.is-resizing-panels .composer {
   box-shadow: 0 8px 22px rgb(0 0 0 / 18%);
   color: var(--text-primary);
   left: 42px;
+  max-height: calc(6 * 16px + 20px);
   max-width: 230px;
   min-width: 190px;
+  overflow: hidden;
   padding: 10px 11px;
   position: absolute;
   top: 50%;
