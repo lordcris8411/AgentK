@@ -10,4 +10,5 @@ body { background: var(--md-background); color: var(--md-text); font: 13px/1.6 "
 .markdown-preview pre, .markdown-preview code { background: var(--md-raised); border-radius: 5px; font-family: "Cascadia Code", Consolas, monospace; }
 .markdown-preview code { padding: 2px 5px; }
 .markdown-preview pre { overflow: auto; padding: 12px; }
+.markdown-preview img { height: auto; max-width: 100%; }
 .markdown-preview blockquote { border-left: 3px solid var(--md-border); color: var(--md-muted); margin-left: 0; padding-left: 12px; }

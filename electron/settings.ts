@@ -33,6 +33,9 @@ const DEFAULT_SETTINGS: ClientSettings = {
   browserId: "default",
   piExecutable: "",
   workerPoolSize: 4,
+  autoCompactEnabled: true,
+  autoCompactThreshold: 45,
+  autoCompactPrompt: "",
   editorWordWrap: false,
   disabledFileEditors: [],
   disabledFileEditorSkills: [],
@@ -90,6 +93,12 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.piExecutable = source.piExecutable.trim();
   if ([2, 3, 4].includes(Number(source.workerPoolSize)))
     settings.workerPoolSize = Number(source.workerPoolSize) as 2 | 3 | 4;
+  if (typeof source.autoCompactEnabled === "boolean")
+    settings.autoCompactEnabled = source.autoCompactEnabled;
+  if (Number(source.autoCompactThreshold) >= 40 && Number(source.autoCompactThreshold) <= 90)
+    settings.autoCompactThreshold = Math.round(Number(source.autoCompactThreshold));
+  if (typeof source.autoCompactPrompt === "string" && source.autoCompactPrompt.length <= 4_000)
+    settings.autoCompactPrompt = source.autoCompactPrompt;
   if (typeof source.editorWordWrap === "boolean")
     settings.editorWordWrap = source.editorWordWrap;
   settings.disabledFileEditors = editorSettingIds(source.disabledFileEditors);
@@ -113,7 +122,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.windowHeight = Number(source.windowHeight);
   if (typeof source.windowMaximized === "boolean")
     settings.windowMaximized = source.windowMaximized;
-  settings.version = Math.max(6, Number(source.version) || 6);
+  settings.version = Math.max(7, Number(source.version) || 7);
   return settings;
 }
 
@@ -136,6 +145,9 @@ export async function saveClientSettings(
     settings.browserId === original.browserId &&
     settings.piExecutable === original.piExecutable &&
     settings.workerPoolSize === original.workerPoolSize &&
+    settings.autoCompactEnabled === original.autoCompactEnabled &&
+    settings.autoCompactThreshold === original.autoCompactThreshold &&
+    settings.autoCompactPrompt === original.autoCompactPrompt &&
     settings.editorWordWrap === original.editorWordWrap &&
     sameStringArray(original.disabledFileEditors, settings.disabledFileEditors) &&
     sameStringArray(original.disabledFileEditorSkills, settings.disabledFileEditorSkills) &&

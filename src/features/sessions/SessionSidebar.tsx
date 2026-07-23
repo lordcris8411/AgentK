@@ -8,6 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import type { ProjectSummary, SessionSummary } from "../../lib/desktop";
+import { platform } from "../../lib/platform";
 import { useSettings } from "../settings/SettingsContext";
 import { sortProjectsByActivity } from "./activity";
 
@@ -91,7 +92,7 @@ export function SessionSidebar({
     event.preventDefault();
     event.stopPropagation();
     const width = 218;
-    const height = 160;
+    const height = 196;
     setContextMenu({
       session,
       x: Math.max(6, Math.min(event.clientX, window.innerWidth - width - 6)),
@@ -269,6 +270,18 @@ export function SessionSidebar({
               >
                 <i className="fa-regular fa-copy" />
                 {t("copySession")}
+              </button>
+              <button
+                onClick={() => {
+                  const session = contextMenu.session;
+                  setContextMenu(undefined);
+                  void platform.copyText(session.id);
+                }}
+                role="menuitem"
+                type="button"
+              >
+                <i className="fa-solid fa-fingerprint" />
+                {t("copySessionId")}
               </button>
               <button
                 onClick={() => {

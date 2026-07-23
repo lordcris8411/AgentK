@@ -3,7 +3,13 @@ import { basename, isAbsolute, join, normalize } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-type Settings = { locale?: "zh-CN" | "en-US"; permissionMode?: "ask" | "full" };
+type Settings = {
+  locale?: "zh-CN" | "en-US";
+  permissionMode?: "ask" | "full";
+  autoCompactEnabled?: boolean;
+  autoCompactThreshold?: number;
+  autoCompactPrompt?: string;
+};
 
 const fileFormatActionPrefix = "agent-k-file-format-action:";
 
@@ -125,6 +131,52 @@ function declaredOutputPath(ctx: {
 }
 
 export default function agentKPermissions(pi: ExtensionAPI) {
+  let autoCompacting = false;
+  const updateContextStatus = (ctx: { ui: { setStatus(key: string, text?: string): void }; getContextUsage(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined }) => {
+    const english = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {}).locale === "en-US";
+    const usage = ctx.getContextUsage();
+    if (!usage || usage.tokens === null || usage.percent === null) {
+      ctx.ui.setStatus("agent-k-context", english
+        ? "Context usage will be available after the next model response"
+        : "上下文用量将在下一次模型响应后显示");
+      return undefined;
+    }
+    const compact = (tokens: number) => tokens >= 1_000 ? `${(tokens / 1_000).toFixed(1)}k` : String(tokens);
+    ctx.ui.setStatus(
+      "agent-k-context",
+      english
+        ? `Context ${compact(usage.tokens)} / ${compact(usage.contextWindow)} (${usage.percent.toFixed(1)}%)`
+        : `上下文 ${compact(usage.tokens)} / ${compact(usage.contextWindow)}（${usage.percent.toFixed(1)}%）`,
+    );
+    return usage;
+  };
+  pi.on("agent_end", (_event, ctx) => {
+    const usage = updateContextStatus(ctx);
+    const settings = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {});
+    const threshold = Math.max(40, Math.min(90, Math.round(settings.autoCompactThreshold ?? 45)));
+    if (
+      autoCompacting ||
+      settings.autoCompactEnabled === false ||
+      !usage ||
+      usage.percent < threshold
+    ) return;
+    autoCompacting = true;
+    const customInstructions = settings.autoCompactPrompt?.trim() || undefined;
+    ctx.ui.setStatus("agent-k-context", settings.locale === "en-US" ? "Compacting context…" : "正在整理上下文…");
+    ctx.compact({
+      customInstructions,
+      onComplete: () => {
+        autoCompacting = false;
+        ctx.ui.setStatus("agent-k-context", settings.locale === "en-US"
+          ? "Context compacted; usage updates after the next model response"
+          : "上下文已整理；将在下一次模型响应后更新用量");
+      },
+      onError: () => {
+        autoCompacting = false;
+        updateContextStatus(ctx);
+      },
+    });
+  });
   pi.registerTool(fileFormatTool);
   pi.registerCommand("agent-k-internal-navigate-tree", {
     description: "Agent K internal same-session tree navigation",

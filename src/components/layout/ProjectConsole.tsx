@@ -5,6 +5,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { desktop } from "../../lib/desktop";
+import { platform } from "../../lib/platform";
 import { useSettings } from "../../features/settings/SettingsContext";
 
 function terminalTheme(dark: boolean): ITheme {
@@ -87,7 +88,7 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   const copySelection = useCallback(() => {
     const selection = terminalRef.current?.getSelection() ?? "";
     if (!selection) return;
-    void navigator.clipboard.writeText(selection).catch((cause) =>
+    void platform.copyText(selection).catch((cause) =>
       onErrorRef.current(
         `${enRef.current ? "Unable to copy terminal selection" : "无法复制终端选区"}：${String(cause)}`,
       ),

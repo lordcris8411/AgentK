@@ -195,7 +195,7 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
           }), "script");
           const html = `<!doctype html>
 <html><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src agentk-editor:; script-src 'unsafe-inline' agentk-editor: blob:; style-src 'unsafe-inline' agentk-editor:; font-src data: blob:; img-src data: blob:; media-src blob:; frame-src 'self' blob:; worker-src blob:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src agentk-editor:; script-src 'unsafe-inline' agentk-editor: blob:; style-src 'unsafe-inline' agentk-editor:; font-src data: blob:; img-src agentk-file: data: blob: https: http:; media-src blob:; frame-src 'self' blob:; worker-src blob:;">
 ${dependencies.map((dependency) => `<link rel="stylesheet" href="${escapeAttribute(dependency.cssUrl)}">`).join("\n")}
 <style>${escapeInline(runtime.css, "style")}</style></head>
 <body><div id="agent-k-editor-root"></div>

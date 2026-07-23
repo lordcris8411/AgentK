@@ -667,6 +667,37 @@ export function SettingsDialog({
                     ))}
                   </div>
                 </div>
+                <div className="settings-section">
+                  <label className="settings-toggle-label" htmlFor="settings-auto-compact">
+                    <span>{t("autoCompact")}</span>
+                    <input
+                      checked={settings.autoCompactEnabled}
+                      id="settings-auto-compact"
+                      onChange={(event) => void update({ autoCompactEnabled: event.target.checked })}
+                      type="checkbox"
+                    />
+                  </label>
+                  <p className="settings-inline-description">{t("autoCompactDescription")}</p>
+                  <label htmlFor="settings-auto-compact-threshold">{t("autoCompactThreshold")} · {settings.autoCompactThreshold}%</label>
+                  <input
+                    disabled={!settings.autoCompactEnabled}
+                    id="settings-auto-compact-threshold"
+                    max="90"
+                    min="40"
+                    onChange={(event) => void update({ autoCompactThreshold: Number(event.target.value) })}
+                    type="range"
+                    value={settings.autoCompactThreshold}
+                  />
+                  <label htmlFor="settings-auto-compact-prompt">{t("autoCompactPrompt")}</label>
+                  <textarea
+                    disabled={!settings.autoCompactEnabled}
+                    id="settings-auto-compact-prompt"
+                    onBlur={(event) => void update({ autoCompactPrompt: event.target.value })}
+                    placeholder={t("autoCompactPromptPlaceholder")}
+                    defaultValue={settings.autoCompactPrompt}
+                    rows={4}
+                  />
+                </div>
               </>
             )}
             {page === "permissions" && (
@@ -944,7 +975,7 @@ export function SettingsDialog({
               </>
             )}
             {page === "about" && (
-              <><div className="about-brand"><span className="brand-mark">K</span><div><h2>Agent K</h2><p>Visual desktop client for Pi</p></div></div><dl className="about-list"><div><dt>{t("appVersion")}</dt><dd>{version}</dd></div><div><dt>{t("piVersion")}</dt><dd>{runtimeInfo.piVersion}</dd></div><div><dt>{t("systemInfo")}</dt><dd>{runtimeInfo.operatingSystem} {runtimeInfo.architecture} · Electron / Chromium</dd></div></dl><div className="about-actions"><button onClick={() => void navigator.clipboard.writeText(`Agent K ${version}\nPi ${runtimeInfo.piVersion}\n${runtimeInfo.operatingSystem} ${runtimeInfo.architecture}\n${navigator.userAgent}`)} type="button"><i className="fa-regular fa-copy" /> {t("copyDiagnostics")}</button><button onClick={() => void desktop.openExternalUrl("https://github.com/earendil-works/pi", settings.browserId)} type="button"><i className="fa-solid fa-arrow-up-right-from-square" /> {t("projectHomepage")}</button></div></>
+              <><div className="about-brand"><span className="brand-mark">K</span><div><h2>Agent K</h2><p>Visual desktop client for Pi</p></div></div><dl className="about-list"><div><dt>{t("appVersion")}</dt><dd>{version}</dd></div><div><dt>{t("piVersion")}</dt><dd>{runtimeInfo.piVersion}</dd></div><div><dt>{t("systemInfo")}</dt><dd>{runtimeInfo.operatingSystem} {runtimeInfo.architecture} · Electron / Chromium</dd></div></dl><div className="about-actions"><button onClick={() => void platform.copyText(`Agent K ${version}\nPi ${runtimeInfo.piVersion}\n${runtimeInfo.operatingSystem} ${runtimeInfo.architecture}\n${navigator.userAgent}`)} type="button"><i className="fa-regular fa-copy" /> {t("copyDiagnostics")}</button><button onClick={() => void desktop.openExternalUrl("https://github.com/earendil-works/pi", settings.browserId)} type="button"><i className="fa-solid fa-arrow-up-right-from-square" /> {t("projectHomepage")}</button></div></>
             )}
           </main>
         </div>

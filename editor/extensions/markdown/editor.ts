@@ -18,6 +18,46 @@ function themeName(theme: EditorTheme): string {
   return theme === "dark" ? "agent-k-markdown-dark" : "agent-k-markdown-light";
 }
 
+function fileUrl(path: string): string {
+  return `agentk-file://local/?path=${encodeURIComponent(path)}`;
+}
+
+function normalizePath(path: string): string {
+  const drive = path.match(/^[A-Za-z]:/);
+  const prefix = drive ? `${drive[0]}\\` : path.startsWith("\\\\") ? "\\\\" : "";
+  const parts = path
+    .slice(prefix.length)
+    .split(/[\\/]+/)
+    .filter((part) => part && part !== ".");
+  const normalized: string[] = [];
+  for (const part of parts) {
+    if (part === "..") normalized.pop();
+    else normalized.push(part);
+  }
+  return `${prefix}${normalized.join("\\")}`;
+}
+
+function markdownImageUrl(source: string | undefined, markdownPath: string): string | undefined {
+  if (!source || /^(?:https?:|data:|blob:|agentk-file:)/i.test(source)) return source;
+
+  // Markdown paths are relative to the document, while this editor runs from a
+  // blob URL and therefore has no useful browser base URL.
+  const match = source.match(/^([^?#]*)(.*)$/u);
+  const rawPath = match?.[1] ?? source;
+  const suffix = match?.[2] ?? "";
+  let path = rawPath.replace(/\\/g, "/");
+  if (/^file:\/\//i.test(path)) {
+    path = decodeURIComponent(path.replace(/^file:\/\/\/?/i, ""));
+  }
+  if (!/^[A-Za-z]:[\\/]/.test(path) && !path.startsWith("//")) {
+    const directory = markdownPath.slice(0, Math.max(markdownPath.lastIndexOf("\\"), markdownPath.lastIndexOf("/")) + 1);
+    path = path.startsWith("/") && /^[A-Za-z]:/.test(markdownPath)
+      ? `${markdownPath.slice(0, 2)}${path}`
+      : `${directory}${path}`;
+  }
+  return `${fileUrl(normalizePath(path))}${suffix}`;
+}
+
 defineEditor((host, initial) => {
   document.documentElement.dataset.theme = initial.theme;
   monaco.editor.defineTheme("agent-k-markdown-light", {
@@ -66,7 +106,16 @@ defineEditor((host, initial) => {
   const updatePreview = () => {
     previewRoot.render(createElement(
       ReactMarkdown,
-      { rehypePlugins: [rehypeKatex], remarkPlugins: [remarkGfm, remarkBreaks, remarkMath] },
+      {
+        components: {
+          img: ({ node: _node, src, ...props }: any) => createElement("img", {
+            ...props,
+            src: markdownImageUrl(src, initial.absolutePath),
+          }),
+        },
+        rehypePlugins: [rehypeKatex],
+        remarkPlugins: [remarkGfm, remarkBreaks, remarkMath],
+      },
       model.getValue(),
     ));
   };

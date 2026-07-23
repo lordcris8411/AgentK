@@ -8,6 +8,9 @@ export interface ClientSettings {
   browserId: string;
   piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
+  autoCompactEnabled: boolean;
+  autoCompactThreshold: number;
+  autoCompactPrompt: string;
   editorWordWrap: boolean;
   disabledFileEditors: string[];
   disabledFileEditorSkills: string[];

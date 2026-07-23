@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld(
     getVersion() {
       return ipcRenderer.invoke("agent-k:app-version");
     },
+    copyText(value) {
+      return ipcRenderer.invoke("agent-k:clipboard-write", value);
+    },
     openDialog(options) {
       return ipcRenderer.invoke("agent-k:dialog-open", options);
     },

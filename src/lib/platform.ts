@@ -17,6 +17,10 @@ export type WindowResizeDirection =
 
 export const platform = {
   appVersion: () => window.agentK.getVersion(),
+  copyText: async (value: string) => {
+    if (window.agentK?.copyText) return window.agentK.copyText(value);
+    await navigator.clipboard.writeText(value);
+  },
   openDialog: (options: OpenDialogOptions) => window.agentK.openDialog(options),
   pathForFile: (file: File) => window.agentK.pathForFile(file),
   fileUrl: (path: string) =>

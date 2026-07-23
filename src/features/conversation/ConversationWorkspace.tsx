@@ -33,6 +33,7 @@ type ModelOption = {
   id: string;
   name?: string;
   input?: string[];
+  contextWindow?: number;
 };
 type SlashCommand = {
   name: string;
@@ -97,6 +98,18 @@ type Item = {
   localImageUrls?: string[];
   localFiles?: Array<{ kind: "document" | "text"; name: string }>;
 };
+function mergeAssistantItem(previous: Item | undefined, next: Item): Item {
+  if (!previous) return next;
+  return {
+    ...next,
+    // Some provider lifecycle events carry only the newly completed block
+    // (for example a tool call) rather than the complete assistant message.
+    // Never let that sparse event erase text or thinking already rendered.
+    content: next.content.trim() ? next.content : previous.content,
+    thinking: next.thinking || previous.thinking,
+    toolCalls: next.toolCalls?.length ? next.toolCalls : previous.toolCalls,
+  };
+}
 function messageParts(
   message: Record<string, unknown>,
 ): Pick<Item, "content" | "thinking" | "toolCalls" | "images"> {
@@ -367,6 +380,33 @@ function itemOf(message: Record<string, unknown>, id: string): Item {
         ? message.toolCallId
         : undefined,
   };
+}
+
+function contextTokens(message: Record<string, unknown>): number | undefined {
+  const usage = message.usage;
+  if (!usage || typeof usage !== "object") return undefined;
+  const value = usage as Record<string, unknown>;
+  const total = Number(value.totalTokens);
+  if (Number.isFinite(total) && total > 0) return total;
+  const parts = [value.input, value.output, value.cacheRead, value.cacheWrite]
+    .map(Number)
+    .filter(Number.isFinite);
+  const calculated = parts.reduce((sum, part) => sum + part, 0);
+  return calculated > 0 ? calculated : undefined;
+}
+
+function latestContextTokens(messages: Array<Record<string, unknown>>): number | undefined {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role !== "assistant") continue;
+    const tokens = contextTokens(message);
+    if (tokens !== undefined) return tokens;
+  }
+  return undefined;
+}
+
+function formatContextTokens(tokens: number): string {
+  return tokens >= 1_000 ? `${(tokens / 1_000).toFixed(1)}k` : String(tokens);
 }
 function toItems(messages: Array<Record<string, unknown>>, offset = 0): Item[] {
   return messages.map((message, index) =>
@@ -837,12 +877,18 @@ function timeline(items: Item[]): TimelineEntry[] {
     if (item.role === "assistant" && item.thinking) {
       pending.push({ ...item, content: "", toolCalls: item.toolCalls });
       const startsToolStep = Boolean(next?.tool || item.toolCalls?.length);
-      if (item.content.trim() && !startsToolStep) {
+      // A model can explain its next action before invoking a tool. Keep that
+      // visible text even when the same assistant message contains thinking or
+      // is immediately followed by a tool step; only the response-action card
+      // belongs to the final answer of a turn.
+      if (item.content.trim()) {
         flush();
         entries.push({
           type: "message",
           item: { ...item, thinking: undefined },
         });
+      }
+      if (item.content.trim() && !startsToolStep) {
         flushChanges();
         entries.push({
           type: "response-actions",
@@ -964,6 +1010,12 @@ function ActivityRow({ item }: { item: Item }) {
                     ? (en ? `Called ${matchingCall.name}` : `已调用 ${matchingCall.name}`)
                     : activityLabel(item)}
             </span>
+            {item.toolActive && (
+              <i
+                aria-label={en ? "Tool is running" : "工具正在运行"}
+                className="fa-solid fa-spinner tool-loading-spinner"
+              />
+            )}
             <span aria-hidden="true" className="activity-chevron" />
           </summary>
           {item.researchProgress?.length ? (
@@ -994,6 +1046,12 @@ function ActivityRow({ item }: { item: Item }) {
           >
             <span>⌑</span>
             <span>{callActivityLabel(call)}</span>
+            {item.toolActive && item.tool === call.name && (
+              <i
+                aria-label={en ? "Tool is running" : "工具正在运行"}
+                className="fa-solid fa-spinner tool-loading-spinner"
+              />
+            )}
             <small>
               {change.added > 0 && <em>+{change.added}</em>}
               {change.removed > 0 && <i>-{change.removed}</i>}
@@ -1012,6 +1070,12 @@ function ActivityRow({ item }: { item: Item }) {
               ? `Preparing ${call.name}…`
               : `正在准备${call.name === "write" ? "创建文件" : "编辑文件"}…`}
           </span>
+          {item.toolActive && (
+            <i
+              aria-label={en ? "Tool is running" : "工具正在运行"}
+              className="fa-solid fa-spinner tool-loading-spinner"
+            />
+          )}
         </div>
       ))}
       {remainingCalls.map((call, index) => (
@@ -1023,6 +1087,12 @@ function ActivityRow({ item }: { item: Item }) {
           <summary>
             <span className="tool-icon">⌘</span>
             <span>{callActivityLabel(call)}</span>
+            {item.toolActive && (
+              <i
+                aria-label={en ? "Tool is running" : "工具正在运行"}
+                className="fa-solid fa-spinner tool-loading-spinner"
+              />
+            )}
             <span aria-hidden="true" className="activity-chevron" />
           </summary>
           <pre>{JSON.stringify(call.args, null, 2)}</pre>
@@ -1127,7 +1197,7 @@ function MarkdownCodeBlock({
         className={copied ? "is-copied" : undefined}
         onClick={() => {
           const text = reactNodeText(children).replace(/\n$/, "");
-          void navigator.clipboard.writeText(text).then(() => {
+          void platform.copyText(text).then(() => {
             setCopied(true);
             if (resetTimer.current !== undefined)
               window.clearTimeout(resetTimer.current);
@@ -1141,7 +1211,6 @@ function MarkdownCodeBlock({
           aria-hidden="true"
           className={`fa-${copied ? "solid fa-check" : "regular fa-copy"}`}
         />
-        {copied ? (en ? "Copied" : "已复制") : (en ? "Copy" : "复制")}
       </button>
       <pre className={className}>{children}</pre>
     </div>
@@ -1355,6 +1424,8 @@ export function ConversationWorkspace({
   const [modelName, setModelName] = useState(en ? "No model selected" : "未选择模型");
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
   const [currentModelKey, setCurrentModelKey] = useState("");
+  const [contextWindow, setContextWindow] = useState<number>();
+  const [reportedContextTokens, setReportedContextTokens] = useState<number>();
   const [modelMenu, setModelMenu] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
@@ -1428,11 +1499,12 @@ export function ConversationWorkspace({
       const parsed = itemOf(pending.message, pending.id);
       // Normal answer text ends the reasoning phase even when a provider omits
       // the corresponding lifecycle event.
-      const item = {
-        ...parsed,
-        thinkingActive: Boolean(parsed.thinking) && !parsed.content.trim(),
-      };
       const index = current.findIndex((entry) => entry.id === pending.id);
+      const merged = mergeAssistantItem(index < 0 ? undefined : current[index], parsed);
+      const item = {
+        ...merged,
+        thinkingActive: Boolean(merged.thinking) && !merged.content.trim(),
+      };
       return index < 0
         ? [...current, item]
         : current.map((entry) => (entry.id === pending.id ? item : entry));
@@ -1597,10 +1669,12 @@ export function ConversationWorkspace({
     setPendingSteer(undefined);
     if (!session || session.path === "__new__") {
       setItems([]);
+      setReportedContextTokens(undefined);
       return;
     }
     if (initialMessages) {
       setItems(toItems(initialMessages));
+      setReportedContextTokens(latestContextTokens(initialMessages));
       const path = session.path;
       // Two animation frames ensure both the synchronous history conversion
       // and the resulting Markdown/DOM layout have reached a paint boundary.
@@ -1624,6 +1698,7 @@ export function ConversationWorkspace({
     void history
       .then((messages) => {
         if (cancelled) return;
+        setReportedContextTokens(latestContextTokens(messages));
         setItems((current) => {
           const persisted = toItems(messages);
           const liveTools = current.filter(
@@ -1673,6 +1748,7 @@ export function ConversationWorkspace({
       setModelName(en ? "Connecting…" : "正在连接…");
       setAvailableModels([]);
       setCurrentModelKey("");
+      setContextWindow(undefined);
       return;
     }
     const refreshModelName = () => {
@@ -1683,7 +1759,7 @@ export function ConversationWorkspace({
         .then(([state, available]) => {
           const model = (
             state as {
-              model?: { provider?: string; id?: string; name?: string };
+              model?: { provider?: string; id?: string; name?: string; contextWindow?: number };
               isStreaming?: boolean;
             }
           ).model;
@@ -1704,6 +1780,11 @@ export function ConversationWorkspace({
               model?.provider && model?.id
                 ? `${model.provider}/${model.id}`
                 : "",
+            );
+            setContextWindow(
+              typeof model?.contextWindow === "number" && model.contextWindow > 0
+                ? model.contextWindow
+                : listed?.contextWindow,
             );
             setModelName(
               listed?.name ??
@@ -1762,6 +1843,17 @@ export function ConversationWorkspace({
   const selectedModel = availableModels.find(
     (model) => `${model.provider}/${model.id}` === currentModelKey,
   );
+  const contextStatus = statuses.find((status) => status.key === "agent-k-context");
+  const contextUsageLabel = reportedContextTokens !== undefined
+    ? contextWindow
+      ? (en
+        ? `Context ${formatContextTokens(reportedContextTokens)} / ${formatContextTokens(contextWindow)} (${((reportedContextTokens / contextWindow) * 100).toFixed(1)}%)`
+        : `上下文 ${formatContextTokens(reportedContextTokens)} / ${formatContextTokens(contextWindow)}（${((reportedContextTokens / contextWindow) * 100).toFixed(1)}%）`)
+      : (en ? `Context used ${formatContextTokens(reportedContextTokens)}` : `已用上下文 ${formatContextTokens(reportedContextTokens)}`)
+    : undefined;
+  const contextPercent = reportedContextTokens !== undefined && contextWindow
+    ? Math.max(0, Math.min(100, (reportedContextTokens / contextWindow) * 100))
+    : undefined;
   const modelSupportsImages = Boolean(selectedModel?.input?.includes("image"));
   const addAttachmentPaths = (paths: string[]) => {
     if (!paths.length) return;
@@ -2044,13 +2136,18 @@ export function ConversationWorkspace({
         ) {
           const message = event.message as Record<string, unknown>;
           if (message.role === "user") return;
+          if (message.role === "assistant") {
+            const tokens = contextTokens(message);
+            if (tokens !== undefined) setReportedContextTokens(tokens);
+          }
           if (message.role === "assistant" && streamingId.current) {
             const id = streamingId.current;
             discardAssistantUpdate();
             streamingId.current = undefined;
             setItems((current) => {
+              const existing = current.find((entry) => entry.id === id);
               const finalItem = {
-                ...itemOf(message, id),
+                ...mergeAssistantItem(existing, itemOf(message, id)),
                 thinkingActive: false,
               };
               return current.some((entry) => entry.id === id)
@@ -2365,9 +2462,10 @@ export function ConversationWorkspace({
       return true;
     }
     if (name === "compact") {
+      const customInstructions = argumentsText || settings.autoCompactPrompt.trim();
       await desktop.command({
         type: "compact",
-        ...(argumentsText ? { customInstructions: argumentsText } : {}),
+        ...(customInstructions ? { customInstructions } : {}),
       }, session?.runtimeId);
       pushNotification(en ? "Session context compacted" : "会话上下文已压缩");
       return true;
@@ -2871,6 +2969,29 @@ export function ConversationWorkspace({
             <strong>{projectName ?? (en ? "No project selected" : "未选择项目")}</strong>
           </p>
           <h1>{session?.name ?? session?.id ?? (en ? "Select a session" : "选择一个 session")}</h1>
+          {(contextUsageLabel ?? contextStatus?.text) && (
+            <div className="workspace-context-usage">
+              <span>{contextUsageLabel ?? plainUiText(contextStatus!.text)}</span>
+              {contextPercent !== undefined && (
+                <span
+                  aria-label={en ? "Context usage" : "上下文用量"}
+                  aria-valuemax={100}
+                  aria-valuemin={0}
+                  aria-valuenow={Math.round(contextPercent)}
+                  className="context-usage-bar"
+                  role="progressbar"
+                  title={en
+                    ? `Used ${contextPercent.toFixed(1)}%; automatic compaction at ${settings.autoCompactThreshold}%`
+                    : `已用 ${contextPercent.toFixed(1)}%；自动整理阈值 ${settings.autoCompactThreshold}%`}
+                >
+                  <i style={{ width: `${contextPercent}%` }} />
+                  {settings.autoCompactEnabled && (
+                    <b style={{ left: `${settings.autoCompactThreshold}%` }} />
+                  )}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <button
           className={running ? "header-action is-running" : "header-action"}
@@ -2960,7 +3081,7 @@ export function ConversationWorkspace({
                   <button
                     aria-label={en ? "Copy response" : "复制回答"}
                     onClick={() =>
-                      void navigator.clipboard.writeText(entry.item.content)
+                      void platform.copyText(entry.item.content)
                     }
                     title={en ? "Copy response" : "复制回答"}
                     type="button"
@@ -3112,8 +3233,8 @@ export function ConversationWorkspace({
           >
             <button
               onClick={() => {
-                void navigator.clipboard
-                  .writeText(messageContextMenu.item.content)
+                void platform
+                  .copyText(messageContextMenu.item.content)
                   .catch((cause) => onError(String(cause)));
                 setMessageContextMenu(undefined);
               }}

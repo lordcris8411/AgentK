@@ -7,6 +7,7 @@ interface AgentKWindowState {
 interface AgentKBridge {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
   getVersion(): Promise<string>;
+  copyText(value: string): Promise<void>;
   openDialog(options: {
     directory?: boolean;
     multiple?: boolean;

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   net,
@@ -380,6 +381,10 @@ function registerIpc(): void {
     return result;
   });
   ipcMain.handle("agent-k:app-version", () => app.getVersion());
+  ipcMain.handle("agent-k:clipboard-write", (_event, value: unknown) => {
+    if (typeof value !== "string") throw new Error("Clipboard text must be a string");
+    clipboard.writeText(value);
+  });
   ipcMain.handle("agent-k:dialog-open", async (event, rawOptions: unknown) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
     const source = asObject(rawOptions);
