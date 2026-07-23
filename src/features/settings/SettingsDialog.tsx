@@ -564,6 +564,7 @@ export function SettingsDialog({
         cwd,
       );
       await desktop.reloadPiRuntimes();
+      window.dispatchEvent(new Event("agent-k-resources-changed"));
       setSkillHubPreview(undefined);
       setSkillHubUrl("");
       setResources(await desktop.piResources(cwd, runtimeId));

@@ -18,6 +18,7 @@ import {
 } from "electron";
 import { DesktopBackend } from "./backend.js";
 import { editorPluginDependencyFilePath } from "./file-formats.js";
+import type { JsonObject } from "./types.js";
 import { asObject, errorMessage } from "./utils.js";
 
 protocol.registerSchemesAsPrivileged([
@@ -53,6 +54,52 @@ let splashWindow: BrowserWindow | undefined;
 let backend: DesktopBackend | undefined;
 let backendReady: Promise<void> | undefined;
 let quitting = false;
+const pendingAssistantEvents = new Map<string, {
+  event: JsonObject;
+  timer: NodeJS.Timeout;
+}>();
+
+function sendRendererEvent(event: JsonObject): void {
+  if (quitting || !mainWindow || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send("agent-k:pi-event", event);
+}
+
+function sendProjectConsoleEvent(event: JsonObject): void {
+  if (quitting || !mainWindow || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send("agent-k:project-console-event", event);
+}
+
+function flushAssistantEvent(key: string): void {
+  const pending = pendingAssistantEvents.get(key);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingAssistantEvents.delete(key);
+  sendRendererEvent(pending.event);
+}
+
+function emitBackendEvent(event: JsonObject): void {
+  const runtimeKey = typeof event.runtimeId === "string"
+    ? event.runtimeId
+    : "__default__";
+  const message = asObject(event.message);
+  if (event.type === "message_update" && message.role === "assistant") {
+    const existing = pendingAssistantEvents.get(runtimeKey);
+    if (existing) {
+      existing.event = event;
+      return;
+    }
+    pendingAssistantEvents.set(runtimeKey, {
+      event,
+      timer: setTimeout(() => flushAssistantEvent(runtimeKey), 50),
+    });
+    return;
+  }
+  // Preserve event ordering at phase boundaries: the latest assistant payload
+  // reaches the renderer before message_end, tool execution, or settle events.
+  flushAssistantEvent(runtimeKey);
+  sendRendererEvent(event);
+}
+
 type PreviewConsoleEntry = {
   column?: number;
   frameUrl?: string;
@@ -308,6 +355,23 @@ function finishSplash(): void {
 }
 
 function registerIpc(): void {
+  ipcMain.on("agent-k:project-console-input", (event, id: unknown, data: unknown) => {
+    if (
+      !mainWindow ||
+      event.sender !== mainWindow.webContents ||
+      typeof id !== "string" ||
+      typeof data !== "string"
+    ) return;
+    try {
+      backend?.writeProjectConsole(id, data);
+    } catch (cause) {
+      sendProjectConsoleEvent({
+        error: errorMessage(cause),
+        id,
+        type: "project_console_input_error",
+      });
+    }
+  });
   ipcMain.handle("agent-k:invoke", async (_event, command: unknown, args: unknown) => {
     if (typeof command !== "string") throw new Error("Desktop command must be a string");
     if (!backend || !backendReady) throw new Error("Desktop backend is unavailable");
@@ -524,7 +588,8 @@ async function start(): Promise<void> {
       : projectPath("node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js"),
     cachePath: join(app.getPath("userData"), "cache"),
     permissionExtensionSource: projectPath("agent-k-permissions.ts"),
-    emit: (event) => mainWindow?.webContents.send("agent-k:pi-event", event),
+    emit: emitBackendEvent,
+    emitProjectConsole: sendProjectConsoleEvent,
     updateSplash,
     finishSplash,
   });
@@ -548,6 +613,9 @@ else {
   });
   app.on("before-quit", () => {
     quitting = true;
+    for (const pending of pendingAssistantEvents.values())
+      clearTimeout(pending.timer);
+    pendingAssistantEvents.clear();
     backend?.shutdown();
   });
   app.on("window-all-closed", () => app.quit());

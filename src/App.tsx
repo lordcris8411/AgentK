@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { AppShell } from "./components/layout/AppShell";
 import { InspectorPanel } from "./components/layout/InspectorPanel";
 import { ConversationWorkspace } from "./features/conversation/ConversationWorkspace";
+import { displayUserContent } from "./features/conversation/messageContent";
 import { SessionSidebar } from "./features/sessions/SessionSidebar";
 import type { ReviewCall } from "./features/conversation/ReviewPanel";
 import {
@@ -181,6 +182,26 @@ export function App() {
       return undefined;
     }
   };
+  const touchWorkspace = (cwd: string, sessionPath?: string) => {
+    const updatedAt = Math.floor(Date.now() / 1000);
+    setProjects((current) =>
+      current.map((project) =>
+        project.cwd === cwd
+          ? {
+              ...project,
+              updatedAt,
+              sessions: sessionPath
+                ? project.sessions.map((session) =>
+                    session.path === sessionPath
+                      ? { ...session, updatedAt }
+                      : session,
+                  )
+                : project.sessions,
+            }
+          : project,
+      ),
+    );
+  };
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -334,6 +355,7 @@ export function App() {
       setActiveRuntimeId(runtimeId);
       setWorkspaceCwd(session.cwd);
       setReadyPath(session.path);
+      touchWorkspace(session.cwd, session.path);
       committed = true;
     } catch (cause) {
       if (version === selectionVersion.current) setError(String(cause));
@@ -384,6 +406,7 @@ export function App() {
     setWorkspaceCwd(cwd);
     setReadyPath(DRAFT_SESSION_PATH);
     setError(undefined);
+    touchWorkspace(cwd);
     // Start Pi while the user is composing. This creates no JSONL/session;
     // the real session is still materialized only on the first send.
     const ready = desktop.prepareSession(cwd);
@@ -504,20 +527,30 @@ export function App() {
   }, [en]);
   const nameNewSession = (message: string) => {
     const current = activeRef.current;
-    if (!current || current.name !== "New session") return;
+    if (!current) return;
+    const updatedAt = Math.floor(Date.now() / 1000);
     const text = message.replace(/\s+/g, " ").trim();
-    if (!text) return;
-    const name = `${Array.from(text).slice(0, 42).join("")}${Array.from(text).length > 42 ? "…" : ""}`;
-    const renamed = { ...current, name };
-    activeRef.current = renamed;
-    setActive(renamed);
+    const name =
+      current.name === "New session" && text
+        ? `${Array.from(text).slice(0, 42).join("")}${Array.from(text).length > 42 ? "…" : ""}`
+        : current.name;
+    const activeSession = { ...current, ...(name ? { name } : {}), updatedAt };
+    activeRef.current = activeSession;
+    setActive(activeSession);
     setProjects((currentProjects) =>
-      currentProjects.map((project) => ({
-        ...project,
-        sessions: project.sessions.map((item) =>
-          item.path === current.path ? renamed : item,
-        ),
-      })),
+      currentProjects.map((project) =>
+        project.cwd === current.cwd
+          ? {
+              ...project,
+              updatedAt,
+              sessions: project.sessions.map((item) =>
+                item.path === current.path
+                  ? { ...item, ...(name ? { name } : {}), updatedAt }
+                  : item,
+              ),
+            }
+          : project,
+      ),
     );
   };
   const addWorkspace = async () => {
@@ -752,7 +785,10 @@ export function App() {
       )) as { messages?: Array<{ entryId: string; text: string }> };
       const source = [...(available.messages ?? [])]
         .reverse()
-        .find((message) => message.text.trim() === query.trim());
+        .find(
+          (message) =>
+            displayUserContent("user", message.text).trim() === query.trim(),
+        );
       if (!source) throw new Error("无法定位这条消息的分支节点");
       const result = (await desktop.command(
         { type: "fork", entryId: source.entryId },
@@ -822,7 +858,10 @@ export function App() {
             onOpenFolder={openSessionFolder}
             onRename={renameSession}
             onSelect={select}
-            onSelectProject={setWorkspaceCwd}
+            onSelectProject={(cwd) => {
+              setWorkspaceCwd(cwd);
+              touchWorkspace(cwd);
+            }}
             onSettings={() => {
               setSettingsPage("models");
               setSettingsOpen(true);

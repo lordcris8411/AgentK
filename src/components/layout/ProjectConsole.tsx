@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { desktop } from "../../lib/desktop";
@@ -60,11 +62,14 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   const en = settings.locale === "en-US";
   const [collapsed, setCollapsed] = useState(false);
   const [height, setHeight] = useState(220);
+  const [hasSelection, setHasSelection] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number }>();
   const terminalHostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | undefined>(undefined);
   const fitAddonRef = useRef<FitAddon | undefined>(undefined);
   const enRef = useRef(en);
   const onErrorRef = useRef(onError);
+  const rootRef = useRef(root);
   const terminalIdRef = useRef<string | undefined>(undefined);
   const pendingOutputRef = useRef(new Map<string, string>());
   const resizeFrameRef = useRef<number | undefined>(undefined);
@@ -77,6 +82,17 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   const lastDimensionsRef = useRef<{ cols: number; rows: number } | undefined>(undefined);
   enRef.current = en;
   onErrorRef.current = onError;
+  rootRef.current = root;
+
+  const copySelection = useCallback(() => {
+    const selection = terminalRef.current?.getSelection() ?? "";
+    if (!selection) return;
+    void navigator.clipboard.writeText(selection).catch((cause) =>
+      onErrorRef.current(
+        `${enRef.current ? "Unable to copy terminal selection" : "无法复制终端选区"}：${String(cause)}`,
+      ),
+    );
+  }, []);
 
   const fitTerminal = useCallback(() => {
     if (resizeFrameRef.current !== undefined) return;
@@ -116,6 +132,23 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(host);
+    let webglContextSubscription: { dispose(): void } | undefined;
+    try {
+      const webglAddon = new WebglAddon();
+      terminal.loadAddon(webglAddon);
+      webglContextSubscription = webglAddon.onContextLoss(() => {
+        webglAddon.dispose();
+        onErrorRef.current(
+          enRef.current
+            ? "Terminal WebGL context was lost"
+            : "终端 WebGL 上下文已丢失",
+        );
+      });
+    } catch (cause) {
+      onErrorRef.current(
+        `${enRef.current ? "Unable to enable terminal WebGL rendering" : "无法启用终端 WebGL 渲染"}：${String(cause)}`,
+      );
+    }
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
     const dataSubscription = terminal.onData((data) => {
@@ -125,12 +158,29 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
         onErrorRef.current(`${enRef.current ? "Console input failed" : "控制台输入失败"}：${String(cause)}`),
       );
     });
+    const selectionSubscription = terminal.onSelectionChange(() =>
+      setHasSelection(terminal.hasSelection()),
+    );
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") return true;
+      const key = event.key.toLowerCase();
+      const copy =
+        (key === "c" && event.metaKey) ||
+        (key === "c" && event.ctrlKey && (event.shiftKey || terminal.hasSelection())) ||
+        (key === "insert" && event.ctrlKey);
+      if (!copy) return true;
+      event.preventDefault();
+      copySelection();
+      return false;
+    });
     const observer = new ResizeObserver(fitTerminal);
     observer.observe(host);
     fitTerminal();
     return () => {
       observer.disconnect();
       dataSubscription.dispose();
+      selectionSubscription.dispose();
+      webglContextSubscription?.dispose();
       terminal.dispose();
       terminalRef.current = undefined;
       fitAddonRef.current = undefined;
@@ -139,7 +189,7 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
         resizeFrameRef.current = undefined;
       }
     };
-  }, [fitTerminal]);
+  }, [copySelection, fitTerminal]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -150,7 +200,7 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   useEffect(() => {
     let stop: (() => void) | undefined;
     let disposed = false;
-    void desktop.onEvent((event) => {
+    void desktop.onProjectConsoleEvent((event) => {
       const id = typeof event.id === "string" ? event.id : undefined;
       if (!id) return;
       if (event.type === "project_console_output" && typeof event.data === "string") {
@@ -169,6 +219,14 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
           `\r\n\x1b[90m[${enRef.current ? "process exited" : "进程已退出"}${code === undefined ? "" : `: ${code}`}]\x1b[0m\r\n`,
         );
       }
+      if (
+        event.type === "project_console_input_error" &&
+        id === terminalIdRef.current
+      ) {
+        onErrorRef.current(
+          `${enRef.current ? "Console input failed" : "控制台输入失败"}：${String(event.error ?? "")}`,
+        );
+      }
     }).then((unlisten) => {
       if (disposed) unlisten();
       else stop = unlisten;
@@ -180,9 +238,41 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   }, []);
 
   useEffect(() => {
+    const compileCmakeProject = (event: Event) => {
+      const detail = (event as CustomEvent<{ action?: string; path?: string }>).detail;
+      if (
+        detail?.action !== "compile-cmake-project" ||
+        typeof detail.path !== "string"
+      ) return;
+      const activeRoot = rootRef.current;
+      const terminalId = terminalIdRef.current;
+      if (!activeRoot || !terminalId) {
+        onErrorRef.current(
+          enRef.current
+            ? "The project console is not ready"
+            : "项目控制台尚未就绪",
+        );
+        return;
+      }
+      setCollapsed(false);
+      void desktop.compileCmakeProject(activeRoot, detail.path, terminalId)
+        .then(() => terminalRef.current?.focus())
+        .catch((cause) =>
+          onErrorRef.current(
+            `${enRef.current ? "Unable to compile CMake project" : "无法编译 CMake 项目"}：${String(cause)}`,
+          ),
+        );
+    };
+    window.addEventListener("agent-k-file-format-action", compileCmakeProject);
+    return () =>
+      window.removeEventListener("agent-k-file-format-action", compileCmakeProject);
+  }, []);
+
+  useEffect(() => {
     const terminal = terminalRef.current;
     terminal?.reset();
     terminal?.clear();
+    setHasSelection(false);
     terminalIdRef.current = undefined;
     lastDimensionsRef.current = undefined;
     if (!root || !terminal) return;
@@ -251,6 +341,19 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
     fitTerminal();
   }, [collapsed, fitTerminal, height]);
 
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(undefined);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
+    };
+  }, [contextMenu]);
+
   return (
     <section className={collapsed ? "project-console is-collapsed" : "project-console"} style={collapsed ? undefined : { flexBasis: height }}>
       {!collapsed ? <div
@@ -275,6 +378,15 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
         <span><i aria-hidden="true" className="fa-solid fa-terminal" /> {en ? "Terminal" : "终端"}</span>
         <small title={root}>{root ?? (en ? "No project selected" : "未选择项目")}</small>
         <button
+          aria-label={en ? "Copy terminal selection" : "复制终端选区"}
+          disabled={!hasSelection}
+          onClick={copySelection}
+          title={en ? "Copy terminal selection" : "复制终端选区"}
+          type="button"
+        >
+          <i aria-hidden="true" className="fa-regular fa-copy" />
+        </button>
+        <button
           aria-expanded={!collapsed}
           onClick={() => setCollapsed((value) => !value)}
           title={collapsed ? (en ? "Show terminal" : "显示终端") : (en ? "Hide terminal" : "隐藏终端")}
@@ -286,9 +398,57 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
       <div
         aria-label={en ? "Project terminal" : "项目终端"}
         className="project-console-terminal"
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setContextMenu({ x: event.clientX, y: event.clientY });
+        }}
         onMouseDown={() => terminalRef.current?.focus()}
         ref={terminalHostRef}
       />
+      {contextMenu ? createPortal(
+        <div
+          className="file-context-menu terminal-context-menu"
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerDown={(event) => event.stopPropagation()}
+          role="menu"
+          style={{
+            left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 210)),
+            top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 88)),
+          }}
+        >
+          <button
+            disabled={!hasSelection}
+            onClick={() => {
+              copySelection();
+              setContextMenu(undefined);
+            }}
+            role="menuitem"
+            type="button"
+          >
+            <i aria-hidden="true" className="fa-regular fa-copy" />
+            {en ? "Copy" : "复制"}
+          </button>
+          <button
+            disabled={!hasSelection}
+            onClick={() => {
+              const text = terminalRef.current?.getSelection() ?? "";
+              if (text)
+                window.dispatchEvent(new CustomEvent(
+                  "agent-k-add-terminal-selection",
+                  { detail: { text } },
+                ));
+              setContextMenu(undefined);
+            }}
+            role="menuitem"
+            type="button"
+          >
+            <i aria-hidden="true" className="fa-regular fa-comment-dots" />
+            {en ? "Add selection to chat" : "添加选区到聊天框"}
+          </button>
+        </div>,
+        document.body,
+      ) : null}
     </section>
   );
 }

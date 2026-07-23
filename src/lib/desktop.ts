@@ -14,6 +14,7 @@ export type ProjectSummary = {
   cwd: string;
   name: string;
   isHome?: boolean;
+  updatedAt: number;
   sessions: SessionSummary[];
 };
 export type FileEntry = {
@@ -266,6 +267,8 @@ export const desktop = {
     invoke<string>("start_workspace_preview", { root, path, content }),
   startWebProject: (root: string, path: string) =>
     invoke<{ id: string; url: string }>("start_web_project", { root, path }),
+  compileCmakeProject: (root: string, path: string, terminalId: string) =>
+    invoke<void>("compile_cmake_project", { root, path, terminalId }),
   write: (root: string, path: string, content: string) =>
     invoke<void>("write_text_file", { root, path, content }),
   mkdir: (root: string, path: string) =>
@@ -282,8 +285,12 @@ export const desktop = {
     invoke<void>("open_terminal_at", { root, path }),
   startProjectConsole: (root: string, cols: number, rows: number) =>
     invoke<string>("start_project_console", { root, cols, rows }),
-  writeProjectConsole: (id: string, data: string) =>
-    invoke<void>("write_project_console", { id, data }),
+  writeProjectConsole: (id: string, data: string) => {
+    const channel = window.agentK.projectConsole;
+    if (!channel) return invoke<void>("write_project_console", { id, data });
+    channel.write(id, data);
+    return Promise.resolve();
+  },
   resizeProjectConsole: (id: string, cols: number, rows: number) =>
     invoke<void>("resize_project_console", { id, cols, rows }),
   stopProjectConsole: (id: string) =>
@@ -294,4 +301,12 @@ export const desktop = {
     invoke<string[]>("search_files", { root, query }),
   onEvent: (listener: (event: Record<string, unknown>) => void) =>
     Promise.resolve(window.agentK.onPiEvent(listener)),
+  onProjectConsoleEvent: (listener: (event: Record<string, unknown>) => void) => {
+    const channel = window.agentK.projectConsole;
+    if (channel) return Promise.resolve(channel.onEvent(listener));
+    return Promise.resolve(window.agentK.onPiEvent((event) => {
+      if (String(event.type ?? "").startsWith("project_console_"))
+        listener(event);
+    }));
+  },
 };

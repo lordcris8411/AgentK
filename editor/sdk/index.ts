@@ -50,6 +50,8 @@ export type EditorFactory = (
 /** Context supplied to a sandboxed file-tree menu contribution. */
 export type ContextMenuContext = {
   absolutePath: string;
+  /** Names of the selected directory's direct children. Empty for files. */
+  directoryEntries: string[];
   isDirectory: boolean;
   /** UTF-8 package.json from the selected directory when it exists and is small enough. */
   packageJson?: string;

@@ -56,13 +56,18 @@ async function createPluginMenuActions(
   plugins: readonly FileFormatPlugin[],
 ): Promise<PluginMenuAction[]> {
   let packageJson: string | undefined;
+  let directoryEntries: string[] = [];
   if (entry.isDir) {
     try { packageJson = await desktop.read(root, `${entry.path ? `${entry.path}/` : ""}package.json`); } catch { /* optional context */ }
+    try {
+      directoryEntries = (await desktop.directory(root, entry.path)).children
+        .map((child) => child.name);
+    } catch { /* optional context */ }
   }
   const viteConfig = entry.isDir && await Promise.all(["vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"].map(async (name) => {
     try { await desktop.read(root, `${entry.path ? `${entry.path}/` : ""}${name}`); return true; } catch { return false; }
   })).then((matches) => matches.some(Boolean));
-  const context = { absolutePath: absoluteWorkspacePath(root, entry.path), isDirectory: entry.isDir, packageJson, path: entry.path, viteConfig };
+  const context = { absolutePath: absoluteWorkspacePath(root, entry.path), directoryEntries, isDirectory: entry.isDir, packageJson, path: entry.path, viteConfig };
   const results = await Promise.all(plugins.filter((plugin) => plugin.runtime.menu).map(async (plugin) => {
     const runtime = await desktop.editorPluginRuntime(root, plugin.id);
     const menuJavascript = runtime.menuJavascript;
@@ -186,7 +191,7 @@ function absoluteWorkspacePath(root: string, relativePath: string) {
 
 function relativeWorkspacePath(root: string, path: string): string | undefined {
   const requested = path.trim().replaceAll("\\", "/");
-  if (!requested) return undefined;
+  if (!requested) return "";
   const normalizedRoot = root.replaceAll("\\", "/").replace(/\/+$/, "");
   const isAbsolute = /^(?:[a-z]:\/|\/\/|\/)/i.test(requested);
   if (isAbsolute) {
@@ -1671,16 +1676,6 @@ export function InspectorPanel({
                         : en ? "Preview" : "预览"}
                     </button>
                   ) : null}
-                  {current.previewMode && ["agent-k.html", "agent-k.markdown"].includes(current.format.id) ? (
-                    <button
-                      onClick={() => void desktopWindow.openDevTools()}
-                      title={en ? "Open DevTools" : "打开开发者工具"}
-                      type="button"
-                    >
-                      <i aria-hidden="true" className="fa-solid fa-code" />
-                      {en ? "DevTools" : "开发者工具"}
-                    </button>
-                  ) : null}
                   {current.previewMode && current.format.id === "agent-k.html" && root ? (
                     <button
                       className="external-browser-action"
@@ -1807,15 +1802,6 @@ export function InspectorPanel({
                     {en ? "Capture" : "抓图"}
                   </button>
                 </div>
-                <button
-                  className="web-project-preview-devtools"
-                  onClick={() => void desktopWindow.openDevTools()}
-                  title={en ? "Open DevTools" : "打开开发者工具"}
-                  type="button"
-                >
-                  <i aria-hidden="true" className="fa-solid fa-code" />
-                  {en ? "DevTools" : "开发者工具"}
-                </button>
               </div>
               <iframe
                 allow="autoplay; fullscreen"
@@ -1950,7 +1936,7 @@ export function InspectorPanel({
               role="menuitem"
               type="button"
             >
-              <i className="fa-solid fa-puzzle-piece" />
+              <i className={`fa-solid ${action.id === "compile-cmake-project" ? "fa-hammer" : "fa-puzzle-piece"}`} />
               {action.label}
             </button>
           ))}

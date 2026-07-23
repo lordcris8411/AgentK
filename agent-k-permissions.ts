@@ -126,6 +126,16 @@ function declaredOutputPath(ctx: {
 
 export default function agentKPermissions(pi: ExtensionAPI) {
   pi.registerTool(fileFormatTool);
+  pi.registerCommand("agent-k-internal-navigate-tree", {
+    description: "Agent K internal same-session tree navigation",
+    handler: async (args, ctx) => {
+      const entryId = args.trim();
+      if (!entryId || /\s/.test(entryId)) {
+        throw new Error("Agent K tree navigation requires one entry ID");
+      }
+      await ctx.navigateTree(entryId);
+    },
+  });
   pi.on("tool_call", async (event, ctx) => {
     if ((["write", "edit"] as string[]).includes(event.toolName)) {
       const requested = declaredOutputPath(ctx);

@@ -1292,6 +1292,42 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   max-width: min(680px, 88%);
   text-align: right;
 }
+.user-message-raw {
+  border-top: 1px solid var(--border-color);
+  margin-top: 9px;
+  padding-top: 7px;
+}
+.user-message-raw summary {
+  align-items: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 10px;
+  gap: 5px;
+  list-style: none;
+  user-select: none;
+}
+.user-message-raw summary::-webkit-details-marker {
+  display: none;
+}
+.user-message-raw summary:hover {
+  color: var(--text-secondary);
+}
+.message-user .user-message-raw pre {
+  background: var(--surface-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.55;
+  margin: 7px 0 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px 9px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .message-images {
   display: flex;
   flex-wrap: wrap;
@@ -1411,6 +1447,36 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   background: transparent;
   color: inherit;
   padding: 0;
+}
+.message-code-block {
+  margin: 10px 0;
+  position: relative;
+}
+.message-content .message-code-block pre {
+  margin: 0;
+  padding-top: 38px;
+}
+.message-code-block > button {
+  align-items: center;
+  background: rgb(255 255 255 / 9%);
+  border: 1px solid rgb(255 255 255 / 13%);
+  border-radius: 6px;
+  color: #cfcac3;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 10px;
+  gap: 5px;
+  padding: 4px 7px;
+  position: absolute;
+  right: 7px;
+  top: 7px;
+  z-index: 1;
+}
+.message-code-block > button:hover,
+.message-code-block > button.is-copied {
+  background: rgb(255 255 255 / 15%);
+  color: #fff;
 }
 .message-content table {
   border-collapse: collapse;
@@ -1556,6 +1622,7 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   font-size: 13px;
 }
 .tool-card pre {
+  box-sizing: border-box;
   color: #817a72;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 11px;
@@ -1563,14 +1630,16 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   margin: 5px 0 0;
   max-height: 220px;
   overflow: auto;
-  padding: 0 0 0 20px;
+  overflow-wrap: anywhere;
+  padding: 0 20px;
   white-space: pre-wrap;
+  width: 100%;
 }
 .research-progress {
   display: grid;
   gap: 5px;
   margin: 6px 0 4px;
-  padding-left: 20px;
+  padding: 0 20px;
 }
 .research-progress > div {
   align-items: baseline;
@@ -1716,12 +1785,13 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   white-space: nowrap;
 }
 .activity-group-items {
+  box-sizing: border-box;
   border-left: 1px solid var(--border-color, #e8e4df);
   display: grid;
   gap: 5px;
-  margin: 6px 0 0 4px;
+  margin: 6px 4px 0;
   min-width: 0;
-  padding: 0 0 0 12px;
+  padding: 0 12px;
 }
 .message-activity:has(+ .message-assistant) {
   border-bottom: 1px solid var(--border-color, #ebe7e2);
@@ -1924,30 +1994,39 @@ body.is-resizing-panels .composer {
   align-items: center;
   background: var(--surface-raised, #fff);
   border: 1px solid var(--border-color, #e4e0db);
-  border-radius: 12px;
+  border-radius: 8px;
   display: flex;
-  gap: 10px;
+  gap: 7px;
   justify-content: space-between;
-  margin: 2px 0 8px;
-  padding: 8px 10px;
+  margin: 1px 0 6px;
+  padding: 5px 7px;
 }
 .pending-steer-text {
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.pending-steer-actions { display: flex; flex: 0 0 auto; gap: 4px; }
+.pending-steer-actions { display: flex; flex: 0 0 auto; gap: 2px; }
 .pending-steer-actions button {
+  align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   color: var(--text-secondary, #625d58);
   cursor: pointer;
+  display: inline-flex;
   font: inherit;
-  padding: 4px 6px;
+  font-size: 10px;
+  gap: 4px;
+  line-height: 1;
+  min-height: 22px;
+  padding: 3px 5px;
 }
+.pending-steer-actions button i { font-size: 9px; }
 .pending-steer-actions button:hover { background: var(--surface-hover, #efebe6); }
 .composer-editor {
   background: transparent;
@@ -2431,11 +2510,12 @@ body.is-resizing-panels .composer {
   opacity: 0.42;
 }
 .inspector-search {
+  box-sizing: border-box;
   display: flex;
   margin: 0 8px 10px 0;
   min-width: 0;
   position: relative;
-  width: 100%;
+  width: auto;
 }
 .inspector-search input {
   background: #faf9f7;
@@ -2655,7 +2735,9 @@ body.is-resizing-console::after {
 }
 .project-console > header > span { font-family: inherit; font-size: 12px; font-weight: 650; white-space: nowrap; }
 .project-console > header > small { color: var(--text-muted, #8c857e); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-console > header > button { background: transparent; border: 0; color: var(--text-secondary, #6f6963); cursor: pointer; font-size: 11px; margin-left: auto; padding: 6px; }
+.project-console > header > button { background: transparent; border: 0; color: var(--text-secondary, #6f6963); cursor: pointer; font-size: 11px; padding: 6px; }
+.project-console > header > small + button { margin-left: auto; }
+.project-console > header > button:disabled { cursor: default; opacity: 0.35; }
 .project-console > header > button:hover { color: var(--text-primary, #302d2a); }
 .project-console-terminal {
   background: var(--surface-raised, #fff);
@@ -2671,6 +2753,10 @@ body.is-resizing-console::after {
 .project-console-terminal .xterm { height: 100%; }
 .project-console-terminal .xterm-viewport { scrollbar-color: var(--scrollbar-thumb) transparent; }
 .project-console.is-collapsed .project-console-terminal { display: none; }
+.terminal-context-menu {
+  position: fixed;
+  z-index: 220;
+}
 .file-explorer {
   box-sizing: border-box;
   color: #615c56;
@@ -3597,9 +3683,6 @@ body.is-tree-dragging * {
   display: flex;
   gap: 6px;
   margin-left: 10px;
-}
-.web-project-preview-devtools {
-  margin-left: auto;
 }
 .web-project-preview-actions button {
   background: var(--surface-raised, #fff);

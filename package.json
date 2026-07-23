@@ -27,7 +27,7 @@
     "check:desktop": "tsc -p tsconfig.electron.json --noEmit",
     "check:editors": "tsc -p editor/tsconfig.json",
     "prepare:native": "node script/prepare-native.mjs",
-    "test": "npm run build:desktop && node --test extensions/k-plan/index.test.ts electron/file-formats.test.mjs",
+    "test": "npm run build:desktop && node --test extensions/k-plan/index.test.ts electron/file-formats.test.mjs electron/skill-hub.test.mjs test/messageContent.test.ts test/projectActivity.test.ts",
     "preview": "vite preview",
     "electron": "electron ."
   },
@@ -41,6 +41,7 @@
     "@types/react-dom": "19.1.7",
     "@vitejs/plugin-react": "5.0.2",
     "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-webgl": "0.19.0",
     "@xterm/xterm": "6.0.0",
     "electron": "43.1.1",
     "electron-builder": "26.15.3",

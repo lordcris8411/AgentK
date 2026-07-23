@@ -17,6 +17,16 @@ contextBridge.exposeInMainWorld(
     pathForFile(file) {
       return webUtils.getPathForFile(file);
     },
+    projectConsole: Object.freeze({
+      write(id, data) {
+        ipcRenderer.send("agent-k:project-console-input", id, data);
+      },
+      onEvent(listener) {
+        const wrapped = (_event, payload) => listener(payload);
+        ipcRenderer.on("agent-k:project-console-event", wrapped);
+        return () => ipcRenderer.removeListener("agent-k:project-console-event", wrapped);
+      },
+    }),
     onPiEvent(listener) {
       const wrapped = (_event, payload) => listener(payload);
       ipcRenderer.on("agent-k:pi-event", wrapped);

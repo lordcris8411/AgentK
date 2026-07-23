@@ -1,6 +1,7 @@
 import { createPortal } from "react-dom";
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -8,6 +9,7 @@ import {
 } from "react";
 import type { ProjectSummary, SessionSummary } from "../../lib/desktop";
 import { useSettings } from "../settings/SettingsContext";
+import { sortProjectsByActivity } from "./activity";
 
 type SessionAction = "delete" | "rename";
 
@@ -51,6 +53,10 @@ export function SessionSidebar({
   const [renameName, setRenameName] = useState("");
   const [busy, setBusy] = useState(false);
   const renameInput = useRef<HTMLInputElement>(null);
+  const activitySortedProjects = useMemo(
+    () => sortProjectsByActivity(projects),
+    [projects],
+  );
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -145,7 +151,7 @@ export function SessionSidebar({
       </button>
       <p className="section-label">{t("workspaces")}</p>
       <nav className="session-list">
-        {projects.map((project) => (
+        {activitySortedProjects.map((project) => (
           <details key={project.cwd} open>
             <summary
               className="project-summary"

@@ -264,16 +264,27 @@ export class FileService {
     }
     await atomicWrite(knownPath, JSON.stringify([...known].sort()));
     const home = await realpath(homeDirectory()).catch(() => resolve(homeDirectory()));
-    return [...known]
-      .sort()
-      .map((cwd) => ({
+    const projects = await Promise.all([...known].map(async (cwd) => {
+      const projectSessions = sessions
+        .filter((session) => session.cwd === cwd)
+        .sort((left, right) => right.updatedAt - left.updatedAt);
+      const directoryUpdatedAt = await stat(cwd)
+        .then((metadata) => Math.floor(metadata.mtimeMs / 1000))
+        .catch(() => 0);
+      return {
         cwd,
         name: basename(cwd) || cwd,
         ...(resolve(cwd) === home ? { isHome: true } : {}),
-        sessions: sessions
-          .filter((session) => session.cwd === cwd)
-          .sort((left, right) => right.updatedAt - left.updatedAt),
-      }));
+        updatedAt: projectSessions[0]?.updatedAt ?? directoryUpdatedAt,
+        sessions: projectSessions,
+      };
+    }));
+    return projects.sort(
+      (left, right) =>
+        right.updatedAt - left.updatedAt ||
+        left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
+        left.cwd.localeCompare(right.cwd, undefined, { sensitivity: "base" }),
+    );
   }
 
   async sessionMessages(path: string): Promise<JsonObject[]> {
@@ -353,6 +364,23 @@ export class FileService {
     if (!(await stat(target)).isDirectory())
       throw new Error("Requested path is not a directory");
     return buildTree(root, target, 1);
+  }
+
+  async cmakeProjectDirectory(rootInput: string, path: string): Promise<string> {
+    const root = await canonicalRoot(rootInput);
+    const requested = path ? await workspacePath(root, path) : root;
+    const target = await realpath(requested);
+    if (target !== root && !isPathInside(root, target))
+      throw new Error("CMake project path is outside the active workspace");
+    if (!(await stat(target)).isDirectory())
+      throw new Error("CMake project path is not a directory");
+    try {
+      if (!(await stat(join(target, "CMakeLists.txt"))).isFile())
+        throw new Error("CMakeLists.txt is not a file");
+    } catch {
+      throw new Error("The selected directory is not a CMake project");
+    }
+    return target;
   }
 
   async projectContext(rootInput: string): Promise<string> {

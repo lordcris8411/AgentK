@@ -1,4 +1,14 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  isValidElement,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
@@ -9,6 +19,7 @@ import { desktop } from "../../lib/desktop";
 import { stopDampedScrolling } from "../../lib/dampedScrolling";
 import { desktopWindow, platform } from "../../lib/platform";
 import type { ReviewCall } from "./ReviewPanel";
+import { displayUserContent } from "./messageContent";
 import { useSettings } from "../settings/SettingsContext";
 import {
   AnsiText,
@@ -37,6 +48,13 @@ type CommandPicker = {
   kind: "fork" | "tree";
   options: Array<{ entryId: string; text: string }>;
 };
+type SessionEntry = {
+  id: string;
+  parentId: string | null;
+  timestamp?: string;
+  type: string;
+  message?: Record<string, unknown>;
+};
 type MessageContextMenu = {
   item: Item;
   x: number;
@@ -62,6 +80,7 @@ type Item = {
   display?: boolean;
   customType?: string;
   content: string;
+  rawContent?: string;
   occurredAt?: number;
   modelId?: string;
   modelName?: string;
@@ -279,14 +298,6 @@ function researchProgress(value: string): ResearchProgress | undefined {
   return { stage: match[1], text: match[2] };
 }
 
-function displayUserContent(role: unknown, content: string) {
-  if (role !== "user") return content;
-  const plan = /^Analyze the codebase and create a detailed plan for: ([\s\S]+?)\n\nWrite the plan to: [\s\S]+?\n\nUse this format:/u.exec(
-    content,
-  );
-  return plan ? `/plan ${plan[1].trim()}` : content;
-}
-
 function researchStageLabel(stage: string, en: boolean) {
   const labels: Record<string, [string, string]> = {
     plan: ["规划", "Plan"],
@@ -312,6 +323,7 @@ function itemOf(message: Record<string, unknown>, id: string): Item {
       ? (rawModel as Record<string, unknown>)
       : undefined;
   const parts = messageParts(message);
+  const visibleContent = displayUserContent(message.role, parts.content);
   return {
     id,
     role: String(message.role),
@@ -341,7 +353,11 @@ function itemOf(message: Record<string, unknown>, id: string): Item {
           ? modelRecord.provider
           : undefined,
     ...parts,
-    content: displayUserContent(message.role, parts.content),
+    content: visibleContent,
+    rawContent:
+      message.role === "user" && visibleContent !== parts.content
+        ? parts.content
+        : undefined,
     tool:
       message.role === "toolResult"
         ? String(message.toolName ?? "tool")
@@ -865,10 +881,6 @@ function timeline(items: Item[]): TimelineEntry[] {
   flushChanges();
   return entries;
 }
-function isFollowedByAnswer(entries: TimelineEntry[], index: number) {
-  const next = entries[index + 1];
-  return next?.type === "message" && next.item.role === "assistant";
-}
 function activityDuration(
   entries: TimelineEntry[],
   index: number,
@@ -940,7 +952,7 @@ function ActivityRow({ item }: { item: Item }) {
         </details>
       )}
       {item.tool && !hiddenResult && !isFileTool && (
-        <details className="tool-card" open>
+        <details className="tool-card" open={item.toolActive === true}>
           <summary>
             <span className="tool-icon">⌘</span>
             <span>
@@ -1003,7 +1015,11 @@ function ActivityRow({ item }: { item: Item }) {
         </div>
       ))}
       {remainingCalls.map((call, index) => (
-        <details className="tool-card" key={`${call.name}-${index}`} open>
+        <details
+          className="tool-card"
+          key={`${call.name}-${index}`}
+          open={item.toolActive === true}
+        >
           <summary>
             <span className="tool-icon">⌘</span>
             <span>{callActivityLabel(call)}</span>
@@ -1073,7 +1089,64 @@ const ActivityGroup = memo(function ActivityGroup({
       </details>
     </article>
   );
-});
+}, (previous, next) =>
+  previous.open === next.open &&
+  previous.durationMs === next.durationMs &&
+  previous.items.length === next.items.length &&
+  previous.items.every((item, index) => item === next.items[index]),
+);
+
+function reactNodeText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(reactNodeText).join("");
+  if (isValidElement<{ children?: ReactNode }>(node))
+    return reactNodeText(node.props.children);
+  return "";
+}
+
+function MarkdownCodeBlock({
+  children,
+  className,
+  en,
+  onCopyError,
+}: {
+  children?: ReactNode;
+  className?: string;
+  en: boolean;
+  onCopyError(message: string): void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => {
+    if (resetTimer.current !== undefined) window.clearTimeout(resetTimer.current);
+  }, []);
+  return (
+    <div className="message-code-block">
+      <button
+        aria-label={en ? "Copy code" : "复制代码"}
+        className={copied ? "is-copied" : undefined}
+        onClick={() => {
+          const text = reactNodeText(children).replace(/\n$/, "");
+          void navigator.clipboard.writeText(text).then(() => {
+            setCopied(true);
+            if (resetTimer.current !== undefined)
+              window.clearTimeout(resetTimer.current);
+            resetTimer.current = window.setTimeout(() => setCopied(false), 1_400);
+          }).catch((cause) => onCopyError(String(cause)));
+        }}
+        title={en ? "Copy code" : "复制代码"}
+        type="button"
+      >
+        <i
+          aria-hidden="true"
+          className={`fa-${copied ? "solid fa-check" : "regular fa-copy"}`}
+        />
+        {copied ? (en ? "Copied" : "已复制") : (en ? "Copy" : "复制")}
+      </button>
+      <pre className={className}>{children}</pre>
+    </div>
+  );
+}
 
 const ConversationMessage = memo(function ConversationMessage({
   en,
@@ -1137,6 +1210,15 @@ const ConversationMessage = memo(function ConversationMessage({
         {item.content && (
           <ReactMarkdown
             components={{
+              pre: ({ children, className }) => (
+                <MarkdownCodeBlock
+                  className={className}
+                  en={en}
+                  onCopyError={(message) => onError(message)}
+                >
+                  {children}
+                </MarkdownCodeBlock>
+              ),
               a: ({ children, href, ...props }) => {
                 if (href?.startsWith("#agent-k-file=")) {
                   const parameters = new URLSearchParams(href.slice(1));
@@ -1187,6 +1269,15 @@ const ConversationMessage = memo(function ConversationMessage({
             {linkifyFileReferences(item.content)}
           </ReactMarkdown>
         )}
+        {item.role === "user" && item.rawContent ? (
+          <details className="user-message-raw">
+            <summary>
+              <i aria-hidden="true" className="fa-solid fa-code" />
+              {en ? "Raw information" : "原始信息"}
+            </summary>
+            <pre>{item.rawContent}</pre>
+          </details>
+        ) : null}
       </div>
       {item.role === "user" && item.occurredAt ? (
         <footer className="user-message-time">
@@ -1285,6 +1376,11 @@ export function ConversationWorkspace({
     path: string;
   }>();
   const streamingId = useRef<string | undefined>(undefined);
+  const pendingAssistantUpdate = useRef<{
+    id: string;
+    message: Record<string, unknown>;
+  } | undefined>(undefined);
+  const assistantUpdateTimer = useRef<number | undefined>(undefined);
   const messageListRef = useRef<HTMLElement | null>(null);
   const scrollbarRef = useRef<HTMLDivElement | null>(null);
   const conversationLayoutRef = useRef<HTMLDivElement | null>(null);
@@ -1313,6 +1409,51 @@ export function ConversationWorkspace({
     draftValueRef.current = value;
     setDraftState(value);
   }, []);
+  const discardAssistantUpdate = useCallback(() => {
+    pendingAssistantUpdate.current = undefined;
+    if (assistantUpdateTimer.current !== undefined) {
+      window.clearTimeout(assistantUpdateTimer.current);
+      assistantUpdateTimer.current = undefined;
+    }
+  }, []);
+  const flushAssistantUpdate = useCallback(() => {
+    if (assistantUpdateTimer.current !== undefined) {
+      window.clearTimeout(assistantUpdateTimer.current);
+      assistantUpdateTimer.current = undefined;
+    }
+    const pending = pendingAssistantUpdate.current;
+    pendingAssistantUpdate.current = undefined;
+    if (!pending) return;
+    setItems((current) => {
+      const parsed = itemOf(pending.message, pending.id);
+      // Normal answer text ends the reasoning phase even when a provider omits
+      // the corresponding lifecycle event.
+      const item = {
+        ...parsed,
+        thinkingActive: Boolean(parsed.thinking) && !parsed.content.trim(),
+      };
+      const index = current.findIndex((entry) => entry.id === pending.id);
+      return index < 0
+        ? [...current, item]
+        : current.map((entry) => (entry.id === pending.id ? item : entry));
+    });
+  }, []);
+  const queueAssistantUpdate = useCallback((
+    message: Record<string, unknown>,
+    id: string,
+    immediate: boolean,
+  ) => {
+    pendingAssistantUpdate.current = { id, message };
+    if (immediate) {
+      flushAssistantUpdate();
+      return;
+    }
+    if (assistantUpdateTimer.current === undefined)
+      assistantUpdateTimer.current = window.setTimeout(
+        () => flushAssistantUpdate(),
+        50,
+      );
+  }, [flushAssistantUpdate]);
   const openMessageContextMenu = useCallback((event: React.MouseEvent, item: Item) => {
     event.preventDefault();
     setMessageContextMenu({ item, x: event.clientX, y: event.clientY });
@@ -1333,6 +1474,8 @@ export function ConversationWorkspace({
     () => () => {
       if (draftCommitTimer.current !== undefined)
         window.clearTimeout(draftCommitTimer.current);
+      if (assistantUpdateTimer.current !== undefined)
+        window.clearTimeout(assistantUpdateTimer.current);
     },
     [],
   );
@@ -1411,6 +1554,7 @@ export function ConversationWorkspace({
           ...commands.filter(
             (command) =>
               Boolean(command?.name) &&
+              command.name !== "agent-k-internal-navigate-tree" &&
               ["extension", "prompt", "skill"].includes(command.source),
           ),
         ]);
@@ -1447,6 +1591,8 @@ export function ConversationWorkspace({
   }, [activeSlashIndex, slashMenuVisible]);
   useLayoutEffect(() => {
     let cancelled = false;
+    discardAssistantUpdate();
+    streamingId.current = undefined;
     setAttachments([]);
     setPendingSteer(undefined);
     if (!session || session.path === "__new__") {
@@ -1513,7 +1659,14 @@ export function ConversationWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [session?.path, connected, initialMessages, onError, onHistoryReady]);
+  }, [
+    connected,
+    discardAssistantUpdate,
+    initialMessages,
+    onError,
+    onHistoryReady,
+    session?.path,
+  ]);
   useEffect(() => {
     let cancelled = false;
     if (!connected || !session?.runtimeId) {
@@ -1779,6 +1932,35 @@ export function ConversationWorkspace({
       window.removeEventListener("agent-k-add-line-reference", addLineReference);
   }, [commitDraft]);
   useEffect(() => {
+    const addTerminalSelection = (event: Event) => {
+      const text = (event as CustomEvent<{ text?: string }>).detail?.text;
+      if (!text) return;
+      const editor = composerRef.current;
+      const current = editor
+        ? serializeComposer(editor)
+        : draftValueRef.current;
+      const separator = current && !current.endsWith("\n") ? "\n" : "";
+      const next = `${current}${separator}${text}`;
+      if (editor) {
+        editor.append(document.createTextNode(`${separator}${text}`));
+        commitDraft(serializeComposer(editor));
+        placeCaretAtEnd(editor);
+      } else {
+        commitDraft(next);
+      }
+      requestAnimationFrame(() => composerRef.current?.focus());
+    };
+    window.addEventListener(
+      "agent-k-add-terminal-selection",
+      addTerminalSelection,
+    );
+    return () =>
+      window.removeEventListener(
+        "agent-k-add-terminal-selection",
+        addTerminalSelection,
+      );
+  }, [commitDraft]);
+  useEffect(() => {
     const editor = composerRef.current;
     if (editor && serializeComposer(editor) !== draft)
       populateComposer(editor, draft);
@@ -1803,6 +1985,7 @@ export function ConversationWorkspace({
         if (type === "agent_settled") {
           // Pi may settle without a final message_end event.  Treat either event as
           // the completion boundary for the streamed thinking block.
+          flushAssistantUpdate();
           setItems((current) =>
             current.map((item) =>
               item.thinkingActive ? { ...item, thinkingActive: false } : item,
@@ -1826,6 +2009,7 @@ export function ConversationWorkspace({
           onError(`${en ? "Extension failed" : "扩展执行失败"}${source}: ${detail}`);
         }
         if (type === "bridge_closed") {
+          flushAssistantUpdate();
           setRunning(false);
           setRunStartedAt(undefined);
           setSubmitting(false);
@@ -1847,23 +2031,10 @@ export function ConversationWorkspace({
         ) {
           const message = event.message as Record<string, unknown>;
           if (message.role === "assistant") {
+            const firstUpdate = streamingId.current === undefined;
             const id = streamingId.current ?? crypto.randomUUID();
             streamingId.current = id;
-            setItems((current) => {
-              const parsed = itemOf(message, id);
-              // Pi streams the assistant message as one aggregate payload.  When
-              // normal answer text starts arriving, the reasoning phase is over
-              // even on providers that omit the final lifecycle event.
-              const item = {
-                ...parsed,
-                thinkingActive:
-                  Boolean(parsed.thinking) && !parsed.content.trim(),
-              };
-              const index = current.findIndex((entry) => entry.id === id);
-              return index < 0
-                ? [...current, item]
-                : current.map((entry) => (entry.id === id ? item : entry));
-            });
+            queueAssistantUpdate(message, id, firstUpdate);
           }
         }
         if (
@@ -1875,14 +2046,17 @@ export function ConversationWorkspace({
           if (message.role === "user") return;
           if (message.role === "assistant" && streamingId.current) {
             const id = streamingId.current;
+            discardAssistantUpdate();
             streamingId.current = undefined;
-            setItems((current) =>
-              current.map((entry) =>
-                entry.id === id
-                  ? { ...itemOf(message, id), thinkingActive: false }
-                  : entry,
-              ),
-            );
+            setItems((current) => {
+              const finalItem = {
+                ...itemOf(message, id),
+                thinkingActive: false,
+              };
+              return current.some((entry) => entry.id === id)
+                ? current.map((entry) => entry.id === id ? finalItem : entry)
+                : [...current, finalItem];
+            });
           } else if (message.role === "toolResult" && message.toolCallId) {
             const id = String(message.toolCallId);
             setItems((current) => {
@@ -2265,7 +2439,7 @@ export function ConversationWorkspace({
                   : "";
               options.push({
                 entryId: entry.id,
-                text: `${"  ".repeat(depth)}${depth ? "↳ " : ""}${node.label ? `[${node.label}] ` : ""}${text}`,
+                text: `${"  ".repeat(depth)}${depth ? "↳ " : ""}${node.label ? `[${node.label}] ` : ""}${displayUserContent("user", text)}`,
               });
             }
             visit(node.children ?? [], depth + 1);
@@ -2279,10 +2453,40 @@ export function ConversationWorkspace({
         { type: "get_fork_messages" },
         session?.runtimeId,
       ) as { messages?: Array<{ entryId: string; text: string }> };
-      setCommandPicker({ kind: "fork", options: result.messages ?? [] });
+      setCommandPicker({
+        kind: "fork",
+        options: (result.messages ?? []).map((message) => ({
+          ...message,
+          text: displayUserContent("user", message.text),
+        })),
+      });
       return true;
     }
     return false;
+  };
+  const navigateSessionTree = async (entryId: string) => {
+    if (!session) throw new Error(en ? "No active session" : "当前没有活动会话");
+    const before = await desktop.command(
+      { type: "get_entries" },
+      session.runtimeId,
+    ) as { entries?: SessionEntry[] };
+    const target = (before.entries ?? []).find((entry) => entry.id === entryId);
+    if (!target)
+      throw new Error(en ? "Unable to locate the session tree entry" : "无法定位会话树节点");
+    const expectedLeafId =
+      target.type === "message" && target.message?.role === "user"
+        ? target.parentId
+        : target.id;
+    await desktop.command({
+      type: "prompt",
+      message: `/agent-k-internal-navigate-tree ${entryId}`,
+    }, session.runtimeId);
+    const after = await desktop.command(
+      { type: "get_entries" },
+      session.runtimeId,
+    ) as { leafId?: string | null };
+    if ((after.leafId ?? null) !== expectedLeafId)
+      throw new Error(en ? "Pi did not change the session tree position" : "Pi 未能切换会话树位置");
   };
   const selectCommandBranch = async (entryId: string) => {
     if (!session || running) return;
@@ -2291,13 +2495,22 @@ export function ConversationWorkspace({
     try {
       await cancelExtensionUi();
       clearSessionUi();
-      const result = await desktop.command({ type: "fork", entryId }, session.runtimeId) as {
-        cancelled?: boolean;
-      };
+      if (kind === "tree") {
+        await navigateSessionTree(entryId);
+        const page = await desktop.command(
+          { type: "get_messages" },
+          session.runtimeId,
+        ) as { messages?: Array<Record<string, unknown>> };
+        setItems(toItems(page.messages ?? []));
+        pushNotification(en ? "Session tree position changed" : "已切换会话树位置");
+        return;
+      }
+      const result = await desktop.command(
+        { type: "fork", entryId },
+        session.runtimeId,
+      ) as { cancelled?: boolean };
       if (!result.cancelled)
-        pushNotification(kind === "fork"
-          ? (en ? "Fork created" : "已创建会话分支")
-          : (en ? "Session tree position changed" : "已切换会话树位置"));
+        pushNotification(en ? "Fork created" : "已创建会话分支");
     } catch (cause) {
       onError(String(cause));
     }
@@ -2370,6 +2583,7 @@ export function ConversationWorkspace({
     try {
       const modelMessage = await beforeSend(value);
       if (modelMessage === false) return;
+      const outboundMessage = withFileReferences(running ? value : modelMessage);
       commitDraft("");
       setAttachments([]);
       stickToBottom.current = true;
@@ -2379,6 +2593,7 @@ export function ConversationWorkspace({
           id: crypto.randomUUID(),
           role: "user",
           content: value,
+          rawContent: outboundMessage !== value ? outboundMessage : undefined,
           localImageUrls: activeAttachments
             .filter((attachment) => attachment.kind === "image")
             .flatMap((attachment) => attachment.previewUrl ? [attachment.previewUrl] : []),
@@ -2395,9 +2610,9 @@ export function ConversationWorkspace({
       await desktop.command(
         running
           ? mode === "queue"
-            ? { type: "follow_up", message: withFileReferences(value), imagePaths }
-            : { type: "steer", message: withFileReferences(value), imagePaths }
-          : { type: "prompt", message: withFileReferences(modelMessage), imagePaths },
+            ? { type: "follow_up", message: outboundMessage, imagePaths }
+            : { type: "steer", message: outboundMessage, imagePaths }
+          : { type: "prompt", message: outboundMessage, imagePaths },
         session.runtimeId,
       );
       onUserMessage(value || activeAttachments.map((attachment) => attachment.name).join(", "));
@@ -2427,6 +2642,7 @@ export function ConversationWorkspace({
     // authority and can set running=true again if another queued turn starts.
     setRunning(false);
     setSubmitting(false);
+    discardAssistantUpdate();
     streamingId.current = undefined;
     setItems((current) =>
       current.map((item) => ({
@@ -2483,18 +2699,14 @@ export function ConversationWorkspace({
       )) as { messages?: Array<{ entryId: string; text: string }> };
       const target = [...(available.messages ?? [])]
         .reverse()
-        .find((message) => message.text.trim() === query.trim());
+        .find(
+          (message) =>
+            displayUserContent("user", message.text).trim() === query.trim(),
+        );
       if (!target) throw new Error("无法定位这条消息的会话树节点");
       await cancelExtensionUi();
       clearSessionUi();
-      const navigation = (await desktop.command({
-        // Upstream Pi exposes public branch restoration through `fork`.
-        // Keep AgentK on that protocol instead of requiring a patched
-        // `navigate_tree` command.
-        type: "fork",
-        entryId: target.entryId,
-      }, session.runtimeId)) as { text?: string; cancelled?: boolean };
-      if (navigation.cancelled) return;
+      await navigateSessionTree(target.entryId);
       const page = (await desktop.command(
         { type: "get_messages" },
         session.runtimeId,
@@ -2502,8 +2714,7 @@ export function ConversationWorkspace({
         messages?: Array<Record<string, unknown>>;
       };
       setItems(toItems(page.messages ?? []));
-      const editorText = navigation.text ?? query;
-      commitDraft(editorText);
+      commitDraft(query);
       requestAnimationFrame(() => placeCaretAtEnd(composerRef.current));
     } catch (cause) {
       onError(`Revert 失败：${String(cause)}`);
@@ -2516,13 +2727,6 @@ export function ConversationWorkspace({
     if (!targetItem || !session || running || submitting || deletingMessage) return;
     setDeletingMessage(true);
     try {
-      type SessionEntry = {
-        id: string;
-        parentId: string | null;
-        timestamp?: string;
-        type: string;
-        message?: Record<string, unknown>;
-      };
       const result = await desktop.command(
         { type: "get_entries" },
         session.runtimeId,
@@ -2560,11 +2764,7 @@ export function ConversationWorkspace({
 
       await cancelExtensionUi();
       clearSessionUi();
-      const navigation = await desktop.command(
-        { type: "fork", entryId: targetEntry.id },
-        session.runtimeId,
-      ) as { cancelled?: boolean };
-      if (navigation.cancelled) return;
+      await navigateSessionTree(targetEntry.id);
       const page = await desktop.command(
         { type: "get_messages" },
         session.runtimeId,
@@ -2730,7 +2930,7 @@ export function ConversationWorkspace({
                   )}
                   items={entry.items}
                   key={`activity-${entry.items[0]?.id ?? index}`}
-                  open={!isFollowedByAnswer(entries, index)}
+                  open={isLiveActivity}
                 />
               );
             }

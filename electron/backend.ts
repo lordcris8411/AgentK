@@ -39,7 +39,7 @@ import {
   loadFirstPartyFileFormatPlugins,
 } from "./file-formats.js";
 import { installSkillHub, previewSkillHub } from "./skill-hub.js";
-import { asArray, asObject, asString, atomicWrite, errorMessage, isPathInside, randomId } from "./utils.js";
+import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
 
 export interface DesktopBackendOptions {
   appDataPath: string;
@@ -50,11 +50,13 @@ export interface DesktopBackendOptions {
   cachePath: string;
   permissionExtensionSource: string;
   emit(event: JsonObject): void;
+  emitProjectConsole(event: JsonObject): void;
   updateSplash(message: string, current: number, total: number, theme: string): void;
   finishSplash(): void;
 }
 
 type ProjectConsoleProcess = {
+  root: string;
   terminal: IPty;
 };
 
@@ -274,6 +276,12 @@ export class DesktopBackend {
         );
       case "start_web_project":
         return this.startWebProject(requiredString(args.root, "root"), requiredString(args.path, "path"));
+      case "compile_cmake_project":
+        return this.compileCmakeProject(
+          requiredString(args.root, "root"),
+          requiredString(args.path, "path"),
+          requiredString(args.terminalId, "terminalId"),
+        );
       case "write_text_file":
         return this.files.writeText(requiredString(args.root, "root"), requiredString(args.path, "path"), requiredString(args.content, "content"));
       case "create_directory":
@@ -328,6 +336,35 @@ export class DesktopBackend {
     this.webProjects.clear();
     this.pool?.shutdown();
     this.files.shutdown();
+  }
+
+  private async compileCmakeProject(
+    root: string,
+    path: string,
+    terminalId: string,
+  ): Promise<void> {
+    const projectDirectory = await this.files.cmakeProjectDirectory(root, path);
+    const consoleProcess = this.projectConsoles.get(terminalId);
+    if (!consoleProcess) throw new Error("Project console is not running");
+    const requestedRoot = resolve(root);
+    const consoleRoot = resolve(consoleProcess.root);
+    const sameRoot = process.platform === "win32"
+      ? requestedRoot.toLocaleLowerCase("en-US") === consoleRoot.toLocaleLowerCase("en-US")
+      : requestedRoot === consoleRoot;
+    if (!sameRoot)
+      throw new Error("Project console belongs to a different workspace");
+    const buildDirectory = join(projectDirectory, "build");
+    if (/[\r\n]/.test(projectDirectory) || /[\r\n]/.test(buildDirectory))
+      throw new Error("CMake project paths cannot contain line breaks");
+    const quote = process.platform === "win32"
+      ? (value: string) => `'${value.replaceAll("'", "''")}'`
+      : (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    const source = quote(projectDirectory);
+    const build = quote(buildDirectory);
+    const command = process.platform === "win32"
+      ? `cmake -S ${source} -B ${build}; if ($LASTEXITCODE -eq 0) { cmake --build ${build} }\r`
+      : `cmake -S ${source} -B ${build} && cmake --build ${build}\r`;
+    consoleProcess.terminal.write(command);
   }
 
   private async startWebProject(root: string, path: string): Promise<{ id: string; url: string }> {
@@ -411,23 +448,23 @@ export class DesktopBackend {
       },
       name: "xterm-256color",
     });
-    const consoleProcess = { terminal };
+    const consoleProcess = { root, terminal };
     this.projectConsoles.set(id, consoleProcess);
     terminal.onData((data) => {
-      this.options.emit({ data, id, type: "project_console_output" });
+      this.options.emitProjectConsole({ data, id, type: "project_console_output" });
     });
     let finished = false;
     const finish = (code: number, signal?: number) => {
       if (finished) return;
       finished = true;
       this.projectConsoles.delete(id);
-      this.options.emit({ code, id, signal, type: "project_console_exit" });
+      this.options.emitProjectConsole({ code, id, signal, type: "project_console_exit" });
     };
     terminal.onExit(({ exitCode, signal }) => finish(exitCode, signal));
     return id;
   }
 
-  private writeProjectConsole(id: string, data: string): void {
+  writeProjectConsole(id: string, data: string): void {
     if (data.length > 32_000) throw new Error("Console input is too long");
     const consoleProcess = this.projectConsoles.get(id);
     if (!consoleProcess) throw new Error("Console is not running");

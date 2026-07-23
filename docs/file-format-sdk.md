@@ -133,6 +133,12 @@ defineEditor((host, initial) => {
 
 `initial.language` 的来源是 manifest 的 `languageId`；未声明时由宿主根据当前文件扩展名推断。使用 Monaco 的插件通常把它传给 `monaco.editor.createModel`，其他插件可以将它用于自己的语法模式、解析器或高亮系统，也可以忽略。Agent K 不会把这个字段解释为依赖，也不会据此加载某个编辑器库版本；依赖版本只能通过 `runtime.dependencies` 声明。旧字段 `monacoLanguage` 不会被兼容或降级处理，包含它的 manifest 将直接校验失败。
 
+## 文件树上下文菜单
+
+插件可在 `editor.json` 的 `runtime.menu` 指向一个单独构建的 IIFE bundle，并在源码中调用 `defineContextMenu`。宿主仅向该沙箱传入所选项的 `absolutePath`、工作区相对 `path`、`isDirectory`、目录直属子项名称 `directoryEntries`，以及受限读取的 `packageJson` 和 `viteConfig` 标记。插件返回 `{ id, label }[]` 即可追加菜单项；不需要的项目返回空数组。菜单代码没有 Node、Electron 或直接文件系统权限。
+
+`directoryEntries` 对文件恒为空数组，对文件夹则仅包含直属子项的名称，不会递归扫描。第一方文本插件据此识别包含 `CMakeLists.txt` 的项目目录并提供“编译项目”。实际执行前 Electron 后端仍会重新校验项目路径和 `CMakeLists.txt`，随后把安全转义的配置、编译命令写入下方项目 PTY；命令和输出都保留在用户可继续操作的真实控制台中。
+
 ## 构建约定
 
 第一方插件通过 `npm run build:editors` 构建。每个插件仍独立输出自己的 `dist/editor.iife.js` 和 `dist/editor.css`；构建目标是纯浏览器生产环境，不可在运行时代码中依赖 Node.js 的 `process`、`Buffer` 或模块加载器。选择 Monaco 的插件在 manifest 中声明精确版本依赖，构建时不再把 Monaco 重复写入插件 bundle；共享依赖的 JavaScript 与 CSS 通过只读内部协议加载，让 Chromium 跨 iframe 复用资源缓存和 V8 编译缓存。各语言 Worker 仅在对应语言服务实际启动时按需获取，普通文本、Python 或 C/C++ 文件不会携带 7 MB 的 TypeScript Worker。未声明共享依赖的插件不受影响，仍可选择 CodeMirror、Canvas、原生 DOM 或自行离线打包任意库。第三方入口必须是能在普通浏览器中直接执行的 IIFE bundle。

@@ -33,6 +33,7 @@ export interface ProjectSummary {
   cwd: string;
   name: string;
   isHome?: boolean;
+  updatedAt: number;
   sessions: SessionSummary[];
 }
 
