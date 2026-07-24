@@ -850,7 +850,21 @@ export function InspectorPanel({
       return;
     }
     const match = fileMatchContext(path, absoluteWorkspacePath(root, path));
-    const format = resolveFileFormat(match, fileFormatPlugins, settings.disabledFileEditors);
+    // An agent can request an open action before the asynchronous plugin
+    // discovery effect has completed. Do not turn that temporary empty list
+    // into a permanent unsupported tab.
+    let plugins = fileFormatPlugins;
+    if (!plugins.length) {
+      try {
+        plugins = (await desktop.fileFormatPlugins(root)) as FileFormatPlugin[];
+        preloadEditorPluginDependencies(plugins);
+        setFileFormatPlugins(plugins);
+      } catch (cause) {
+        onError(`Editor 插件校验失败：${String(cause)}`);
+        return;
+      }
+    }
+    const format = resolveFileFormat(match, plugins, settings.disabledFileEditors);
     if (!format) {
       setTabs((current) => [...current, { path, content: "", saved: "", unsupported: true }]);
       activateTab(path);

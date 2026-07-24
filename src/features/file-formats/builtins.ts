@@ -16,7 +16,7 @@ export function resolveFileFormat(
 
 const MIME_TYPES: Readonly<Record<string, string>> = {
   "3gp": "video/3gpp", aac: "audio/aac", avi: "video/x-msvideo",
-  bmp: "image/bmp", c: "text/x-c", cc: "text/x-c++", conf: "text/plain",
+  bat: "text/plain", bmp: "image/bmp", c: "text/x-c", cc: "text/x-c++", cmd: "text/plain", conf: "text/plain",
   cpp: "text/x-c++", cxx: "text/x-c++", css: "text/css", csv: "text/csv", flac: "audio/flac",
   gif: "image/gif", go: "text/x-go", h: "text/x-c", hh: "text/x-c++", hpp: "text/x-c++", hxx: "text/x-c++",
   htm: "text/html", html: "text/html", ico: "image/x-icon", java: "text/x-java-source",
@@ -48,12 +48,16 @@ export function fileMatchContext(
 
 export function languageIdFor(path: string, disabledIds: readonly string[] = []): string {
   void disabledIds;
-  const extension = path.split(".").pop()?.toLowerCase() ?? "";
+  const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  if ([".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile"].includes(name))
+    return "shell";
+  const extension = name.split(".").pop()?.toLowerCase() ?? "";
   return ({
     c: "cpp", cc: "cpp", cpp: "cpp", cxx: "cpp", h: "cpp", hh: "cpp", hpp: "cpp", hxx: "cpp",
     cs: "csharp", go: "go", java: "java", lua: "lua", php: "php", py: "python", pyw: "python",
     ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript",
     json: "json", jsonc: "json", yml: "yaml", yaml: "yaml", sh: "shell", bash: "shell", zsh: "shell",
+    bat: "bat", cmd: "bat",
     ps1: "powershell", rs: "rust", css: "css", scss: "scss", less: "less", xml: "xml",
     rb: "ruby", swift: "swift", kt: "kotlin", kts: "kotlin", dart: "dart", r: "r", sql: "sql",
     graphql: "graphql", gql: "graphql", mdx: "mdx", toml: "ini", ini: "ini", cfg: "ini", conf: "ini",

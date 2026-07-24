@@ -3,6 +3,11 @@ import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, {
+  defaultSchema,
+  type Options as RehypeSanitizeSchema,
+} from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -13,6 +18,24 @@ import "./editor.css";
 const monaco = (globalThis as typeof globalThis & {
   AgentKEditorDependencies: { monaco: typeof Monaco };
 }).AgentKEditorDependencies.monaco;
+
+// GitHub-flavoured Markdown commonly uses HTML for aligned and sized images,
+// collapsible sections, and picture sources. Parse it, but retain an explicit
+// allow-list so a repository README cannot inject scripts or event handlers.
+const markdownHtmlSchema: RehypeSanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    img: [
+      ...(defaultSchema.attributes?.img ?? []),
+      "alt", "align", "decoding", "height", "loading", "srcSet", "title", "width",
+    ],
+    source: [
+      ...(defaultSchema.attributes?.source ?? []),
+      "media", "sizes", "src", "srcSet", "type",
+    ],
+  },
+};
 
 function themeName(theme: EditorTheme): string {
   return theme === "dark" ? "agent-k-markdown-dark" : "agent-k-markdown-light";
@@ -113,7 +136,7 @@ defineEditor((host, initial) => {
             src: markdownImageUrl(src, initial.absolutePath),
           }),
         },
-        rehypePlugins: [rehypeKatex],
+        rehypePlugins: [rehypeRaw, [rehypeSanitize, markdownHtmlSchema], rehypeKatex],
         remarkPlugins: [remarkGfm, remarkBreaks, remarkMath],
       },
       model.getValue(),

@@ -78,6 +78,8 @@ type ResearchProgress = { stage: string; text: string };
 type Item = {
   id: string;
   role: string;
+  /** A just-submitted user message that Pi has not yet exposed in history. */
+  optimistic?: boolean;
   display?: boolean;
   customType?: string;
   content: string;
@@ -98,6 +100,18 @@ type Item = {
   localImageUrls?: string[];
   localFiles?: Array<{ kind: "document" | "text"; name: string }>;
 };
+
+function mergePersistedItems(persisted: Item[], current: Item[]): Item[] {
+  const pendingUsers = current.filter((item) =>
+    item.optimistic &&
+    item.role === "user" &&
+    !persisted.some((candidate) =>
+      candidate.role === "user" && candidate.content === item.content,
+    ),
+  );
+  return pendingUsers.length ? [...persisted, ...pendingUsers] : persisted;
+}
+
 function mergeAssistantItem(previous: Item | undefined, next: Item): Item {
   if (!previous) return next;
   return {
@@ -1673,7 +1687,9 @@ export function ConversationWorkspace({
       return;
     }
     if (initialMessages) {
-      setItems(toItems(initialMessages));
+      setItems((current) =>
+        mergePersistedItems(toItems(initialMessages), current),
+      );
       setReportedContextTokens(latestContextTokens(initialMessages));
       const path = session.path;
       // Two animation frames ensure both the synchronous history conversion
@@ -1725,7 +1741,7 @@ export function ConversationWorkspace({
             if (!merged.some((item) => item.toolCallId === live.toolCallId))
               merged.push(live);
           }
-          return merged;
+          return mergePersistedItems(merged, current);
         });
       })
       .catch((cause) => {
@@ -2658,6 +2674,9 @@ export function ConversationWorkspace({
       .map((attachment) => attachment.path);
     const withFileReferences = (message: string) => {
       const additions = [
+        `<agent_k_file_editor>
+To open, show, display, or preview a workspace file in Agent K's editor, you MUST call agent_k_file_editor with action "open" and the requested workspace path before replying. Do not substitute the read tool for an explicit request to open or display a file. Use read only when the user asks for the file's contents or when reading is necessary after opening it. The open action is available even when no editor tab is currently active.
+</agent_k_file_editor>`,
         filePaths.length
           ? `<attached_files>\n${filePaths
               .map((path) => `- ${JSON.stringify(path)}`)
@@ -2690,6 +2709,7 @@ export function ConversationWorkspace({
         {
           id: crypto.randomUUID(),
           role: "user",
+          optimistic: true,
           content: value,
           rawContent: outboundMessage !== value ? outboundMessage : undefined,
           localImageUrls: activeAttachments
