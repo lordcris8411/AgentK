@@ -12,6 +12,8 @@ import type {
   SkillHubScope,
 } from "./types.js";
 import { RpcPool } from "./agent/pool.js";
+import { CodexBridge } from "./agent/codex.js";
+import { ConversationStore } from "./conversations.js";
 import { resolvePiLaunch, type PiLaunch } from "./pi-runtime.js";
 import { FileService } from "./files.js";
 import {
@@ -63,17 +65,20 @@ type ProjectConsoleProcess = {
 export class DesktopBackend {
   private readonly options: DesktopBackendOptions;
   private readonly files: FileService;
+  private readonly conversations: ConversationStore;
   private readonly bundledExtensionsDirectory: string;
   private readonly bundledSkillsDirectory: string;
   private firstPartyEditorPlugins: FileFormatPluginResource[] = [];
   private piLaunch?: PiLaunch;
   private pool?: RpcPool;
+  private codex?: CodexBridge;
   private readonly projectConsoles = new Map<string, ProjectConsoleProcess>();
   private readonly webProjects = new Map<string, ReturnType<typeof spawn>>();
 
   constructor(options: DesktopBackendOptions) {
     this.options = options;
     this.files = new FileService(options.appDataPath, options.cachePath);
+    this.conversations = new ConversationStore(options.appDataPath);
     this.bundledExtensionsDirectory = join(options.appDataPath, "bundled-extensions");
     this.bundledSkillsDirectory = join(options.appDataPath, "bundled-skills");
   }
@@ -84,6 +89,7 @@ export class DesktopBackend {
     const startupText = (english: string, chinese: string) =>
       settings.locale === "en-US" ? english : chinese;
     await this.files.initialize();
+    await this.conversations.initialize();
     await migrateMisclassifiedVllm();
     await cp(this.options.bundledExtensionsSource, this.bundledExtensionsDirectory, {
       recursive: true,
@@ -102,8 +108,8 @@ export class DesktopBackend {
     this.firstPartyEditorPlugins = await loadFirstPartyFileFormatPlugins(
       this.options.firstPartyEditorExtensionsSource,
     );
-    this.piLaunch = resolvePiLaunch(settings.piExecutable, this.options.bundledPiCli);
-    this.pool = new RpcPool({
+    if (settings.piEnabled) this.piLaunch = resolvePiLaunch(settings.piExecutable, this.options.bundledPiCli);
+    if (this.piLaunch) this.pool = new RpcPool({
       appDataPath: this.options.appDataPath,
       bundledExtensionsDirectory: this.bundledExtensionsDirectory,
       bundledSkillsDirectory: this.bundledSkillsDirectory,
@@ -116,13 +122,13 @@ export class DesktopBackend {
       permissionExtensionSource: this.options.permissionExtensionSource,
       emit: this.options.emit,
     });
+    if (settings.codexEnabled) this.codex = await CodexBridge.start(settings.codexExecutable, this.options.emit);
     // Session grants intentionally last only for this desktop run.
     await atomicWrite(join(this.options.appDataPath, "permission-state.json"), "[]");
   }
 
   async invoke(command: string, rawArgs: unknown): Promise<unknown> {
     const args = asObject(rawArgs);
-    const pool = this.requirePool();
     switch (command) {
       case "get_runtime_info":
         return this.runtimeInfo();
@@ -130,6 +136,28 @@ export class DesktopBackend {
         return loadClientSettings(this.options.appDataPath);
       case "save_client_settings":
         return saveClientSettings(this.options.appDataPath, args.settings);
+      case "get_backend_status":
+        return { pi: Boolean(this.pool), codex: Boolean(this.codex) };
+      case "reload_backends":
+        return this.reloadBackends();
+      case "codex_start_thread":
+        return this.requireCodex().startThread(requiredString(args.cwd, "cwd"));
+      case "codex_resume_thread":
+        return this.requireCodex().resumeThread(requiredString(args.threadId, "threadId"));
+      case "codex_start_turn":
+        return this.requireCodex().startTurn(requiredString(args.threadId, "threadId"), requiredString(args.text, "text"), requiredString(args.cwd, "cwd"), optionalString(args.model));
+      case "codex_models":
+        return this.requireCodex().models();
+      case "codex_plugins":
+        return this.requireCodex().plugins(requiredString(args.cwd, "cwd"));
+      case "codex_fork_thread":
+        return this.requireCodex().forkThread(requiredString(args.threadId, "threadId"), requiredString(args.cwd, "cwd"), optionalString(args.model));
+      case "codex_interrupt":
+        return this.requireCodex().interrupt(requiredString(args.threadId, "threadId"), requiredString(args.turnId, "turnId"));
+      case "codex_interrupt_active":
+        return this.requireCodex().interruptActive(requiredString(args.threadId, "threadId"));
+      case "create_mirror_session":
+        return this.createMirrorSession(requiredBackend(args.backend), requiredString(args.cwd, "cwd"));
       case "list_browsers":
         return listBrowsers();
       case "open_external_url":
@@ -141,7 +169,8 @@ export class DesktopBackend {
       case "delete_model_provider":
         return deleteModelProvider(requiredString(args.providerId, "providerId"));
       case "get_provider_catalog":
-        return providerCatalog(await pool.command({ type: "get_available_models" }, optionalString(args.runtimeId)));
+        if (!this.pool || !optionalString(args.runtimeId)) return [];
+        return providerCatalog(await this.pool.command({ type: "get_available_models" }, optionalString(args.runtimeId)));
       case "save_provider_api_key":
         return saveProviderApiKey(requiredString(args.providerId, "providerId"), requiredString(args.apiKey, "apiKey"));
       case "logout_provider":
@@ -149,11 +178,12 @@ export class DesktopBackend {
       case "open_provider_login":
         return openProviderLogin(requiredString(args.providerId, "providerId"), this.requirePiLaunch());
       case "reload_pi_runtimes":
-        return pool.reload();
+        return this.requirePool().reload();
       case "get_pi_resources":
+        if (!this.pool || !optionalString(args.runtimeId)) return [];
         return getPiResources(
           this.options.appDataPath,
-          pool,
+          this.pool,
           requiredString(args.cwd, "cwd"),
           this.bundledExtensionsDirectory,
           this.bundledSkillsDirectory,
@@ -185,7 +215,7 @@ export class DesktopBackend {
       case "apply_pi_resource_changes":
         return applyPiResourceChanges(
           this.options.appDataPath,
-          pool,
+          this.requirePool(),
           requiredString(args.cwd, "cwd"),
           asArray(args.changes) as PiResourceChange[],
           args.reload === true,
@@ -206,45 +236,45 @@ export class DesktopBackend {
       case "discover_local_models":
         return discoverLocalModels(requiredString(args.baseUrl, "baseUrl"), args.ollama === true);
       case "list_projects":
-        return this.files.listProjects();
+        return this.conversations.listProjects();
       case "add_workspace":
-        return this.files.addWorkspace(requiredString(args.cwd, "cwd"));
+        return this.addWorkspace(requiredString(args.cwd, "cwd"));
+      case "register_conversation":
+        return this.conversations.register(asObject(args.conversation) as unknown as import("./conversations.js").StoredConversation);
       case "session_messages":
-        return this.files.sessionMessages(requiredString(args.path, "path"));
+        return this.sessionMessages(requiredString(args.path, "path"));
+      case "append_conversation_message":
+        return this.conversations.appendMessage(requiredString(args.path, "path"), asObject(args.message));
       case "hide_session":
-        return this.files.hideSession(requiredString(args.path, "path"), args.hidden === true);
+        return this.conversations.hide(requiredString(args.path, "path"), args.hidden === true);
       case "delete_session":
-        return this.files.deleteSession(requiredString(args.path, "path"));
+        return this.deleteConversation(requiredString(args.path, "path"));
       case "rename_session":
-        return this.files.renameSession(
-          requiredString(args.path, "path"),
-          requiredString(args.name, "name"),
-          requiredString(args.timestamp, "timestamp"),
-        );
+        return this.renameConversation(requiredString(args.path, "path"), requiredString(args.name, "name"), requiredString(args.timestamp, "timestamp"));
       case "spawn_pi_worker":
-        return pool.spawn(requiredString(args.cwd, "cwd"));
+        return this.requirePool().spawn(requiredString(args.cwd, "cwd"));
       case "resize_pi_pool":
-        return pool.resize(requiredNumber(args.size, "size"));
+        return this.requirePool().resize(requiredNumber(args.size, "size"));
       case "get_worker_pool_status":
-        return pool.status();
+        return this.requirePool().status();
       case "connect_pi":
-        return pool.connect(
+        return this.requirePool().connect(
           requiredString(args.cwd, "cwd"),
           optionalString(args.sessionPath),
           optionalString(args.runtimeId),
         );
       case "prepare_session":
-        return pool.prepare(requiredString(args.cwd, "cwd"));
+        return this.requirePool().prepare(requiredString(args.cwd, "cwd"));
       case "create_session":
-        return pool.createSession(requiredString(args.runtimeId, "runtimeId"));
+        return this.requirePool().createSession(requiredString(args.runtimeId, "runtimeId"));
       case "pi_command":
-        return pool.command(asObject(args.command), optionalString(args.runtimeId));
+        return this.requirePool().command(asObject(args.command), optionalString(args.runtimeId));
       case "pi_abort":
-        return pool.abort(optionalString(args.runtimeId));
+        return this.requirePool().abort(optionalString(args.runtimeId));
       case "close_pi_runtime":
-        return pool.close(requiredString(args.runtimeId, "runtimeId"));
+        return this.requirePool().close(requiredString(args.runtimeId, "runtimeId"));
       case "pi_extension_ui_response":
-        return pool.extensionResponse(asObject(args.response), optionalString(args.runtimeId));
+        return this.requirePool().extensionResponse(asObject(args.response), optionalString(args.runtimeId));
       case "update_startup_progress":
         this.options.updateSplash(
           requiredString(args.message, "message"),
@@ -331,6 +361,7 @@ export class DesktopBackend {
   }
 
   shutdown(): void {
+    this.codex?.stop();
     for (const id of this.projectConsoles.keys()) this.stopProjectConsole(id);
     for (const child of this.webProjects.values()) child.kill();
     this.webProjects.clear();
@@ -491,13 +522,89 @@ export class DesktopBackend {
     return this.pool;
   }
 
+  private requireCodex(): CodexBridge {
+    if (!this.codex) throw new Error("Codex backend is disabled or unavailable");
+    return this.codex;
+  }
+
+  private async addWorkspace(cwd: string): Promise<string> {
+    const selected = await this.files.addWorkspace(cwd);
+    await this.conversations.addWorkspace(selected);
+    return selected;
+  }
+
+  private async reloadBackends(): Promise<void> {
+    this.codex?.stop();
+    this.codex = undefined;
+    this.pool?.shutdown();
+    this.pool = undefined;
+    this.piLaunch = undefined;
+    const settings = await loadClientSettings(this.options.appDataPath);
+    if (settings.piEnabled) {
+      this.piLaunch = resolvePiLaunch(settings.piExecutable, this.options.bundledPiCli);
+      this.pool = new RpcPool({
+        appDataPath: this.options.appDataPath,
+        bundledExtensionsDirectory: this.bundledExtensionsDirectory,
+        bundledSkillsDirectory: this.bundledSkillsDirectory,
+        firstPartyEditorExtensions: this.firstPartyEditorPlugins.map((plugin) => ({ directory: dirname(plugin.path), id: plugin.id })),
+        launch: this.piLaunch,
+        minimum: settings.workerPoolSize,
+        permissionExtensionSource: this.options.permissionExtensionSource,
+        emit: this.options.emit,
+      });
+    }
+    if (settings.codexEnabled) this.codex = await CodexBridge.start(settings.codexExecutable, this.options.emit);
+  }
+
+  private async renameConversation(path: string, name: string, timestamp: string): Promise<void> {
+    const record = this.conversations.find(path);
+    if (record?.backend === "pi") await this.files.renameSession(path, name, timestamp);
+    if (record?.backend === "codex" && record.codexThreadId)
+      await this.requireCodex().setThreadName(record.codexThreadId, name);
+    if (record) await this.conversations.rename(path, name);
+  }
+
+  private async deleteConversation(path: string): Promise<void> {
+    const record = await this.conversations.remove(path);
+    if (record?.backend === "pi") await this.files.deleteSession(path);
+    if (record?.backend === "codex" && record.codexThreadId)
+      await this.requireCodex().archiveThread(record.codexThreadId);
+  }
+
+  private async sessionMessages(path: string): Promise<JsonObject[]> {
+    const record = this.conversations.find(path);
+    return record?.backend === "codex" ? this.conversations.messages(path) : this.files.sessionMessages(path);
+  }
+
+  private async createMirrorSession(backend: "pi" | "codex", cwd: string): Promise<JsonObject> {
+    if (backend === "codex") {
+      const result = await this.requireCodex().startThread(cwd);
+      const thread = asObject(result.thread);
+      const threadId = asString(thread.id);
+      if (!threadId) throw new Error("Codex did not return a thread ID");
+      return { backend, threadId };
+    }
+    const pool = this.requirePool();
+    const runtimeId = await pool.prepare(cwd);
+    const state = asObject(await pool.createSession(runtimeId));
+    const sessionFile = asString(state.sessionFile);
+    const sessionId = asString(state.sessionId);
+    if (!sessionFile || !sessionId) throw new Error("Pi did not return a session");
+    return { backend, sessionFile, sessionId };
+  }
+
   private requirePiLaunch(): PiLaunch {
     if (!this.piLaunch) throw new Error("Pi runtime is not initialized");
     return this.piLaunch;
   }
 
   private async runtimeInfo(): Promise<JsonObject> {
-    const launch = this.requirePiLaunch();
+    const launch = this.piLaunch;
+    if (!launch) return {
+      piVersion: "disabled",
+      operatingSystem: process.platform,
+      architecture: process.arch,
+    };
     const piVersion = await new Promise<string>((resolveVersion) => {
       const child = spawn(launch.executable, [...launch.args, "--version"], {
         shell: process.platform === "win32",
@@ -533,6 +640,11 @@ function requiredNumber(value: unknown, name: string): number {
   if (typeof value !== "number" || !Number.isFinite(value))
     throw new Error(`${name} must be a number`);
   return value;
+}
+
+function requiredBackend(value: unknown): "pi" | "codex" {
+  if (value === "pi" || value === "codex") return value;
+  throw new Error("backend must be pi or codex");
 }
 
 function terminalDimension(value: number, fallback: number): number {

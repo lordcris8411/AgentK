@@ -1,5 +1,7 @@
 export type JsonObject = Record<string, unknown>;
 
+export type AgentBackend = "pi" | "codex";
+
 export interface ClientSettings {
   version: number;
   theme: "light" | "dark" | "system";
@@ -7,6 +9,10 @@ export interface ClientSettings {
   permissionMode: "ask" | "full";
   browserId: string;
   piExecutable: string;
+  codexExecutable: string;
+  piEnabled: boolean;
+  codexEnabled: boolean;
+  defaultBackend: AgentBackend;
   workerPoolSize: 2 | 3 | 4;
   autoCompactEnabled: boolean;
   autoCompactThreshold: number;
@@ -30,6 +36,11 @@ export interface SessionSummary {
   name?: string;
   updatedAt: number;
   preview: string;
+  backend?: AgentBackend;
+  codexThreadId?: string;
+  piSessionPath?: string;
+  needsContextSync?: boolean;
+  codexModel?: string;
 }
 
 export interface ProjectSummary {

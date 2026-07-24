@@ -9,6 +9,11 @@ export type SessionSummary = {
   updatedAt: number;
   preview: string;
   runtimeId?: string;
+  backend?: "pi" | "codex";
+  codexThreadId?: string;
+  piSessionPath?: string;
+  needsContextSync?: boolean;
+  codexModel?: string;
 };
 export type ProjectSummary = {
   cwd: string;
@@ -32,6 +37,10 @@ export type ClientSettings = {
   permissionMode: "ask" | "full";
   browserId: string;
   piExecutable: string;
+  codexExecutable: string;
+  piEnabled: boolean;
+  codexEnabled: boolean;
+  defaultBackend: "pi" | "codex";
   workerPoolSize: 2 | 3 | 4;
   autoCompactEnabled: boolean;
   autoCompactThreshold: number;
@@ -169,11 +178,28 @@ export type LocalServiceInfo = {
   displayName: string;
 };
 
+export type BackendStatus = { pi: boolean; codex: boolean };
+
 export const desktop = {
   runtimeInfo: () => invoke<RuntimeInfo>("get_runtime_info"),
   getSettings: () => invoke<ClientSettings>("get_client_settings"),
   saveSettings: (settings: ClientSettings) =>
     invoke<ClientSettings>("save_client_settings", { settings }),
+  backendStatus: () => invoke<BackendStatus>("get_backend_status"),
+  reloadBackends: () => invoke<void>("reload_backends"),
+  codexStartThread: (cwd: string) => invoke<{ thread?: { id?: string } }>("codex_start_thread", { cwd }),
+  codexResumeThread: (threadId: string) => invoke<void>("codex_resume_thread", { threadId }),
+  codexStartTurn: (threadId: string, text: string, cwd: string, model?: string) =>
+    invoke<{ turn?: { id?: string } }>("codex_start_turn", { threadId, text, cwd, model }),
+  codexModels: () => invoke<{ data?: Array<{ model?: string; displayName?: string; inputModalities?: string[]; isDefault?: boolean }> }>("codex_models"),
+  codexPlugins: (cwd: string) => invoke<{ marketplaces?: Array<Record<string, unknown>> }>("codex_plugins", { cwd }),
+  codexForkThread: (threadId: string, cwd: string, model?: string) =>
+    invoke<{ thread?: { id?: string } }>("codex_fork_thread", { threadId, cwd, model }),
+  codexInterrupt: (threadId: string, turnId: string) =>
+    invoke<void>("codex_interrupt", { threadId, turnId }),
+  codexInterruptActive: (threadId: string) => invoke<void>("codex_interrupt_active", { threadId }),
+  createMirrorSession: (backend: "pi" | "codex", cwd: string) =>
+    invoke<{ backend: "pi" | "codex"; sessionFile?: string; sessionId?: string; threadId?: string }>("create_mirror_session", { backend, cwd }),
   listBrowsers: () => invoke<BrowserOption[]>("list_browsers"),
   openExternalUrl: (url: string, browserId: string) =>
     invoke<void>("open_external_url", { url, browserId }),
@@ -217,6 +243,8 @@ export const desktop = {
     invoke<string[]>("discover_local_models", { baseUrl, ollama }),
   listProjects: () => invoke<ProjectSummary[]>("list_projects"),
   addWorkspace: (cwd: string) => invoke<string>("add_workspace", { cwd }),
+  registerConversation: (conversation: SessionSummary & { backend: "pi" | "codex" }) =>
+    invoke<void>("register_conversation", { conversation }),
   updateStartupProgress: (
     message: string,
     current: number,
@@ -226,6 +254,8 @@ export const desktop = {
   finishStartup: () => invoke<void>("finish_startup"),
   sessionMessages: (path: string) =>
     invoke<Array<Record<string, unknown>>>("session_messages", { path }),
+  appendConversationMessage: (path: string, message: Record<string, unknown>) =>
+    invoke<void>("append_conversation_message", { path, message }),
   hideSession: (path: string, hidden: boolean) =>
     invoke<void>("hide_session", { path, hidden }),
   deleteSession: (path: string) => invoke<void>("delete_session", { path }),

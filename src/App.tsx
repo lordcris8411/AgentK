@@ -21,6 +21,8 @@ const DRAFT_SESSION_PATH = "__new__";
 
 export function App() {
   const { settings } = useSettings();
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const { cancelPending, clearSessionUi, setActiveRuntimeId } = useExtensionUi();
   const en = settings.locale === "en-US";
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -72,11 +74,66 @@ export function App() {
         sessions: project.sessions.map((session) => session.path === current.path ? renamed : session),
       })));
     };
+    const switchBackend = (event: Event) => {
+      const backend = (event as CustomEvent<{ backend?: "pi" | "codex" }>).detail?.backend;
+      const current = activeRef.current;
+      if (!backend || !current) return;
+      void (async () => {
+        try {
+          let next = { ...current, backend, needsContextSync: current.backend !== backend };
+          if (backend === "pi") {
+            const runtimeId = await desktop.connect(current.cwd, current.piSessionPath ?? current.path, current.runtimeId);
+            next = { ...next, runtimeId };
+            runtimeIds.current.set(next.path, runtimeId);
+            setActiveRuntimeId(runtimeId);
+          } else {
+            if (!current.codexThreadId) throw new Error("Codex mirror is not available for this session");
+            await desktop.codexResumeThread(current.codexThreadId);
+            setActiveRuntimeId(undefined);
+          }
+          activeRef.current = next;
+          setActive(next);
+          await desktop.registerConversation({ ...next, backend });
+        } catch (cause) { setError(String(cause)); }
+      })();
+    };
     window.addEventListener("agent-k-open-settings", openSettings);
     window.addEventListener("agent-k-session-name", updateSessionName);
+    window.addEventListener("agent-k-switch-backend", switchBackend);
+    const contextSynced = () => {
+      const current = activeRef.current;
+      if (!current?.needsContextSync) return;
+      const next = { ...current, needsContextSync: false };
+      activeRef.current = next;
+      setActive(next);
+      void desktop.registerConversation({ ...next, backend: next.backend ?? "pi" });
+    };
+    window.addEventListener("agent-k-context-synced", contextSynced);
+    const setCodexModel = (event: Event) => {
+      const model = (event as CustomEvent<{ model?: string }>).detail?.model;
+      const current = activeRef.current;
+      if (!model || !current || current.backend !== "codex") return;
+      const next = { ...current, codexModel: model };
+      activeRef.current = next;
+      setActive(next);
+      void desktop.registerConversation({ ...next, backend: "codex" });
+    };
+    window.addEventListener("agent-k-codex-model", setCodexModel);
+    const newSession = () => createSession(activeRef.current?.cwd);
+    window.addEventListener("agent-k-new-session", newSession);
+    const cloneActiveSession = () => {
+      const current = activeRef.current;
+      if (current) void cloneSession(current);
+    };
+    window.addEventListener("agent-k-clone-session", cloneActiveSession);
     return () => {
       window.removeEventListener("agent-k-open-settings", openSettings);
       window.removeEventListener("agent-k-session-name", updateSessionName);
+      window.removeEventListener("agent-k-switch-backend", switchBackend);
+      window.removeEventListener("agent-k-context-synced", contextSynced);
+      window.removeEventListener("agent-k-codex-model", setCodexModel);
+      window.removeEventListener("agent-k-new-session", newSession);
+      window.removeEventListener("agent-k-clone-session", cloneActiveSession);
     };
   }, []);
   const beginBusy = (
@@ -153,7 +210,7 @@ export function App() {
           0,
           420,
         );
-        void desktop.reloadPiRuntimes()
+        void (settingsRef.current.piEnabled ? desktop.reloadPiRuntimes() : Promise.resolve())
           .then(() => window.dispatchEvent(new Event("agent-k-resources-changed")))
           .catch((cause) => setError(String(cause)))
           .finally(finishBusy);
@@ -167,6 +224,10 @@ export function App() {
       0,
       420,
     );
+    if (!settingsRef.current.piEnabled) {
+      finishBusy();
+      return;
+    }
     void desktop.applyPiResourceChanges(cwd, changes, editorSettingsChanged)
       .then(() => window.dispatchEvent(new Event("agent-k-resources-changed")))
       .catch((cause) => setError(String(cause)))
@@ -216,7 +277,7 @@ export function App() {
         const defaultProject =
           loaded.find((project) => !project.isHome) ?? loaded[0];
         const initialCwd = defaultProject?.cwd;
-        const warmWorkerCount = persistedSettings.workerPoolSize;
+        const warmWorkerCount = persistedSettings.piEnabled ? persistedSettings.workerPoolSize : 0;
         const startupTheme =
           persistedSettings.theme === "system"
             ? window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -255,7 +316,7 @@ export function App() {
             .catch(() => undefined);
         };
         await publishProgress();
-        const warmedRuntimeIds = initialCwd
+        const warmedRuntimeIds = initialCwd && persistedSettings.piEnabled
           ? await Promise.all(
               Array.from({ length: warmWorkerCount }, async () => {
                 const runtimeId = await desktop.spawnWorker(initialCwd);
@@ -278,7 +339,15 @@ export function App() {
             name: "New session",
             preview: "",
             updatedAt: Math.floor(Date.now() / 1000),
+            backend: persistedSettings.defaultBackend,
           };
+          if (persistedSettings.defaultBackend === "codex") {
+            activeRef.current = draft;
+            setActive(draft);
+            setHistorySeed({ path: DRAFT_SESSION_PATH, messages: [] });
+            setWorkspaceCwd(initialCwd);
+            setReadyPath(DRAFT_SESSION_PATH);
+          } else {
           const ready = warmedRuntimeIds[0]
             ? Promise.resolve(warmedRuntimeIds[0])
             : desktop.prepareSession(initialCwd);
@@ -300,6 +369,7 @@ export function App() {
             throw cause;
           }
           if (cancelled) return;
+          }
         }
       } catch (cause) {
         if (!cancelled) setError(String(cause));
@@ -334,6 +404,20 @@ export function App() {
       await new Promise<void>((resolve) =>
         window.requestAnimationFrame(() => resolve()),
       );
+      if (session.backend === "codex") {
+        if (!session.codexThreadId) throw new Error("Codex session is missing its thread ID");
+        await desktop.codexResumeThread(session.codexThreadId);
+        const messages = await desktop.sessionMessages(session.path);
+        activeRef.current = session;
+        setHistorySeed({ path: session.path, messages });
+        setActive(session);
+        setActiveRuntimeId(undefined);
+        setWorkspaceCwd(session.cwd);
+        setReadyPath(session.path);
+        touchWorkspace(session.cwd, session.path);
+        committed = true;
+        return;
+      }
       const knownRuntime = runtimeIds.current.get(session.path);
       const runtimeId = await desktop.connect(
         session.cwd,
@@ -398,6 +482,7 @@ export function App() {
       name: "New session",
       preview: "",
       updatedAt: Math.floor(Date.now() / 1000),
+      backend: settingsRef.current.defaultBackend,
     };
     activeRef.current = draft;
     setActive(draft);
@@ -409,6 +494,10 @@ export function App() {
     touchWorkspace(cwd);
     // Start Pi while the user is composing. This creates no JSONL/session;
     // the real session is still materialized only on the first send.
+    if (settingsRef.current.defaultBackend === "codex") {
+      setReadyPath(DRAFT_SESSION_PATH);
+      return;
+    }
     const ready = desktop.prepareSession(cwd);
     warmupRef.current = { cwd, ready };
     void ready
@@ -583,6 +672,27 @@ export function App() {
     const finishBusy = beginBusy(en ? "Creating session…" : "正在创建会话…");
     setConnecting(true);
     try {
+      if (draft.backend === "codex") {
+        const result = await desktop.codexStartThread(draft.cwd);
+        const threadId = result.thread?.id;
+        if (!threadId) throw new Error("Codex did not return a thread ID");
+        const piMirror = settingsRef.current.piEnabled
+          ? await desktop.createMirrorSession("pi", draft.cwd)
+          : undefined;
+        const created = {
+          id: threadId, path: `codex:${threadId}`, cwd: draft.cwd, name: "New session",
+          preview: "", updatedAt: Math.floor(Date.now() / 1000), backend: "codex" as const, codexThreadId: threadId,
+          ...(piMirror?.sessionFile ? { piSessionPath: piMirror.sessionFile } : {}),
+        };
+        setProjects((current) => current.map((project) => project.cwd === draft.cwd
+          ? { ...project, sessions: [created, ...project.sessions] } : project));
+        await desktop.registerConversation(created);
+        activeRef.current = created;
+        setActive(created);
+        setHistorySeed({ path: created.path, messages: [] });
+        setReadyPath(created.path);
+        return message;
+      }
       const warmup = warmupRef.current;
       const runtimeId =
         draft.runtimeId ??
@@ -619,7 +729,12 @@ export function App() {
               : project,
           ),
         );
-      const materialized = { ...created, runtimeId };
+      const codexMirror = settingsRef.current.codexEnabled
+        ? await desktop.createMirrorSession("codex", draft.cwd)
+        : undefined;
+      const materialized = { ...created, runtimeId, backend: "pi" as const,
+        ...(codexMirror?.threadId ? { codexThreadId: codexMirror.threadId } : {}) };
+      await desktop.registerConversation({ ...materialized, backend: "pi" });
       runtimeIds.current.set(created.path, runtimeId);
       activeRef.current = materialized;
       setActive(materialized);
@@ -655,7 +770,9 @@ export function App() {
     try {
       const trimmed = name.replace(/\s+/g, " ").trim();
       if (!trimmed) return;
-      if (
+      if (session.backend === "codex") {
+        await desktop.renameSession(session.path, trimmed);
+      } else if (
         activeRef.current?.path === session.path &&
         readyPath === session.path
       ) {
@@ -702,6 +819,29 @@ export function App() {
       await new Promise<void>((resolve) =>
         window.requestAnimationFrame(() => resolve()),
       );
+      if (session.backend === "codex") {
+        if (!session.codexThreadId) throw new Error("Codex session is missing its thread ID");
+        const result = await desktop.codexForkThread(session.codexThreadId, session.cwd, session.codexModel);
+        const threadId = result.thread?.id;
+        if (!threadId) throw new Error("Codex did not return a forked thread ID");
+        const piMirror = session.piSessionPath ? await desktop.createMirrorSession("pi", session.cwd) : undefined;
+        const next = {
+          ...session, id: threadId, path: `codex:${threadId}`, name: session.name,
+          updatedAt: Math.floor(Date.now() / 1000), backend: "codex" as const, codexThreadId: threadId,
+          ...(piMirror?.sessionFile ? { piSessionPath: piMirror.sessionFile } : {}),
+        };
+        await desktop.registerConversation(next);
+        setProjects((current) => current.map((project) => project.cwd === session.cwd
+          ? { ...project, sessions: [next, ...project.sessions] } : project));
+        if (version !== selectionVersion.current) return;
+        activeRef.current = next;
+        setActive(next);
+        setActiveRuntimeId(undefined);
+        setHistorySeed({ path: next.path, messages: await desktop.sessionMessages(session.path) });
+        setWorkspaceCwd(next.cwd);
+        setReadyPath(next.path);
+        return;
+      }
       const runtimeId = await desktop.connect(
         session.cwd,
         session.path,
@@ -740,6 +880,7 @@ export function App() {
           : undefined);
       if (!next) throw new Error("Pi did not return the duplicated session");
       if (version !== selectionVersion.current) return;
+      await desktop.registerConversation({ ...next, backend: "pi" });
       clearSessionUi(runtimeId);
       const connectedNext = { ...next, runtimeId };
       runtimeIds.current.set(next.path, runtimeId);

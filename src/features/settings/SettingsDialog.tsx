@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   desktop,
+  type BackendStatus,
   type BrowserOption,
   type FileFormatPluginResource,
   type ProviderCatalogItem,
@@ -14,7 +15,7 @@ import {
 import { useSettings } from "./SettingsContext";
 import { platform } from "../../lib/platform";
 
-export type SettingsPage = "models" | "appearance" | "agentSettings" | "skills" | "extensions" | "editors" | "permissions" | "about";
+export type SettingsPage = "models" | "appearance" | "backends" | "agentSettings" | "skills" | "extensions" | "editors" | "permissions" | "about";
 
 let aboutDataPromise: Promise<[string, RuntimeInfo]> | undefined;
 let browserDataPromise: Promise<BrowserOption[]> | undefined;
@@ -147,6 +148,9 @@ export function SettingsDialog({
   const [browsers, setBrowsers] = useState<BrowserOption[]>([
     { id: "default", name: "System default" },
   ]);
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>({ pi: false, codex: false });
+  const [resourceBackend, setResourceBackend] = useState<"pi" | "codex">("pi");
+  const [codexPlugins, setCodexPlugins] = useState<Array<{ name: string; description?: string }>>([]);
   const providersRef = useRef<ProviderCatalogItem[]>([]);
   const lastCatalogRefreshRef = useRef(0);
   const providerDisplayName = (provider: Pick<ProviderCatalogItem, "id" | "name">) =>
@@ -175,14 +179,20 @@ export function SettingsDialog({
     setBusy(true);
     setError(undefined);
     try {
+      if (!runtimeId) {
+        setProviders([]);
+        setModels([]);
+        setState({});
+        return;
+      }
       const refreshCatalog = forceCatalog
         || providersRef.current.length === 0
         || Date.now() - lastCatalogRefreshRef.current > 30_000;
       const [catalog, current] = await Promise.all([
         refreshCatalog
-          ? desktop.providerCatalog()
+          ? desktop.providerCatalog(runtimeId)
           : Promise.resolve(providersRef.current),
-        desktop.command({ type: "get_state" }) as Promise<typeof state>,
+        desktop.command({ type: "get_state" }, runtimeId) as Promise<typeof state>,
       ]);
       if (refreshCatalog) {
         providersRef.current = catalog;
@@ -221,7 +231,7 @@ export function SettingsDialog({
     if (!cwd) setSkillHubScope("user");
   }, [cwd]);
   useEffect(() => {
-    if (!open || !["skills", "extensions", "editors"].includes(page) || !runtimeId || !cwd) return;
+    if (!open || !["skills", "extensions", "editors"].includes(page) || resourceBackend !== "pi" || !runtimeId || !cwd) return;
     setBusy(true);
     setError(undefined);
     void desktop.piResources(cwd, runtimeId)
@@ -240,7 +250,22 @@ export function SettingsDialog({
       })
       .catch((cause) => setError(String(cause)))
       .finally(() => setBusy(false));
-  }, [cwd, open, page, runtimeId]);
+  }, [cwd, open, page, resourceBackend, runtimeId]);
+  useEffect(() => {
+    if (!open || page !== "extensions" || resourceBackend !== "codex" || !cwd) return;
+    setBusy(true);
+    void desktop.codexPlugins(cwd).then((result) => {
+      const marketplaces = result.marketplaces ?? [];
+      setCodexPlugins(marketplaces.map((marketplace) => ({
+        name: typeof marketplace.name === "string" ? marketplace.name : typeof marketplace.id === "string" ? marketplace.id : "Codex plugin marketplace",
+        description: typeof marketplace.description === "string" ? marketplace.description : undefined,
+      })));
+    }).catch((cause) => setError(String(cause))).finally(() => setBusy(false));
+  }, [cwd, open, page, resourceBackend]);
+  useEffect(() => {
+    if (!open || page !== "backends") return;
+    void desktop.backendStatus().then(setBackendStatus).catch((cause) => setError(String(cause)));
+  }, [open, page]);
   useEffect(() => {
     if (!open || page !== "editors") return;
     let cancelled = false;
@@ -587,10 +612,10 @@ export function SettingsDialog({
         </header>
         <div className="settings-body">
           <nav className="settings-nav">
-            {(["models", "appearance", "agentSettings", "skills", "extensions", "editors", "permissions", "about"] as SettingsPage[]).map((item) => (
+            {(["models", "appearance", "backends", "agentSettings", "skills", "extensions", "editors", "permissions", "about"] as SettingsPage[]).map((item) => (
               <button className={page === item ? "is-active" : ""} key={item} onClick={() => setPage(item)} type="button">
-                <i className={`fa-solid ${item === "models" ? "fa-microchip" : item === "appearance" ? "fa-circle-half-stroke" : item === "agentSettings" ? "fa-sliders" : item === "skills" ? "fa-wand-magic-sparkles" : item === "extensions" ? "fa-puzzle-piece" : item === "editors" ? "fa-pen-ruler" : item === "permissions" ? "fa-shield-halved" : "fa-circle-info"}`} />
-                {t(item)}
+                <i className={`fa-solid ${item === "models" ? "fa-microchip" : item === "appearance" ? "fa-circle-half-stroke" : item === "backends" ? "fa-server" : item === "agentSettings" ? "fa-sliders" : item === "skills" ? "fa-wand-magic-sparkles" : item === "extensions" ? "fa-puzzle-piece" : item === "editors" ? "fa-pen-ruler" : item === "permissions" ? "fa-shield-halved" : "fa-circle-info"}`} />
+                {item === "backends" ? (settings.locale === "en-US" ? "Backends" : "后端") : t(item)}
               </button>
             ))}
           </nav>
@@ -615,6 +640,26 @@ export function SettingsDialog({
                     <option value="en-US">{t("english")}</option>
                   </select>
                 </div>
+              </>
+            )}
+            {page === "backends" && (
+              <>
+                <h2>{settings.locale === "en-US" ? "Backends" : "后端"}</h2>
+                <div className="settings-section">
+                  <label className="settings-toggle-label"><span>Pi</span><input checked={settings.piEnabled} disabled={settings.piEnabled && !settings.codexEnabled} onChange={(event) => { void (async () => { await update({ piEnabled: event.target.checked, defaultBackend: !event.target.checked ? "codex" : settings.defaultBackend }); await desktop.reloadBackends(); })().catch((cause) => setError(String(cause))); }} type="checkbox" /></label>
+                  <label className="settings-toggle-label"><span>Codex</span><input checked={settings.codexEnabled} disabled={settings.codexEnabled && !settings.piEnabled} onChange={(event) => { void (async () => { await update({ codexEnabled: event.target.checked, defaultBackend: !event.target.checked ? "pi" : settings.defaultBackend }); await desktop.reloadBackends(); })().catch((cause) => setError(String(cause))); }} type="checkbox" /></label>
+                </div>
+                <div className="settings-section">
+                  <p className="settings-inline-description">Pi: {backendStatus.pi ? (settings.locale === "en-US" ? "Connected" : "已连接") : (settings.locale === "en-US" ? "Disconnected" : "未连接")} · Codex: {backendStatus.codex ? (settings.locale === "en-US" ? "Connected" : "已连接") : (settings.locale === "en-US" ? "Disconnected" : "未连接")}</p>
+                  <button onClick={() => void desktop.reloadBackends().then(() => desktop.backendStatus()).then(setBackendStatus).catch((cause) => setError(String(cause)))} type="button">{settings.locale === "en-US" ? "Reconnect backends" : "重新连接后端"}</button>
+                </div>
+                <div className="settings-section">
+                  <label>{settings.locale === "en-US" ? "Default backend" : "默认后端"}</label>
+                  <select onChange={(event) => void update({ defaultBackend: event.target.value as "pi" | "codex" })} value={settings.defaultBackend}>
+                    <option disabled={!settings.piEnabled} value="pi">Pi</option><option disabled={!settings.codexEnabled} value="codex">Codex</option>
+                  </select>
+                </div>
+                <div className="settings-section"><label>Codex executable</label><input onChange={(event) => void update({ codexExecutable: event.target.value })} placeholder="codex" value={settings.codexExecutable} /></div>
               </>
             )}
             {page === "agentSettings" && (
@@ -716,7 +761,7 @@ export function SettingsDialog({
                 <div className="settings-title-row">
                   <h2>{t(page)}</h2>
                   <button
-                    disabled={busy || !runtimeId || resourcesLocked}
+                    disabled={busy || resourceBackend !== "pi" || !runtimeId || resourcesLocked}
                     onClick={() => {
                       if (!runtimeId || !cwd) return;
                       setBusy(true);
@@ -742,13 +787,17 @@ export function SettingsDialog({
                     <i className="fa-solid fa-rotate" /> {t("refresh")}
                   </button>
                 </div>
-                <p className="settings-description">{t("resourceDescription")}</p>
+                <div className="segmented-control">
+                  <button className={resourceBackend === "pi" ? "is-active" : ""} disabled={!settings.piEnabled} onClick={() => setResourceBackend("pi")} type="button">Pi</button>
+                  <button className={resourceBackend === "codex" ? "is-active" : ""} disabled={!settings.codexEnabled} onClick={() => setResourceBackend("codex")} type="button">Codex</button>
+                </div>
+                <p className="settings-description">{resourceBackend === "pi" ? t("resourceDescription") : (settings.locale === "en-US" ? "Codex plugins are isolated from Pi extensions and are never loaded by Pi." : "Codex 插件与 Pi Extension 隔离，绝不会被 Pi 加载。")}</p>
                 {resourcesLocked && (
                   <p className="resource-lock-notice" role="status">
                     <i className="fa-solid fa-spinner fa-spin" /> {t("resourcesLocked")}
                   </p>
                 )}
-                {page === "skills" && (
+                {page === "skills" && resourceBackend === "pi" && (
                   <section className="skill-hub">
                     <div className="skill-hub-heading">
                       <div>
@@ -787,7 +836,7 @@ export function SettingsDialog({
                     <small>{t("skillHubSafety")}</small>
                   </section>
                 )}
-                <div className="resource-list">
+                {resourceBackend === "pi" ? <div className="resource-list">
                   {resources
                     .filter((resource) => resource.kind === (page === "skills" ? "skill" : "extension"))
                     .map((resource) => (
@@ -819,7 +868,10 @@ export function SettingsDialog({
                   {!busy && resources.every((resource) => resource.kind !== (page === "skills" ? "skill" : "extension")) && (
                     <p className="empty-settings">{t("noResources")}</p>
                   )}
-                </div>
+                </div> : <div className="resource-list">
+                  {codexPlugins.map((plugin) => <article className="resource-card" key={plugin.name}><div><strong>{plugin.name}</strong><small>{plugin.description ?? (settings.locale === "en-US" ? "Codex plugin marketplace" : "Codex 插件市场")}</small><span>Codex</span></div></article>)}
+                  {!busy && codexPlugins.length === 0 && <p className="settings-description">{settings.locale === "en-US" ? "No Codex plugins are available for this workspace." : "此工作区没有可用的 Codex 插件。"}</p>}
+                </div>}
               </>
             )}
             {page === "editors" && (

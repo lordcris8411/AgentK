@@ -176,7 +176,10 @@ function createWindows(): void {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      // The splash has no preload bridge and only renders a local static page.
+      // Electron 43 can otherwise initialize its sandbox renderer without
+      // startupData on Windows, producing a null preloadScripts crash.
+      sandbox: false,
     },
   });
 

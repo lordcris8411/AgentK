@@ -32,6 +32,10 @@ const DEFAULT_SETTINGS: ClientSettings = {
   permissionMode: "ask",
   browserId: "default",
   piExecutable: "",
+  codexExecutable: "",
+  piEnabled: true,
+  codexEnabled: false,
+  defaultBackend: "pi",
   workerPoolSize: 4,
   autoCompactEnabled: true,
   autoCompactThreshold: 45,
@@ -91,6 +95,15 @@ export function parseClientSettings(value: unknown): ClientSettings {
   if (safeBrowserId(source.browserId)) settings.browserId = source.browserId;
   if (typeof source.piExecutable === "string" && source.piExecutable.length <= 4096)
     settings.piExecutable = source.piExecutable.trim();
+  if (typeof source.codexExecutable === "string" && source.codexExecutable.length <= 4096)
+    settings.codexExecutable = source.codexExecutable.trim();
+  if (typeof source.piEnabled === "boolean") settings.piEnabled = source.piEnabled;
+  if (typeof source.codexEnabled === "boolean") settings.codexEnabled = source.codexEnabled;
+  if (["pi", "codex"].includes(String(source.defaultBackend)))
+    settings.defaultBackend = source.defaultBackend as ClientSettings["defaultBackend"];
+  if (!settings.piEnabled && !settings.codexEnabled) settings.piEnabled = true;
+  if (settings.defaultBackend === "pi" && !settings.piEnabled) settings.defaultBackend = "codex";
+  if (settings.defaultBackend === "codex" && !settings.codexEnabled) settings.defaultBackend = "pi";
   if ([2, 3, 4].includes(Number(source.workerPoolSize)))
     settings.workerPoolSize = Number(source.workerPoolSize) as 2 | 3 | 4;
   if (typeof source.autoCompactEnabled === "boolean")
@@ -144,6 +157,10 @@ export async function saveClientSettings(
     settings.permissionMode === original.permissionMode &&
     settings.browserId === original.browserId &&
     settings.piExecutable === original.piExecutable &&
+    settings.codexExecutable === original.codexExecutable &&
+    settings.piEnabled === original.piEnabled &&
+    settings.codexEnabled === original.codexEnabled &&
+    settings.defaultBackend === original.defaultBackend &&
     settings.workerPoolSize === original.workerPoolSize &&
     settings.autoCompactEnabled === original.autoCompactEnabled &&
     settings.autoCompactThreshold === original.autoCompactThreshold &&

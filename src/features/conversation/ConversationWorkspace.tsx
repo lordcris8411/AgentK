@@ -45,6 +45,16 @@ type SlashCommand = {
     scope?: string;
   };
 };
+
+function mergeSlashCommands(...groups: SlashCommand[][]): SlashCommand[] {
+  const seen = new Set<string>();
+  return groups.flat().filter((command) => {
+    const name = command.name.trim().toLocaleLowerCase("en-US");
+    if (!name || seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+}
 type CommandPicker = {
   kind: "fork" | "tree";
   options: Array<{ entryId: string; text: string }>;
@@ -86,6 +96,7 @@ type Item = {
   modelId?: string;
   modelName?: string;
   modelProvider?: string;
+  backend?: "pi" | "codex";
   thinking?: string;
   thinkingActive?: boolean;
   tool?: string;
@@ -365,6 +376,7 @@ function itemOf(message: Record<string, unknown>, id: string): Item {
         : typeof modelRecord?.provider === "string"
           ? modelRecord.provider
           : undefined,
+    backend: message.backend === "codex" ? "codex" : "pi",
     ...parts,
     content: visibleContent,
     rawContent:
@@ -1408,6 +1420,9 @@ export function ConversationWorkspace({
   // (usually runtime-less draft) session and accept events from every worker.
   const activeRuntimeIdRef = useRef(session?.runtimeId);
   activeRuntimeIdRef.current = session?.runtimeId;
+  const activeSessionRef = useRef(session);
+  activeSessionRef.current = session;
+  const codexTextRef = useRef("");
   const [draft, setDraftState] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [pendingSteer, setPendingSteer] = useState<{
@@ -1594,7 +1609,8 @@ export function ConversationWorkspace({
     window.addEventListener("agent-k-file-format-capabilities", updateFileFormatContext);
     return () => window.removeEventListener("agent-k-file-format-capabilities", updateFileFormatContext);
   }, []);
-  const builtinCommands = useMemo<SlashCommand[]>(() => [
+  const builtinCommands = useMemo<SlashCommand[]>(() => {
+    const commands: SlashCommand[] = [
     { name: "settings", description: en ? "Open Agent K settings" : "打开 Agent K 设置", source: "builtin" },
     { name: "skills", description: en ? "Manage Pi skills" : "管理 Pi Skills", source: "builtin" },
     { name: "extensions", description: en ? "Manage Pi extensions" : "管理 Pi Extensions", source: "builtin" },
@@ -1607,10 +1623,16 @@ export function ConversationWorkspace({
     { name: "name", description: en ? "Set the session name" : "设置会话名称", source: "builtin" },
     { name: "session", description: en ? "Show session information and statistics" : "显示会话信息与统计", source: "builtin" },
     { name: "reload", description: en ? "Reload Pi resources and configuration" : "重新加载 Pi 资源和配置", source: "builtin" },
-  ], [en]);
+    { name: "pi-backend", description: en ? "Use Pi for subsequent replies" : "后续回答使用 Pi", source: "builtin" },
+    { name: "codex-backend", description: en ? "Use Codex for subsequent replies" : "后续回答使用 Codex", source: "builtin" },
+    ];
+    return session?.backend === "codex"
+      ? commands.filter((command) => !["compact", "tree"].includes(command.name))
+      : commands;
+  }, [en, session?.backend]);
   useEffect(() => {
     let cancelled = false;
-    if (!connected || !session?.runtimeId) {
+    if (!connected || session?.backend === "codex" || !session?.runtimeId) {
       setSlashCommands(builtinCommands);
       setSlashCommandsLoading(false);
       return;
@@ -1621,15 +1643,15 @@ export function ConversationWorkspace({
       .then((result) => {
         if (cancelled) return;
         const commands = (result as { commands?: SlashCommand[] }).commands ?? [];
-        setSlashCommands([
-          ...builtinCommands,
-          ...commands.filter(
+        setSlashCommands(mergeSlashCommands(
+          builtinCommands,
+          commands.filter(
             (command) =>
               Boolean(command?.name) &&
               command.name !== "agent-k-internal-navigate-tree" &&
               ["extension", "prompt", "skill"].includes(command.source),
           ),
-        ]);
+        ));
       })
       .catch(() => {
         if (!cancelled) setSlashCommands(builtinCommands);
@@ -1690,7 +1712,7 @@ export function ConversationWorkspace({
     setItems([]);
     // Read the complete JSONL immediately. Once Pi has switched, replace it
     // with the complete authoritative context (including active tree state).
-    const history = connected
+    const history = connected && session.backend !== "codex"
       ? desktop.command({ type: "get_messages" }, session.runtimeId).then((raw) =>
           (raw as { messages?: Array<Record<string, unknown>> }).messages ?? [],
         )
@@ -1744,8 +1766,22 @@ export function ConversationWorkspace({
   ]);
   useEffect(() => {
     let cancelled = false;
+    if (connected && session?.backend === "codex") {
+      void desktop.codexModels().then((result) => {
+        if (cancelled) return;
+        const models = (result.data ?? [])
+          .filter((model): model is { model: string; displayName?: string; inputModalities?: string[]; isDefault?: boolean } => typeof model.model === "string")
+          .map((model) => ({ provider: "openai", id: model.model, name: model.displayName ?? model.model, input: model.inputModalities }));
+        const selected = session.codexModel ?? result.data?.find((model) => model.isDefault)?.model ?? models[0]?.id ?? "";
+        setAvailableModels(models);
+        setCurrentModelKey(selected ? `openai/${selected}` : "");
+        setModelName((models.find((model) => model.id === selected)?.name ?? selected) || "Codex");
+        setContextWindow(undefined);
+      }).catch(() => { if (!cancelled) setModelName("Codex"); });
+      return () => { cancelled = true; };
+    }
     if (!connected || !session?.runtimeId) {
-      setModelName(en ? "Connecting…" : "正在连接…");
+      setModelName(session?.backend === "codex" ? "Codex" : (en ? "Connecting…" : "正在连接…"));
       setAvailableModels([]);
       setCurrentModelKey("");
       setContextWindow(undefined);
@@ -1806,7 +1842,7 @@ export function ConversationWorkspace({
       cancelled = true;
       window.removeEventListener("agent-k-model-changed", refreshModelName);
     };
-  }, [connected, en, session?.runtimeId]);
+  }, [connected, en, session?.backend, session?.codexModel, session?.runtimeId]);
   useEffect(() => {
     if (!modelMenu) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
@@ -1822,6 +1858,13 @@ export function ConversationWorkspace({
     if (switchingModel || running) return;
     setSwitchingModel(true);
     try {
+      if (session?.backend === "codex") {
+        window.dispatchEvent(new CustomEvent("agent-k-codex-model", { detail: { model: model.id } }));
+        setCurrentModelKey(`${model.provider}/${model.id}`);
+        setModelName(model.name ?? model.id);
+        setModelMenu(false);
+        return;
+      }
       await desktop.command(
         {
           type: "set_model",
@@ -2067,9 +2110,67 @@ export function ConversationWorkspace({
     let disposed = false;
     void desktop
       .onEvent((event) => {
+        const type = String(event.type ?? "");
+        const activeSession = activeSessionRef.current;
+        if (activeSession?.backend === "codex" && type.startsWith("codex_")) {
+          const eventThreadId = typeof event.threadId === "string"
+            ? event.threadId : typeof event.thread_id === "string" ? event.thread_id : undefined;
+          if (eventThreadId && eventThreadId !== activeSession.codexThreadId) return;
+          if (type === "codex_task_started") {
+            codexTextRef.current = "";
+            setRunning(true);
+            setRunStartedAt(Date.now());
+            return;
+          }
+          if (type === "codex_agent_message_delta" || type === "codex_agent_message_content_delta") {
+            const delta = typeof event.delta === "string" ? event.delta : "";
+            if (!delta) return;
+            codexTextRef.current += delta;
+            const id = streamingId.current ?? crypto.randomUUID();
+            streamingId.current = id;
+            setItems((current) => {
+              const message: Item = { id, role: "assistant", content: codexTextRef.current, backend: "codex", occurredAt: Date.now() };
+              return current.some((item) => item.id === id)
+                ? current.map((item) => item.id === id ? message : item)
+                : [...current, message];
+            });
+            return;
+          }
+          if (type === "codex_exec_command_begin") {
+            const id = typeof event.callId === "string" ? event.callId : crypto.randomUUID();
+            const command = typeof event.command === "string" ? event.command : "command";
+            setItems((current) => [...current, {
+              id, role: "tool", tool: "shell", toolCallId: id, toolActive: true, content: command,
+              occurredAt: Date.now(), toolCalls: [{ id, name: "shell", args: { command } }], backend: "codex",
+            }]);
+            return;
+          }
+          if (type === "codex_exec_command_output_delta" || type === "codex_exec_command_end") {
+            const id = typeof event.callId === "string" ? event.callId : undefined;
+            if (!id) return;
+            const delta = typeof event.delta === "string" ? event.delta : typeof event.output === "string" ? event.output : "";
+            setItems((current) => current.map((item) => item.id === id
+              ? { ...item, content: `${item.content}${delta}`, toolActive: type !== "codex_exec_command_end" }
+              : item));
+            return;
+          }
+          if (type === "codex_task_complete" || type === "codex_turn_aborted") {
+            if (type === "codex_task_complete" && codexTextRef.current.trim()) {
+              void desktop.appendConversationMessage(activeSession.path, {
+                role: "assistant", content: codexTextRef.current, timestamp: new Date().toISOString(), backend: "codex",
+              });
+            }
+            setRunning(false); setSubmitting(false); setRunStartedAt(undefined); streamingId.current = undefined;
+            return;
+          }
+          if (type === "codex_bridge_closed") {
+            setRunning(false); setSubmitting(false); onError(en ? "Codex connection closed" : "Codex 连接已关闭");
+            return;
+          }
+          return;
+        }
         const activeRuntimeId = activeRuntimeIdRef.current;
         if (!activeRuntimeId || event.runtimeId !== activeRuntimeId) return;
-        const type = String(event.type ?? "");
         if (type === "agent_start") {
           setRunning(true);
           setRunStartedAt(Date.now());
@@ -2154,6 +2255,8 @@ export function ConversationWorkspace({
                 ? current.map((entry) => entry.id === id ? finalItem : entry)
                 : [...current, finalItem];
             });
+            const currentPath = activeSessionRef.current?.path;
+            if (currentPath) void desktop.appendConversationMessage(currentPath, { ...message, backend: "pi" });
           } else if (message.role === "toolResult" && message.toolCallId) {
             const id = String(message.toolCallId);
             setItems((current) => {
@@ -2448,6 +2551,16 @@ export function ConversationWorkspace({
       window.dispatchEvent(new CustomEvent("agent-k-open-settings", { detail: { page } }));
       return true;
     }
+    if (name === "pi-backend" || name === "codex-backend") {
+      const backend = name === "pi-backend" ? "pi" : "codex";
+      const status = await desktop.backendStatus();
+      if (!status[backend])
+        throw new Error(en ? `${backend === "pi" ? "Pi" : "Codex"} backend is not connected` : `${backend === "pi" ? "Pi" : "Codex"} 后端未连接`);
+      await updateSettings({ defaultBackend: backend });
+      window.dispatchEvent(new CustomEvent("agent-k-switch-backend", { detail: { backend } }));
+      pushNotification(en ? `Subsequent replies will use ${backend === "pi" ? "Pi" : "Codex"}` : `后续回答将使用 ${backend === "pi" ? "Pi" : "Codex"}`);
+      return true;
+    }
     if (name === "model") {
       if (!argumentsText) {
         setModelMenu(true);
@@ -2455,6 +2568,13 @@ export function ConversationWorkspace({
       }
       const [provider, ...modelParts] = argumentsText.split("/");
       const modelId = modelParts.join("/");
+      if (session?.backend === "codex") {
+        const id = modelId || provider;
+        const selected = availableModels.find((model) => model.id === id);
+        if (!selected) throw new Error(en ? "Unknown Codex model" : "未知的 Codex 模型");
+        await selectModel(selected);
+        return true;
+      }
       if (!provider || !modelId)
         throw new Error(en ? "Use /model provider/model" : "请使用 /model provider/model");
       await desktop.command({ type: "set_model", provider, modelId }, session?.runtimeId);
@@ -2471,6 +2591,10 @@ export function ConversationWorkspace({
       return true;
     }
     if (name === "new") {
+      if (session?.backend === "codex") {
+        window.dispatchEvent(new Event("agent-k-new-session"));
+        return true;
+      }
       await cancelExtensionUi();
       clearSessionUi();
       await desktop.command({ type: "new_session" }, session?.runtimeId);
@@ -2483,7 +2607,8 @@ export function ConversationWorkspace({
     if (name === "name") {
       if (!argumentsText)
         throw new Error(en ? "Use /name <session name>" : "请使用 /name <会话名称>");
-      await desktop.command({ type: "set_session_name", name: argumentsText }, session?.runtimeId);
+      if (session?.backend === "codex") await desktop.renameSession(session.path, argumentsText);
+      else await desktop.command({ type: "set_session_name", name: argumentsText }, session?.runtimeId);
       window.dispatchEvent(new CustomEvent("agent-k-session-name", {
         detail: { name: argumentsText },
       }));
@@ -2499,13 +2624,18 @@ export function ConversationWorkspace({
       return true;
     }
     if (name === "reload") {
-      await desktop.reloadPiRuntimes();
+      if (session?.backend === "codex") await desktop.reloadBackends();
+      else await desktop.reloadPiRuntimes();
       setCommandRevision((revision) => revision + 1);
       window.dispatchEvent(new Event("agent-k-model-changed"));
       pushNotification(en ? "Pi resources and configuration reloaded" : "Pi 资源和配置已重新加载");
       return true;
     }
     if (name === "fork" || name === "tree") {
+      if (name === "fork" && session?.backend === "codex") {
+        window.dispatchEvent(new Event("agent-k-clone-session"));
+        return true;
+      }
       if (name === "tree") {
         type TreeNode = {
           entry?: {
@@ -2681,7 +2811,17 @@ export function ConversationWorkspace({
     try {
       const modelMessage = await beforeSend(value);
       if (modelMessage === false) return;
-      const outboundMessage = withFileReferences(running ? value : modelMessage);
+      let outboundMessage = withFileReferences(running ? value : modelMessage);
+      if (session.needsContextSync) {
+        const history = await desktop.sessionMessages(session.path);
+        const transcript = history
+          .filter((entry) => entry.role === "user" || entry.role === "assistant")
+          .map((entry) => `${entry.role === "assistant" ? "Assistant" : "User"}: ${typeof entry.content === "string" ? entry.content : ""}`)
+          .filter((entry) => entry.trim().length > 0)
+          .slice(-80)
+          .join("\n\n");
+        if (transcript) outboundMessage = `<agent_k_conversation_context>\nThe following is prior conversation context from Agent K. Continue it naturally; do not mention this wrapper.\n\n${transcript}\n</agent_k_conversation_context>\n\n${outboundMessage}`;
+      }
       commitDraft("");
       setAttachments([]);
       stickToBottom.current = true;
@@ -2704,16 +2844,29 @@ export function ConversationWorkspace({
           occurredAt: Date.now(),
         },
       ]);
+      void desktop.appendConversationMessage(session.path, {
+        role: "user", content: outboundMessage, timestamp: new Date().toISOString(), backend: session.backend ?? "pi",
+      });
       requestAnimationFrame(() => scrollToLatest());
-      await desktop.command(
-        running
-          ? mode === "queue"
-            ? { type: "follow_up", message: outboundMessage, imagePaths }
-            : { type: "steer", message: outboundMessage, imagePaths }
-          : { type: "prompt", message: outboundMessage, imagePaths },
-        session.runtimeId,
-      );
+      if (session.backend === "codex") {
+        if (!session.codexThreadId) throw new Error("Codex session is missing its thread ID");
+        const result = await desktop.codexStartTurn(session.codexThreadId, outboundMessage, session.cwd, session.codexModel);
+        const turnId = result.turn?.id;
+        if (!turnId) throw new Error("Codex did not return a turn ID");
+        setRunning(true);
+        setRunStartedAt(Date.now());
+      } else {
+        await desktop.command(
+          running
+            ? mode === "queue"
+              ? { type: "follow_up", message: outboundMessage, imagePaths }
+              : { type: "steer", message: outboundMessage, imagePaths }
+            : { type: "prompt", message: outboundMessage, imagePaths },
+          session.runtimeId,
+        );
+      }
       onUserMessage(value || activeAttachments.map((attachment) => attachment.name).join(", "));
+      if (session.needsContextSync) window.dispatchEvent(new Event("agent-k-context-synced"));
     } catch (cause) {
       if (!running) setRunning(false);
       onError(String(cause));
@@ -2751,7 +2904,9 @@ export function ConversationWorkspace({
     );
     try {
       const [abortResult] = await Promise.allSettled([
-        desktop.abort(session?.runtimeId),
+        session.backend === "codex" && session.codexThreadId
+          ? desktop.codexInterruptActive(session.codexThreadId)
+          : desktop.abort(session?.runtimeId),
         cancelExtensionUi(),
       ]);
       if (abortResult.status === "rejected") onError(String(abortResult.reason));
@@ -3135,9 +3290,9 @@ export function ConversationWorkspace({
                   ) : null}
                   {usedModelName ? (
                     <span className="response-model" title={usedModelName}>
-                      · {usedModelName}
+                      · {usedModelName} · {entry.item.backend === "codex" ? "Codex" : "Pi"}
                     </span>
-                  ) : null}
+                  ) : <span className="response-model">· {entry.item.backend === "codex" ? "Codex" : "Pi"}</span>}
                 </footer>
               );
             }
@@ -3672,7 +3827,7 @@ export function ConversationWorkspace({
               title={en ? "Switch model" : "切换模型"}
               type="button"
             >
-              <span>{switchingModel ? (en ? "Switching…" : "正在切换…") : modelName}</span>
+              <span>{switchingModel ? (en ? "Switching…" : "正在切换…") : `${modelName} · ${session?.backend === "codex" ? "Codex" : "Pi"}`}</span>
               <i aria-hidden="true" className="fa-solid fa-chevron-up" />
             </button>
             {modelMenu && (
