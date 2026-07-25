@@ -14,6 +14,7 @@ const CLANGD_TOKEN_MODIFIERS = ["declaration", "definition", "deprecated", "dedu
 const CLANGD_PROPERTY_TOKEN = CLANGD_TOKEN_TYPES.indexOf("property");
 const CLANGD_CLASS_TOKEN = CLANGD_TOKEN_TYPES.indexOf("class");
 const CLANGD_ENUM_TOKEN = CLANGD_TOKEN_TYPES.indexOf("enum");
+const CLANGD_ENUM_MEMBER_TOKEN = CLANGD_TOKEN_TYPES.indexOf("enumMember");
 const CLANGD_MACRO_TOKEN = CLANGD_TOKEN_TYPES.indexOf("macro");
 const CLANGD_METHOD_TOKEN = CLANGD_TOKEN_TYPES.indexOf("method");
 const CLANGD_NAMESPACE_TOKEN = CLANGD_TOKEN_TYPES.indexOf("namespace");
@@ -151,7 +152,7 @@ defineEditor((host, initial) => {
         ? "agent-k-cpp-member"
         : tokenType === CLANGD_CLASS_TOKEN
           ? "agent-k-cpp-class"
-          : tokenType === CLANGD_ENUM_TOKEN
+          : tokenType === CLANGD_ENUM_TOKEN || tokenType === CLANGD_ENUM_MEMBER_TOKEN
             ? "agent-k-cpp-enum"
           : tokenType === CLANGD_METHOD_TOKEN
             ? "agent-k-cpp-method"

@@ -265,3 +265,47 @@ export class CppService {
     });
   }
 }
+
+// This module is the built-in cpp-clangd language-plugin worker when launched
+// by LanguageServerHost. Keeping the protocol here makes the C++ lifecycle
+// independent of Electron's backend: the backend only forks this process and
+// forwards opaque method calls/events.
+type WorkerRequest = { args?: unknown[]; id: number; method?: unknown; type?: unknown };
+type WorkerResponse = { error?: string; id: number; result?: unknown; type: "response" };
+
+if (typeof process.send === "function") {
+  let service: CppService | undefined;
+  const reply = (response: WorkerResponse) => process.send?.(response);
+  process.on("message", (message: WorkerRequest) => {
+    if (message.type !== "request" || typeof message.id !== "number" || typeof message.method !== "string") return;
+    void (async () => {
+      try {
+        if (message.method === "initialize") {
+          const cachePath = message.args?.[0];
+          if (typeof cachePath !== "string") throw new Error("Language worker cache path is required");
+          service = new CppService(cachePath, (event) => process.send?.({ event, type: "event" }));
+          reply({ id: message.id, result: undefined, type: "response" });
+          return;
+        }
+        if (!service) throw new Error("Language worker is not initialized");
+        const args = message.args ?? [];
+        let result: unknown;
+        switch (message.method) {
+          case "load": result = await service.load(String(args[0] ?? "")); break;
+          case "list": result = service.list(); break;
+          case "trace": result = service.trace(); break;
+          case "unload": result = await service.unload(String(args[0] ?? "")); break;
+          case "restart": result = await service.restart(String(args[0] ?? "")); break;
+          case "cancel": service.cancel(); break;
+          case "lsp": result = await service.lsp(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
+          case "notify": result = await service.notify(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
+          case "shutdown": service.shutdown(); break;
+          default: throw new Error(`Unknown language worker method: ${message.method}`);
+        }
+        reply({ id: message.id, result, type: "response" });
+      } catch (cause) {
+        reply({ error: cause instanceof Error ? cause.message : String(cause), id: message.id, type: "response" });
+      }
+    })();
+  });
+}

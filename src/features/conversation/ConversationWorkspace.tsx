@@ -1496,6 +1496,9 @@ export function ConversationWorkspace({
   const composerRef = useRef<HTMLDivElement | null>(null);
   const draftValueRef = useRef("");
   const draftCommitTimer = useRef<number | undefined>(undefined);
+  const composerHistoryRef = useRef<string[]>([]);
+  const composerHistoryDraftRef = useRef("");
+  const composerHistoryIndexRef = useRef(-1);
   const slashMenuRef = useRef<HTMLDivElement | null>(null);
   const modelControlRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
@@ -1516,6 +1519,13 @@ export function ConversationWorkspace({
     }
     draftValueRef.current = value;
     setDraftState(value);
+  }, []);
+  const rememberComposerInput = useCallback((value: string) => {
+    if (!value.trim()) return;
+    const history = composerHistoryRef.current;
+    if (history[0] !== value) history.unshift(value);
+    if (history.length > 100) history.splice(100);
+    composerHistoryIndexRef.current = -1;
   }, []);
   const discardAssistantUpdate = useCallback(() => {
     pendingAssistantUpdate.current = undefined;
@@ -2714,6 +2724,9 @@ export function ConversationWorkspace({
       submitting
     )
       return;
+    // Keep the exact composer value before built-in slash commands consume it,
+    // so ArrowUp can restore both prompts and commands just like a terminal.
+    rememberComposerInput(input);
     if (input.trimStart().startsWith("/")) {
       setSubmitting(true);
       try {
@@ -3682,6 +3695,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
           onInput={(event) => {
             const value = serializeComposer(event.currentTarget);
             if (!value) event.currentTarget.replaceChildren();
+            composerHistoryIndexRef.current = -1;
             if (value !== draftValueRef.current) setDismissedSlashDraft(undefined);
             // Slash-command filtering must remain immediate. Ordinary prose can
             // stay in the DOM and synchronize after a short idle period.
@@ -3699,6 +3713,43 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
                 const editor = composerRef.current;
                 if (!editor) return;
                 populateComposer(editor, pending.value);
+                placeCaretAtEnd(editor);
+                editor.focus();
+              });
+              return;
+            }
+            const browsingHistory = composerHistoryIndexRef.current >= 0;
+            if (event.key === "ArrowUp" && !event.nativeEvent.isComposing && (!draftValueRef.current.trim() || browsingHistory)) {
+              const history = composerHistoryRef.current;
+              if (history.length) {
+                event.preventDefault();
+                if (!browsingHistory) composerHistoryDraftRef.current = draftValueRef.current;
+                const index = Math.min(composerHistoryIndexRef.current + 1, history.length - 1);
+                const previous = history[index];
+                if (previous === undefined) return;
+                composerHistoryIndexRef.current = index;
+                commitDraft(previous);
+                requestAnimationFrame(() => {
+                  const editor = composerRef.current;
+                  if (!editor) return;
+                  populateComposer(editor, previous);
+                  placeCaretAtEnd(editor);
+                  editor.focus();
+                });
+                return;
+              }
+            }
+            if (event.key === "ArrowDown" && !event.nativeEvent.isComposing && browsingHistory) {
+              event.preventDefault();
+              const index = composerHistoryIndexRef.current - 1;
+              const next = index >= 0 ? composerHistoryRef.current[index] : composerHistoryDraftRef.current;
+              if (next === undefined) return;
+              composerHistoryIndexRef.current = index;
+              commitDraft(next);
+              requestAnimationFrame(() => {
+                const editor = composerRef.current;
+                if (!editor) return;
+                populateComposer(editor, next);
                 placeCaretAtEnd(editor);
                 editor.focus();
               });

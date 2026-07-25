@@ -27,6 +27,13 @@ export type FileEntry = {
 };
 export type CppProject = { root: string; name: string; status: "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped"; error?: string; cmake: boolean; compileCommands: boolean };
 export type CppLspTrace = { elapsedMs?: number; error?: string; file?: string; method: string; phase: "rejected" | "request" | "response" | "sent" | "timeout" | "write-error"; timestamp: number; version?: number };
+export type LanguageServerPlugin = {
+  apiVersion: 1;
+  id: string;
+  languages: string[];
+  projectMarkers: string[];
+  debugServer?: { adapters: Array<{ command: string; platforms: string[] }>; protocol: "dap" };
+};
 
 export type ClientSettings = {
   version: number;
@@ -287,6 +294,9 @@ export const desktop = {
   loadCppProject: (root: string, path = "") => invoke<CppProject>("load_cpp_project", { root, path }),
   listCppProjects: () => invoke<CppProject[]>("list_cpp_projects"),
   listCppLspTrace: () => invoke<CppLspTrace[]>("list_cpp_lsp_trace"),
+  listLanguageServerPlugins: () => invoke<LanguageServerPlugin[]>("list_language_server_plugins"),
+  languageServerRequest: (language: string, file: string, method: string, params: unknown) => invoke<unknown>("language_server_request", { language, file, method, params }),
+  languageServerNotify: (language: string, file: string, method: string, params: unknown) => invoke<void>("language_server_notify", { language, file, method, params }),
   unloadCppProject: (root: string) => invoke<void>("unload_cpp_project", { root }),
   restartCppProject: (root: string) => invoke<CppProject>("restart_cpp_project", { root }),
   cancelCppLoad: () => invoke<void>("cancel_cpp_load"),

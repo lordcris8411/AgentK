@@ -27,7 +27,7 @@
     "check:desktop": "tsc -p tsconfig.electron.json --noEmit",
     "check:editors": "tsc -p editor/tsconfig.json",
     "prepare:native": "node script/prepare-native.mjs",
-    "test": "npm run build:desktop && node --test extensions/k-plan/index.test.ts electron/file-formats.test.mjs electron/skill-hub.test.mjs test/messageContent.test.ts test/projectActivity.test.ts",
+    "test": "npm run build:desktop && node --test extensions/k-plan/index.test.ts electron/file-formats.test.mjs electron/language-server-registry.test.mjs electron/skill-hub.test.mjs test/messageContent.test.ts test/projectActivity.test.ts",
     "preview": "vite preview",
     "electron": "electron ."
   },

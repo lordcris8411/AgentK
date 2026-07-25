@@ -610,6 +610,7 @@ export function InspectorPanel({
   const [cppProjects, setCppProjects] = useState<CppProject[]>([]);
   const [cppProjectsDialogOpen, setCppProjectsDialogOpen] = useState(false);
   const [cppTraceDialogText, setCppTraceDialogText] = useState<string>();
+  const [cppTraceCopied, setCppTraceCopied] = useState(false);
   const inspectorRef = useRef<HTMLElement>(null);
   const editorBodyRef = useRef<HTMLDivElement>(null);
   const pluginEditorRef = useRef<PluginEditorHandle | null>(null);
@@ -635,11 +636,19 @@ export function InspectorPanel({
       const value = event as { bytes?: unknown; detail?: unknown; rate?: unknown; stage?: unknown; total?: unknown };
       if (typeof value.stage !== "string") return;
       const stage = value.stage;
-      setCppProgress((previous) => ({ stage, ...(typeof value.detail === "string" ? { detail: value.detail } : {}), ...(typeof value.bytes === "number" ? { bytes: value.bytes } : {}), ...(typeof value.total === "number" ? { total: value.total } : {}), ...(typeof value.rate === "number" ? { rate: value.rate } : {}), ...(stage === "cmake" && typeof value.detail === "string" ? { log: `${previous?.log ?? ""}${value.detail}`.slice(-16_000) } : {}) }));
+      const rawDetail = typeof value.detail === "string" ? value.detail : undefined;
+      setCppProgress((previous) => ({
+        stage,
+        ...(rawDetail ? { detail: stage === "cmake" ? (en ? "Configuring CMake…" : "正在配置 CMake…") : rawDetail } : {}),
+        ...(typeof value.bytes === "number" ? { bytes: value.bytes } : {}),
+        ...(typeof value.total === "number" ? { total: value.total } : {}),
+        ...(typeof value.rate === "number" ? { rate: value.rate } : {}),
+        ...(stage === "cmake" && rawDetail ? { log: `${previous?.log ?? ""}${rawDetail}`.slice(-16_000) } : {}),
+      }));
       if (value.stage === "ready") window.setTimeout(() => setCppProgress(undefined), 900);
     }).then((unlisten) => { stop = unlisten; });
     return () => stop?.();
-  }, []);
+  }, [en]);
   useEffect(() => {
     let stop: (() => void) | undefined;
     void desktop.onEvent((event) => {
@@ -658,7 +667,7 @@ export function InspectorPanel({
   useEffect(() => {
     const show = (event: Event) => {
       const text = (event as CustomEvent<unknown>).detail;
-      if (typeof text === "string") setCppTraceDialogText(text);
+      if (typeof text === "string") { setCppTraceCopied(false); setCppTraceDialogText(text); }
     };
     window.addEventListener("agent-k-show-cpp-lsp-trace", show);
     return () => window.removeEventListener("agent-k-show-cpp-lsp-trace", show);
@@ -1093,6 +1102,9 @@ export function InspectorPanel({
     ? cppProjects.filter((project) => {
       const file = absoluteWorkspacePath(root, current.path).replaceAll("\\", "/").toLowerCase(); const projectRoot = project.root.replaceAll("\\", "/").toLowerCase(); return file.startsWith(`${projectRoot}/`) || file === projectRoot;
     }).sort((a, b) => b.root.length - a.root.length)[0]
+    : undefined;
+  const contextCppProject = root && contextMenu?.entry.isDir
+    ? cppProjects.find((project) => project.root.replaceAll("\\", "/").toLowerCase() === absoluteWorkspacePath(root, contextMenu.entry.path).replaceAll("\\", "/").toLowerCase())
     : undefined;
   const captureRenderedPreview = (requestedOutputPath?: string) => {
     const target = current?.webPreviewUrl
@@ -1598,9 +1610,10 @@ export function InspectorPanel({
           onError,
           onLanguageRequest(method, parameters) {
             const file = absoluteWorkspacePath(root, current.path);
+            const language = current.format?.languageId ?? languageFor(current.path);
             return method.includes("/did")
-              ? desktop.cppLspNotify(file, method, parameters)
-              : desktop.cppLspRequest(file, method, parameters);
+              ? desktop.languageServerNotify(language, file, method, parameters)
+              : desktop.languageServerRequest(language, file, method, parameters);
           },
           onOpenFile(absolutePath, line, column) {
             const relative = relativeWorkspacePath(root, absolutePath.replace(/^file:\/\//, ""));
@@ -1627,6 +1640,13 @@ export function InspectorPanel({
           wordWrap: settings.editorWordWrap,
         }
       : undefined;
+  const copyCppTrace = () => {
+    if (!cppTraceDialogText) return;
+    void platform.copyText(cppTraceDialogText).then(() => {
+      setCppTraceCopied(true);
+      window.setTimeout(() => setCppTraceCopied(false), 1_500);
+    }).catch((cause) => onError(String(cause)));
+  };
   return (
     <aside className="inspector-panel" ref={inspectorRef}>
       {review ? (
@@ -2066,7 +2086,19 @@ export function InspectorPanel({
             <i className="fa-solid fa-terminal" />
             在外部控制台中打开目录
           </button>
-          {contextMenu.entry.isDir && (
+          {contextMenu.entry.isDir && (contextCppProject ? (
+            <button
+              onClick={() => {
+                setContextMenu(undefined);
+                void desktop.unloadCppProject(contextCppProject.root).catch((cause) => onError(String(cause)));
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <i className="fa-solid fa-code" />
+              {en ? "Unload C++ project" : "卸载 C++ 工程"}
+            </button>
+          ) : (
             <button
               onClick={() => {
                 if (!root) return;
@@ -2084,7 +2116,7 @@ export function InspectorPanel({
               <i className="fa-solid fa-code" />
               {en ? "Load C++ project" : "加载 C++ 工程"}
             </button>
-          )}
+          ))}
           {pluginMenuActions.map((action) => (
             <button
               key={`${action.pluginId}:${action.id}`}
@@ -2310,16 +2342,15 @@ export function InspectorPanel({
         <div className="inspector-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCppProjectsDialogOpen(false); }}>
           <section aria-modal="true" className="inspector-dialog" role="dialog">
             <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{en ? "Active C++ projects" : "已加载的 C++ 工程"}</h2><p>{cppProjects.length ? (en ? `${cppProjects.length} projects` : `${cppProjects.length} 个工程`) : (en ? "No projects loaded" : "当前没有已加载工程")}</p></div><button aria-label={en ? "Close" : "关闭"} className="inspector-dialog-close" onClick={() => setCppProjectsDialogOpen(false)} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
-            {cppProjects.map((project) => <div className="cpp-project-row" key={project.root}><strong>{project.name}</strong><small>{project.root}</small><span>{project.status}{project.error ? ` · ${project.error}` : ""}</span><div><button onClick={() => void desktop.restartCppProject(project.root)} type="button">{en ? "Restart" : "重启"}</button><button onClick={() => void desktop.unloadCppProject(project.root)} type="button">{en ? "Unload" : "卸载"}</button></div></div>)}
+            {cppProjects.map((project) => <div className="cpp-project-row" key={project.root}><div className="cpp-project-row-heading"><strong>{project.name}</strong><div className="cpp-project-row-actions"><button aria-label={en ? "Restart C++ project" : "重启 C++ 工程"} onClick={() => void desktop.restartCppProject(project.root)} title={en ? "Restart" : "重启"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-rotate-right" /></button><button aria-label={en ? "Unload C++ project" : "卸载 C++ 工程"} onClick={() => void desktop.unloadCppProject(project.root)} title={en ? "Unload" : "卸载"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-right-from-bracket" /></button></div></div><small>{project.root}</small><span className={`is-${project.status}`}>{project.status}{project.error ? ` · ${project.error}` : ""}</span></div>)}
           </section>
         </div>
       ) : null}
       {cppTraceDialogText ? (
         <div className="inspector-dialog-backdrop">
           <section aria-modal="true" className="inspector-dialog cpp-trace-dialog" role="dialog">
-            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-wave-square" /></span><div><h2>{en ? "C++ LSP trace" : "C++ LSP 跟踪记录"}</h2><p>{en ? "Recent language-service messages" : "最近的语言服务消息"}</p></div><button aria-label={en ? "Close" : "关闭"} className="inspector-dialog-close" onClick={() => setCppTraceDialogText(undefined)} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
-            <pre className="cpp-progress-log">{cppTraceDialogText}</pre>
-            <div className="cpp-trace-actions"><button onClick={() => void platform.copyText(cppTraceDialogText).catch((cause) => onError(String(cause)))} type="button">{en ? "Copy" : "复制"}</button></div>
+            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-wave-square" /></span><div><h2>{en ? "C++ LSP trace" : "C++ LSP 跟踪记录"}</h2><p>{en ? "Recent language-service messages" : "最近的语言服务消息"}</p></div><button aria-label={en ? "Close" : "关闭"} className="inspector-dialog-close" onClick={() => { setCppTraceCopied(false); setCppTraceDialogText(undefined); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
+            <div className="cpp-trace-output-wrap"><textarea aria-label={en ? "C++ LSP trace" : "C++ LSP 跟踪记录"} className="cpp-trace-output" readOnly spellCheck={false} value={cppTraceDialogText} wrap="soft" /><button aria-label={cppTraceCopied ? (en ? "Copied" : "已复制") : (en ? "Copy trace" : "复制跟踪记录")} className={`cpp-trace-copy${cppTraceCopied ? " is-copied" : ""}`} onClick={copyCppTrace} title={cppTraceCopied ? (en ? "Copied" : "已复制") : (en ? "Copy" : "复制")} type="button"><i aria-hidden="true" className={cppTraceCopied ? "fa-solid fa-check" : "fa-regular fa-copy"} /></button></div>
           </section>
         </div>
       ) : null}
