@@ -368,7 +368,9 @@ export class FileService {
 
   async projectTree(rootInput: string): Promise<FileEntry> {
     const root = await canonicalRoot(rootInput);
-    return buildTree(root, root, 1);
+    // Include one level inside top-level folders so project markers such as
+    // CMakeLists.txt can be identified before the user expands or opens a menu.
+    return buildTree(root, root, 2);
   }
 
   async directoryTree(rootInput: string, path: string): Promise<FileEntry> {
@@ -376,7 +378,7 @@ export class FileService {
     const target = path ? await workspacePath(root, path) : root;
     if (!(await stat(target)).isDirectory())
       throw new Error("Requested path is not a directory");
-    return buildTree(root, target, 1);
+    return buildTree(root, target, 2);
   }
 
   async cmakeProjectDirectory(rootInput: string, path: string): Promise<string> {

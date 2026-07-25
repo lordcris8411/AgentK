@@ -3147,6 +3147,9 @@ body.is-tree-dragging * {
   color: #4f839a;
   width: 23px;
 }
+.tree-folder-icons.web-project-icon {
+  color: #b7774a;
+}
 .cmake-cpp-badge {
   border: 1px solid currentColor;
   border-radius: 3px;

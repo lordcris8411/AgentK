@@ -411,6 +411,13 @@ function isCMakeSolutionDirectory(entry: FileEntry): boolean {
   );
 }
 
+function isWebProjectDirectory(entry: FileEntry): boolean {
+  if (!entry.isDir) return false;
+  const names = new Set(entry.children.filter((child) => !child.isDir).map((child) => child.name.toLowerCase()));
+  return ["vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"].some((name) => names.has(name))
+    || names.has("package.json") && names.has("index.html");
+}
+
 function Tree({
   entry,
   loadDirectory,
@@ -434,6 +441,7 @@ function Tree({
 }) {
   const [expanded, setExpanded] = useState(entry.path === "");
   const cmakeSolution = isCMakeSolutionDirectory(entry);
+  const webProject = !cmakeSolution && isWebProjectDirectory(entry);
   return entry.isDir ? (
     <details
       className={entry.path === dropTarget ? "drop-target" : undefined}
@@ -489,11 +497,13 @@ function Tree({
           />
           <span
             aria-hidden="true"
-            className={`tree-folder-icons${cmakeSolution ? " cmake-solution-icon" : ""}`}
-            title={cmakeSolution ? "CMake C++ project" : undefined}
+            className={`tree-folder-icons${cmakeSolution ? " cmake-solution-icon" : webProject ? " web-project-icon" : ""}`}
+            title={cmakeSolution ? "CMake C++ project" : webProject ? "Web project" : undefined}
           >
             {cmakeSolution ? (
               <span className="cmake-cpp-badge">C++</span>
+            ) : webProject ? (
+              <i className="fa-solid fa-globe" />
             ) : <>
               <i className="fa-regular fa-folder folder-closed" />
               <i className="fa-regular fa-folder-open folder-open" />
