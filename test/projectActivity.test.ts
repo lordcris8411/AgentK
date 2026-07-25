@@ -35,3 +35,13 @@ test("sorts workspaces and their sessions by descending activity", () => {
   );
   assert.deepEqual(older.sessions.map((session) => session.updatedAt), [4, 9]);
 });
+
+test("keeps pinned workspaces first in alphabetical order", () => {
+  const alpha = { ...project("alpha", 10, []), pinned: true };
+  const zebra = { ...project("zebra", 100, []), pinned: true };
+  const recent = project("recent", 200, []);
+
+  const sorted = sortProjectsByActivity([zebra, recent, alpha]);
+
+  assert.deepEqual(sorted.map((item) => item.name), ["alpha", "zebra", "recent"]);
+});

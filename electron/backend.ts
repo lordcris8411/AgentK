@@ -23,6 +23,7 @@ import {
   logoutProvider,
   openExternalUrl,
   openProviderLogin,
+  providerBalance,
   providerCatalog,
   saveClientSettings,
   saveModelProvider,
@@ -122,6 +123,8 @@ export class DesktopBackend {
 
   async invoke(command: string, rawArgs: unknown): Promise<unknown> {
     const args = asObject(rawArgs);
+    if (command === "get_provider_balance")
+      return providerBalance(requiredString(args.providerId, "providerId"));
     const pool = this.requirePool();
     switch (command) {
       case "get_runtime_info":

@@ -454,7 +454,9 @@ export class RpcBridge {
       const firstUserMessage = messages
         .map(asObject)
         .find((message) => message.role === "user");
-      const prompt = firstUserMessage ? messageText(firstUserMessage) : undefined;
+      const prompt = firstUserMessage
+        ? sessionTitlePrompt(messageText(firstUserMessage))
+        : undefined;
       if (!prompt) return;
       const name = await generateSessionName(this.options, provider, modelId, prompt, this.currentCwd);
       if (!name) return;
@@ -486,6 +488,24 @@ function messageText(message: JsonObject): string | undefined {
       .join(" ");
   const normalized = text.replace(/\s+/g, " ").trim();
   return normalized || undefined;
+}
+
+function sessionTitlePrompt(message: string | undefined): string | undefined {
+  if (!message) return undefined;
+  const fileEditorContext = /\s*<agent_k_file_editor>[\s\S]*?<\/agent_k_file_editor>\s*$/u;
+  const fileFormatContext = /\s*<agent_k_file_format>[\s\S]*?<\/agent_k_file_format>\s*$/u;
+  const attachedFilesContext = /\s*<attached_files>[\s\S]*?<\/attached_files>(?:\s*Use the available file tools to inspect these local files when needed\.)?\s*$/u;
+  const leadingSkill = /^\s*<skill\b[^>]*>[\s\S]*?<\/skill>\s*/u;
+  let visible = message;
+  let previous: string;
+  do {
+    previous = visible;
+    visible = visible
+      .replace(fileEditorContext, "")
+      .replace(fileFormatContext, "")
+      .replace(attachedFilesContext, "");
+  } while (visible !== previous);
+  return visible.replace(leadingSkill, "").replace(/\s+/g, " ").trim() || undefined;
 }
 
 function normalizedSessionName(value: string): string | undefined {

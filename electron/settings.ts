@@ -39,6 +39,9 @@ const DEFAULT_SETTINGS: ClientSettings = {
   editorWordWrap: false,
   disabledFileEditors: [],
   disabledFileEditorSkills: [],
+  pinnedWorkspaces: [],
+  defaultModel: "",
+  sessionModels: {},
   leftPanelWidth: 304,
   rightPanelWidth: 420,
   leftPanelHidden: false,
@@ -108,6 +111,21 @@ export function parseClientSettings(value: unknown): ClientSettings {
       ...settings.disabledFileEditors,
     ]),
   ];
+  settings.pinnedWorkspaces = [
+    ...new Set(
+      asArray(source.pinnedWorkspaces).filter(
+        (entry): entry is string => typeof entry === "string" && entry.length > 0 && entry.length <= 4_096,
+      ),
+    ),
+  ];
+  if (typeof source.defaultModel === "string" && source.defaultModel.length <= 256)
+    settings.defaultModel = source.defaultModel;
+  settings.sessionModels = Object.fromEntries(
+    Object.entries(asObject(source.sessionModels)).flatMap(([path, model]) =>
+      path.length <= 4096 && typeof model === "string" && model.length <= 256
+        ? [[path, model]] : [],
+    ),
+  );
   if (Number(source.leftPanelWidth) >= 240 && Number(source.leftPanelWidth) <= 2400)
     settings.leftPanelWidth = Number(source.leftPanelWidth);
   if (Number(source.rightPanelWidth) >= 420 && Number(source.rightPanelWidth) <= 3200)
@@ -151,6 +169,9 @@ export async function saveClientSettings(
     settings.editorWordWrap === original.editorWordWrap &&
     sameStringArray(original.disabledFileEditors, settings.disabledFileEditors) &&
     sameStringArray(original.disabledFileEditorSkills, settings.disabledFileEditorSkills) &&
+    sameStringArray(original.pinnedWorkspaces, settings.pinnedWorkspaces) &&
+    settings.defaultModel === original.defaultModel &&
+    JSON.stringify(settings.sessionModels) === JSON.stringify(original.sessionModels) &&
     settings.leftPanelWidth === original.leftPanelWidth &&
     settings.rightPanelWidth === original.rightPanelWidth &&
     settings.leftPanelHidden === original.leftPanelHidden &&
@@ -311,6 +332,56 @@ export async function logoutProvider(providerId: string): Promise<void> {
   const auth = await jsonObject(path);
   delete auth[id];
   await atomicWrite(path, JSON.stringify(auth, null, 2), true);
+}
+
+export type ProviderBalance = {
+  available: boolean;
+  balances: Array<{ currency: string; total: string }>;
+};
+
+function configuredApiKey(providerAuth: JsonObject): string | undefined {
+  return asString(providerAuth.key) ?? asString(providerAuth.apiKey);
+}
+
+export async function providerBalance(providerId: string): Promise<ProviderBalance> {
+  const auth = await jsonObject(join(piAgentDirectory(), "auth.json"));
+  if (providerId === "deepseek") {
+    const key = configuredApiKey(asObject(auth.deepseek)) ?? process.env.DEEPSEEK_API_KEY;
+    if (!key) throw new Error("DeepSeek API key is not configured");
+    const response = await fetch("https://api.deepseek.com/user/balance", {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) throw new Error(`DeepSeek balance request failed: ${response.status}`);
+    const body = asObject(await response.json());
+    return {
+      available: body.is_available === true,
+      balances: asArray(body.balance_infos).map(asObject).flatMap((entry) => {
+        const currency = asString(entry.currency);
+        const total = asString(entry.total_balance);
+        return currency && total ? [{ currency, total }] : [];
+      }),
+    };
+  }
+  if (providerId === "openrouter") {
+    const key = configuredApiKey(asObject(auth.openrouter)) ?? process.env.OPENROUTER_API_KEY;
+    if (!key) throw new Error("OpenRouter API key is not configured");
+    const response = await fetch("https://openrouter.ai/api/v1/credits", {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) throw new Error(`OpenRouter credits request failed: ${response.status}`);
+    const credits = asObject(asObject(await response.json()).data);
+    const purchased = Number(credits.total_credits);
+    const used = Number(credits.total_usage);
+    if (!Number.isFinite(purchased) || !Number.isFinite(used))
+      throw new Error("OpenRouter returned an invalid credits response");
+    return {
+      available: true,
+      balances: [{ currency: "USD", total: Math.max(0, purchased - used).toFixed(4) }],
+    };
+  }
+  throw new Error(`Balance is not supported for provider: ${providerId}`);
 }
 
 export async function migrateMisclassifiedVllm(): Promise<void> {

@@ -104,7 +104,20 @@ function userFacingSessionText(text: string): string {
     const index = request.indexOf(marker);
     if (index >= 0) return `Plan：${request.slice(0, index).trim()}`;
   }
-  return normalized;
+  const fileEditorContext = /\s*<agent_k_file_editor>[\s\S]*?<\/agent_k_file_editor>\s*$/u;
+  const fileFormatContext = /\s*<agent_k_file_format>[\s\S]*?<\/agent_k_file_format>\s*$/u;
+  const attachedFilesContext = /\s*<attached_files>[\s\S]*?<\/attached_files>(?:\s*Use the available file tools to inspect these local files when needed\.)?\s*$/u;
+  let visible = normalized;
+  let previous: string;
+  do {
+    previous = visible;
+    visible = visible
+      .replace(fileEditorContext, "")
+      .replace(fileFormatContext, "")
+      .replace(attachedFilesContext, "");
+  } while (visible !== previous);
+  // Generated titles can be truncated in the middle of an internal tag.
+  return visible.replace(/\s*<agent_k_[\s\S]*$/u, "").trim();
 }
 
 function messageText(value: JsonObject): string | undefined {
@@ -135,7 +148,7 @@ async function sessionSummary(path: string): Promise<SessionSummary | undefined>
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       const entry = asObject(JSON.parse(lines[index] ?? "{}"));
       if (entry.type === "session_info" && typeof entry.name === "string") {
-        name = entry.name;
+        name = userFacingSessionText(entry.name);
         break;
       }
     }
@@ -495,30 +508,30 @@ export class FileService {
     const root = await canonicalRoot(rootInput);
     const target = path ? await workspacePath(root, path) : root;
     const directory = (await stat(target)).isDirectory() ? target : dirname(target);
+    if (process.platform === "win32") {
+      try {
+        await launchExternalProcess("wt.exe", ["-d", directory], directory);
+      } catch {
+        await launchExternalProcess("cmd.exe", ["/d", "/k"], directory);
+      }
+      return;
+    }
     const candidates: Array<[string, string[]]> =
-      process.platform === "win32"
-        ? [["cmd.exe", ["/K"]]]
-        : [
-            ["xdg-terminal-exec", []],
-            ["konsole", ["--workdir", directory]],
-            ["gnome-terminal", [`--working-directory=${directory}`]],
-            ["xfce4-terminal", [`--working-directory=${directory}`]],
-            ["kitty", ["--directory", directory]],
-            ["alacritty", ["--working-directory", directory]],
-            ["wezterm", ["start", "--cwd", directory]],
-            ["x-terminal-emulator", []],
-            ["xterm", []],
-          ];
+      [
+        ["xdg-terminal-exec", []],
+        ["konsole", ["--workdir", directory]],
+        ["gnome-terminal", [`--working-directory=${directory}`]],
+        ["xfce4-terminal", [`--working-directory=${directory}`]],
+        ["kitty", ["--directory", directory]],
+        ["alacritty", ["--working-directory", directory]],
+        ["wezterm", ["start", "--cwd", directory]],
+        ["x-terminal-emulator", []],
+        ["xterm", []],
+      ];
     const available = candidates.find(([command]) => commandExists(command));
     if (!available)
       throw new Error("No supported terminal emulator was found");
-    const child = spawn(available[0], available[1], {
-      cwd: directory,
-      detached: true,
-      stdio: "ignore",
-      windowsHide: false,
-    });
-    child.unref();
+    await launchExternalProcess(available[0], available[1], directory);
   }
 
   async openInFileManager(rootInput: string, path: string): Promise<void> {
@@ -659,6 +672,22 @@ function commandExists(command: string): boolean {
     } catch {
       return false;
     }
+  });
+}
+
+function launchExternalProcess(command: string, args: string[], cwd: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false,
+    });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
   });
 }
 

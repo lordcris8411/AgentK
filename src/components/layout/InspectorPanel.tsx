@@ -58,15 +58,17 @@ async function createPluginMenuActions(
   let packageJson: string | undefined;
   let directoryEntries: string[] = [];
   if (entry.isDir) {
-    try { packageJson = await desktop.read(root, `${entry.path ? `${entry.path}/` : ""}package.json`); } catch { /* optional context */ }
     try {
       directoryEntries = (await desktop.directory(root, entry.path)).children
         .map((child) => child.name);
     } catch { /* optional context */ }
+    if (directoryEntries.some((name) => name.toLowerCase() === "package.json")) {
+      try { packageJson = await desktop.read(root, `${entry.path ? `${entry.path}/` : ""}package.json`); } catch { /* optional context */ }
+    }
   }
-  const viteConfig = entry.isDir && await Promise.all(["vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"].map(async (name) => {
-    try { await desktop.read(root, `${entry.path ? `${entry.path}/` : ""}${name}`); return true; } catch { return false; }
-  })).then((matches) => matches.some(Boolean));
+  const directoryEntryNames = new Set(directoryEntries.map((name) => name.toLowerCase()));
+  const viteConfig = entry.isDir && ["vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"]
+    .some((name) => directoryEntryNames.has(name));
   const context = { absolutePath: absoluteWorkspacePath(root, entry.path), directoryEntries, isDirectory: entry.isDir, packageJson, path: entry.path, viteConfig };
   const results = await Promise.all(plugins.filter((plugin) => plugin.runtime.menu).map(async (plugin) => {
     const runtime = await desktop.editorPluginRuntime(root, plugin.id);
@@ -402,6 +404,13 @@ function FileIcon({ path }: { path: string }) {
     <i aria-hidden="true" className={`${icon} file-type-icon is-${kind}`} />
   );
 }
+
+function isCMakeSolutionDirectory(entry: FileEntry): boolean {
+  return entry.isDir && entry.children.some(
+    (child) => !child.isDir && ["cmakelists.txt", "cmakelist.txt"].includes(child.name.toLowerCase()),
+  );
+}
+
 function Tree({
   entry,
   loadDirectory,
@@ -424,6 +433,7 @@ function Tree({
   startPointerDrag(event: ReactPointerEvent, entry: FileEntry): void;
 }) {
   const [expanded, setExpanded] = useState(entry.path === "");
+  const cmakeSolution = isCMakeSolutionDirectory(entry);
   return entry.isDir ? (
     <details
       className={entry.path === dropTarget ? "drop-target" : undefined}
@@ -477,9 +487,17 @@ function Tree({
             aria-hidden="true"
             className="fa-solid fa-chevron-right tree-chevron"
           />
-          <span aria-hidden="true" className="tree-folder-icons">
-            <i className="fa-regular fa-folder folder-closed" />
-            <i className="fa-regular fa-folder-open folder-open" />
+          <span
+            aria-hidden="true"
+            className={`tree-folder-icons${cmakeSolution ? " cmake-solution-icon" : ""}`}
+            title={cmakeSolution ? "CMake C++ project" : undefined}
+          >
+            {cmakeSolution ? (
+              <span className="cmake-cpp-badge">C++</span>
+            ) : <>
+              <i className="fa-regular fa-folder folder-closed" />
+              <i className="fa-regular fa-folder-open folder-open" />
+            </>}
           </span>
         </span>
         <span>{entry.name}</span>

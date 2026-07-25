@@ -26,6 +26,7 @@ export function SessionSidebar({
   onNew,
   onSelectProject,
   onSettings,
+  onTogglePin,
   runningPaths,
 }: {
   projects: ProjectSummary[];
@@ -39,6 +40,7 @@ export function SessionSidebar({
   onNew(cwd?: string): void;
   onSelectProject(cwd: string): void;
   onSettings(): void;
+  onTogglePin(cwd: string): void | Promise<void>;
   runningPaths: Set<string>;
 }) {
   const { t } = useSettings();
@@ -168,18 +170,33 @@ export function SessionSidebar({
               </span>
               <span>{project.name}</span>
               <small>{project.sessions.length}</small>
-              <button
-                aria-label={`在 ${project.name} 中新建 session`}
-                className="project-new-session"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onNew(project.cwd);
-                }}
-                type="button"
-              >
-                ＋
-              </button>
+              <span className="project-actions">
+                <button
+                  aria-label={`在 ${project.name} 中新建 session`}
+                  className="project-new-session"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onNew(project.cwd);
+                  }}
+                  type="button"
+                >
+                  ＋
+                </button>
+                <button
+                  aria-label={project.pinned ? t("unpinWorkspace") : t("pinWorkspace")}
+                  className={`project-pin${project.pinned ? " is-pinned" : ""}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void onTogglePin(project.cwd);
+                  }}
+                  title={project.pinned ? t("unpinWorkspace") : t("pinWorkspace")}
+                  type="button"
+                >
+                  <i aria-hidden="true" className="fa-solid fa-thumbtack" />
+                </button>
+              </span>
             </summary>
             <div className="project-sessions">
               {project.sessions.map((session) => {

@@ -88,6 +88,7 @@ type Item = {
   modelId?: string;
   modelName?: string;
   modelProvider?: string;
+  usage?: { input: number; output: number; cacheRead: number };
   thinking?: string;
   thinkingActive?: boolean;
   tool?: string;
@@ -354,6 +355,7 @@ function itemOf(message: Record<string, unknown>, id: string): Item {
       ? (rawModel as Record<string, unknown>)
       : undefined;
   const parts = messageParts(message);
+  const rawUsage = message.usage as Record<string, unknown> | undefined;
   const visibleContent = displayUserContent(message.role, parts.content);
   return {
     id,
@@ -384,6 +386,11 @@ function itemOf(message: Record<string, unknown>, id: string): Item {
           ? modelRecord.provider
           : undefined,
     ...parts,
+    usage: rawUsage ? {
+      cacheRead: Math.max(0, Number(rawUsage.cacheRead) || 0),
+      input: Math.max(0, Number(rawUsage.input) || 0),
+      output: Math.max(0, Number(rawUsage.output) || 0),
+    } : undefined,
     content: visibleContent,
     rawContent:
       message.role === "user" && visibleContent !== parts.content
@@ -425,6 +432,15 @@ function latestContextTokens(messages: Array<Record<string, unknown>>): number |
 
 function formatContextTokens(tokens: number): string {
   return tokens >= 1_000 ? `${(tokens / 1_000).toFixed(1)}k` : String(tokens);
+}
+
+function deepSeekPrice(provider: string | undefined, model: string | undefined) {
+  if (provider && provider !== "deepseek") return undefined;
+  if (model?.toLowerCase() === "deepseek-v4-pro")
+    return { cache: 0.003625, input: 0.435, output: 0.87 };
+  if (model?.toLowerCase() === "deepseek-v4-flash")
+    return { cache: 0.0028, input: 0.14, output: 0.28 };
+  return undefined;
 }
 function toItems(messages: Array<Record<string, unknown>>, offset = 0): Item[] {
   return messages.map((message, index) =>
@@ -1442,6 +1458,9 @@ export function ConversationWorkspace({
   const [modelName, setModelName] = useState(en ? "No model selected" : "未选择模型");
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
   const [currentModelKey, setCurrentModelKey] = useState("");
+  const [providerBalance, setProviderBalance] = useState<string>();
+  const [providerBalanceError, setProviderBalanceError] = useState<string>();
+  const [billingHidden, setBillingHidden] = useState(false);
   const [contextWindow, setContextWindow] = useState<number>();
   const [reportedContextTokens, setReportedContextTokens] = useState<number>();
   const [modelMenu, setModelMenu] = useState(false);
@@ -1828,6 +1847,15 @@ export function ConversationWorkspace({
     };
   }, [connected, en, session?.runtimeId]);
   useEffect(() => {
+    const saved = session?.path ? settings.sessionModels[session.path] : undefined;
+    const [provider, ...modelParts] = saved?.split("/") ?? [];
+    const modelId = modelParts.join("/");
+    if (!connected || !session?.runtimeId || !provider || !modelId) return;
+    void desktop.command({ type: "set_model", provider, modelId }, session.runtimeId)
+      .then(() => window.dispatchEvent(new Event("agent-k-model-changed")))
+      .catch((cause) => onError(String(cause)));
+  }, [connected, onError, session?.path, session?.runtimeId, settings.sessionModels]);
+  useEffect(() => {
     if (!modelMenu) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
       if (!modelControlRef.current?.contains(event.target as Node))
@@ -1852,6 +1880,13 @@ export function ConversationWorkspace({
       );
       setCurrentModelKey(`${model.provider}/${model.id}`);
       setModelName(model.name ?? model.id);
+      if (session?.path)
+        void updateSettings({
+          sessionModels: {
+            ...settings.sessionModels,
+            [session.path]: `${model.provider}/${model.id}`,
+          },
+        });
       setModelMenu(false);
       window.dispatchEvent(new Event("agent-k-model-changed"));
     } catch (cause) {
@@ -2966,6 +3001,64 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
     );
     return listed?.name ?? item.modelName ?? item.modelId ?? modelName;
   };
+  const deepSeekModel = /^deepseek\/(deepseek-v4-(?:flash|pro))$/i.exec(currentModelKey)?.[1]?.toLowerCase();
+  const currentProvider = currentModelKey.split("/", 1)[0]?.toLowerCase();
+  const billingProvider = currentProvider === "deepseek" || currentProvider === "openrouter"
+    ? currentProvider
+    : undefined;
+  const billing = useMemo(() => {
+    const usage = items.reduce((total, item) => {
+      const price = deepSeekPrice(item.modelProvider, item.modelId);
+      if (!price || !item.usage) return total;
+      total.cache += item.usage.cacheRead;
+      total.input += item.usage.input;
+      total.output += item.usage.output;
+      total.cost += (item.usage.cacheRead * price.cache + item.usage.input * price.input + item.usage.output * price.output) / 1_000_000;
+      return total;
+    }, { cache: 0, input: 0, output: 0, cost: 0 });
+    if (!usage.cost && !usage.cache && !usage.input && !usage.output && !billingProvider)
+      return undefined;
+    const cacheRate = usage.cache + usage.input > 0 ? usage.cache / (usage.cache + usage.input) : 0;
+    return { ...usage, cacheRate, cost: usage.cost };
+  }, [billingProvider, items]);
+  useEffect(() => {
+    setBillingHidden(false);
+    if (!billingProvider) {
+      setProviderBalance(undefined);
+      setProviderBalanceError(undefined);
+      return;
+    }
+    let cancelled = false;
+    let retryDelay = 1_500;
+    let retryTimer: number | undefined;
+    const scheduleRetry = () => {
+      if (cancelled || retryTimer !== undefined) return;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        retryDelay = Math.min(retryDelay * 2, 15_000);
+        refresh();
+      }, retryDelay);
+    };
+    const refresh = () => void desktop.providerBalance(billingProvider).then((result) => {
+      const first = result.balances[0];
+      if (cancelled) return;
+      setProviderBalance(first ? `${first.currency === "CNY" ? "¥" : "$"}${first.total}` : undefined);
+      setProviderBalanceError(first ? undefined : (en ? "Provider returned no balance" : "服务商未返回余额"));
+      if (!first) scheduleRetry();
+    }).catch((cause) => {
+      if (cancelled) return;
+      setProviderBalance(undefined);
+      setProviderBalanceError(String(cause));
+      scheduleRetry();
+    });
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [billingProvider, en]);
   const toggleWindowMaximize = async () => {
     if (await desktopWindow.isMaximized()) await desktopWindow.unmaximize();
     else await desktopWindow.maximize();
@@ -3344,7 +3437,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
       <form
         className={`composer${composerDragActive ? " is-dragging" : ""}${
           running || submitting ? " is-working" : ""
-        }`}
+        }${billing && !billingHidden ? " has-billing" : ""}`}
         onDragEnter={(event) => {
           if (
             Array.from(event.dataTransfer.items).some((item) => item.kind === "file")
@@ -3727,6 +3820,17 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
               </div>
             )}
           </div>
+          {billing && (
+            <button
+              aria-label={billingHidden ? (en ? "Show billing" : "显示资费") : (en ? "Hide billing" : "隐藏资费")}
+              className="composer-billing-toggle"
+              onClick={() => setBillingHidden((hidden) => !hidden)}
+              title={billingHidden ? (en ? "Show billing" : "显示资费") : (en ? "Hide billing" : "隐藏资费")}
+              type="button"
+            >
+              <i aria-hidden="true" className={`fa-solid ${billingHidden ? "fa-eye" : "fa-eye-slash"}`} />
+            </button>
+          )}
           <button
             aria-label={stopInsteadOfSend ? (en ? "Stop generation" : "停止生成") : (en ? "Send message" : "发送消息")}
             className={
@@ -3761,6 +3865,17 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
           </button>
         </div>
       </form>
+      {billing && !billingHidden && (
+        <div className="conversation-billing" title={en ? "Usage and balance for this session" : "本会话用量与余额"}>
+          <span><i aria-hidden="true" className="fa-solid fa-microchip" /> {deepSeekModel ?? (billingProvider === "openrouter" ? "OpenRouter" : "DeepSeek")}</span>
+          <span><i aria-hidden="true" className="fa-solid fa-arrow-right-to-bracket" /> {en ? "Input" : "输入"} {formatContextTokens(billing.input)}</span>
+          <span><i aria-hidden="true" className="fa-solid fa-database" /> {en ? "Hit" : "命中"} {formatContextTokens(billing.cache)}</span>
+          <span><i aria-hidden="true" className="fa-solid fa-arrow-right-from-bracket" /> {en ? "Output" : "输出"} {formatContextTokens(billing.output)}</span>
+          <span><i aria-hidden="true" className="fa-solid fa-chart-pie" /> {en ? "Cache" : "缓存"} {(billing.cacheRate * 100).toFixed(0)}%</span>
+          {deepSeekModel && <span><i aria-hidden="true" className="fa-solid fa-receipt" /> {en ? "Session" : "会话"} ¥{billing.cost < 0.01 ? billing.cost.toFixed(4) : billing.cost.toFixed(2)}</span>}
+          {billingProvider && <span title={providerBalanceError}><i aria-hidden="true" className="fa-solid fa-wallet" /> {en ? "Balance" : "余额"} {providerBalance ?? (en ? "Unavailable" : "不可用")}</span>}
+        </div>
+      )}
     </div>
   );
 }

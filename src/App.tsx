@@ -20,7 +20,7 @@ import { platform } from "./lib/platform";
 const DRAFT_SESSION_PATH = "__new__";
 
 export function App() {
-  const { settings } = useSettings();
+  const { settings, update: updateSettings } = useSettings();
   const { cancelPending, clearSessionUi, setActiveRuntimeId } = useExtensionUi();
   const en = settings.locale === "en-US";
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -61,7 +61,15 @@ export function App() {
       setSettingsOpen(true);
     };
     const updateSessionName = (event: Event) => {
-      const name = (event as CustomEvent<{ name?: string }>).detail?.name?.trim();
+      const rawName = (event as CustomEvent<{ name?: string }>).detail?.name;
+      const name = typeof rawName === "string"
+        ? displayUserContent("user", rawName)
+          // A provider may truncate a generated title inside an internal
+          // context tag. Never expose the incomplete instruction as a title.
+          .replace(/\s*<agent_k_[\s\S]*$/u, "")
+          .replace(/\s+/g, " ")
+          .trim()
+        : undefined;
       const current = activeRef.current;
       if (!name || !current) return;
       const renamed = { ...current, name };
@@ -553,6 +561,16 @@ export function App() {
       ),
     );
   };
+  const toggleWorkspacePin = useCallback(async (cwd: string) => {
+    const pinned = new Set(settings.pinnedWorkspaces);
+    if (pinned.has(cwd)) pinned.delete(cwd);
+    else pinned.add(cwd);
+    await updateSettings({
+      pinnedWorkspaces: [...pinned].sort((left, right) =>
+        left.localeCompare(right, undefined, { sensitivity: "base" }),
+      ),
+    });
+  }, [settings.pinnedWorkspaces, updateSettings]);
   const addWorkspace = async () => {
     setError(undefined);
     try {
@@ -620,6 +638,16 @@ export function App() {
           ),
         );
       const materialized = { ...created, runtimeId };
+      if (settings.defaultModel) {
+        const [provider, ...modelParts] = settings.defaultModel.split("/");
+        const modelId = modelParts.join("/");
+        if (provider && modelId) {
+          await desktop.command({ type: "set_model", provider, modelId }, runtimeId);
+          await updateSettings({
+            sessionModels: { ...settings.sessionModels, [created.path]: settings.defaultModel },
+          });
+        }
+      }
       runtimeIds.current.set(created.path, runtimeId);
       activeRef.current = materialized;
       setActive(materialized);
@@ -866,7 +894,11 @@ export function App() {
               setSettingsPage("models");
               setSettingsOpen(true);
             }}
-            projects={projects}
+            onTogglePin={toggleWorkspacePin}
+            projects={projects.map((project) => ({
+              ...project,
+              pinned: settings.pinnedWorkspaces.includes(project.cwd),
+            }))}
             runningPaths={runningPaths}
           />
         }

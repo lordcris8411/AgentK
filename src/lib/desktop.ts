@@ -14,6 +14,7 @@ export type ProjectSummary = {
   cwd: string;
   name: string;
   isHome?: boolean;
+  pinned?: boolean;
   updatedAt: number;
   sessions: SessionSummary[];
 };
@@ -39,6 +40,9 @@ export type ClientSettings = {
   editorWordWrap: boolean;
   disabledFileEditors: string[];
   disabledFileEditorSkills: string[];
+  pinnedWorkspaces: string[];
+  defaultModel: string;
+  sessionModels: Record<string, string>;
   leftPanelWidth: number;
   rightPanelWidth: number;
   leftPanelHidden: boolean;
@@ -163,6 +167,10 @@ export type ProviderDraft = {
   models: string[];
   local: boolean;
 };
+export type ProviderBalance = {
+  available: boolean;
+  balances: Array<{ currency: string; total: string }>;
+};
 
 export type LocalServiceInfo = {
   kind: "ollama" | "vllm" | "lm-studio" | "openai-compatible";
@@ -185,6 +193,8 @@ export const desktop = {
     invoke<void>("delete_model_provider", { providerId }),
   providerCatalog: (runtimeId?: string) =>
     invoke<ProviderCatalogItem[]>("get_provider_catalog", { runtimeId }),
+  providerBalance: (providerId: "deepseek" | "openrouter") =>
+    invoke<ProviderBalance>("get_provider_balance", { providerId }),
   saveProviderApiKey: (providerId: string, apiKey: string) =>
     invoke<void>("save_provider_api_key", { providerId, apiKey }),
   logoutProvider: (providerId: string) =>

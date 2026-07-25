@@ -14,6 +14,9 @@ export interface ClientSettings {
   editorWordWrap: boolean;
   disabledFileEditors: string[];
   disabledFileEditorSkills: string[];
+  pinnedWorkspaces: string[];
+  defaultModel: string;
+  sessionModels: Record<string, string>;
   leftPanelWidth: number;
   rightPanelWidth: number;
   leftPanelHidden: boolean;

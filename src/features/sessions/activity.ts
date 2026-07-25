@@ -12,14 +12,13 @@ export function sortProjectsByActivity(
           left.path.localeCompare(right.path),
       ),
     }))
-    .sort(
-      (left, right) =>
-        right.updatedAt - left.updatedAt ||
-        left.name.localeCompare(right.name, undefined, {
-          sensitivity: "base",
-        }) ||
-        left.cwd.localeCompare(right.cwd, undefined, {
-          sensitivity: "base",
-        }),
-    );
+    .sort((left, right) => {
+      if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+      const alphabetical = left.name.localeCompare(right.name, undefined, {
+        sensitivity: "base",
+      }) || left.cwd.localeCompare(right.cwd, undefined, {
+        sensitivity: "base",
+      });
+      return left.pinned ? alphabetical : right.updatedAt - left.updatedAt || alphabetical;
+    });
 }

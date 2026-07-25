@@ -71,7 +71,7 @@ body {
   background: rgb(20 19 18 / 28%);
   display: flex;
   inset: 0;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 44px;
   position: fixed;
   z-index: 200;
@@ -755,6 +755,7 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
   padding: 16px 10px 12px;
 }
 .sidebar-header {
@@ -844,6 +845,7 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   display: grid;
   gap: 11px;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 0 2px;
 }
@@ -867,7 +869,14 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   font-weight: 600;
   margin-left: auto;
 }
-.project-new-session {
+.project-actions {
+  align-items: center;
+  display: inline-flex;
+  gap: 0;
+  margin-right: -10px;
+}
+.project-new-session,
+.project-pin {
   align-items: center;
   background: transparent;
   border: 0;
@@ -877,7 +886,7 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   font-size: 16px;
   height: 20px;
   justify-content: center;
-  margin: -3px -3px -3px 2px;
+  margin: -3px 0;
   opacity: 0;
   padding: 0;
   transition:
@@ -886,11 +895,21 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
     color 0.14s;
   width: 20px;
 }
-.project-summary:hover .project-new-session,
-.project-new-session:focus-visible {
+.project-pin {
+  font-size: 11px;
+}
+.project-pin.is-pinned {
+  color: #7b628e;
   opacity: 1;
 }
-.project-new-session:hover {
+.project-summary:hover .project-new-session,
+.project-summary:hover .project-pin,
+.project-new-session:focus-visible,
+.project-pin:focus-visible {
+  opacity: 1;
+}
+.project-new-session:hover,
+.project-pin:hover {
   background: #e6e1dc;
   color: #302d2a;
 }
@@ -1849,6 +1868,7 @@ body.is-resizing-panels .composer {
   border-color: #c7c0b8;
   box-shadow: 0 8px 25px #2e282014;
 }
+.composer.has-billing { bottom: 39px; }
 .composer-working-indicator {
   align-items: center;
   animation: splash-in 0.12s ease-out;
@@ -2173,6 +2193,37 @@ body.is-resizing-panels .composer {
   font-size: 10px;
   margin-top: 9px;
 }
+.conversation-billing {
+  align-items: center;
+  color: var(--text-secondary);
+  display: flex;
+  font-size: 10px;
+  gap: 12px;
+  justify-content: flex-start;
+  bottom: 12px;
+  left: calc(var(--left-panel-width, 304px) + 6px);
+  margin-inline: auto;
+  min-height: 16px;
+  position: fixed;
+  right: calc(var(--right-panel-width, 420px) + 6px);
+  width: min(812px, calc(100vw - var(--left-panel-width, 304px) - var(--right-panel-width, 420px) - 80px));
+  z-index: 10;
+}
+.conversation-billing span { align-items: center; display: inline-flex; gap: 4px; }
+.conversation-billing i { color: #9b7b59; font-size: 9px; }
+.composer-billing-toggle {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  height: 24px;
+  margin: 0 4px;
+  padding: 0;
+  width: 24px;
+}
+.composer-billing-toggle:hover { background: var(--surface-hover); color: var(--text-primary); }
 .composer-attach {
   align-items: center;
   background: transparent;
@@ -3091,6 +3142,21 @@ body.is-tree-dragging * {
   font-size: 13px;
   justify-content: center;
   width: 16px;
+}
+.tree-folder-icons.cmake-solution-icon {
+  color: #4f839a;
+  width: 23px;
+}
+.cmake-cpp-badge {
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: -0.6px;
+  line-height: 13px;
+  text-align: center;
+  width: 21px;
 }
 .file-explorer summary > span:last-child {
   overflow: hidden;

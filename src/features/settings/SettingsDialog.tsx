@@ -362,7 +362,6 @@ export function SettingsDialog({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [disabledFileEditors, disabledFileEditorSkills, open, resourceChanges, resourcesLocked]);
-  const modelValue = state.model ? `${state.model.provider}/${state.model.id}` : "";
   const sessionAllowed = Boolean(
     sessionId && sessionStorage.getItem(`agent-k-permission:${sessionId}`) === "allow",
   );
@@ -964,7 +963,7 @@ export function SettingsDialog({
               <>
                 <div className="settings-title-row"><h2>{t("models")}</h2><button disabled={busy} onClick={() => void reloadProviders()} type="button"><i className="fa-solid fa-rotate" /> {t("refresh")}</button></div>
                 <div className="model-current-row">
-                  <label>{t("currentModel")}<select value={modelValue} onChange={(event) => { const [provider, ...rest] = event.target.value.split("/"); void desktop.command({ type: "set_model", provider, modelId: rest.join("/") }).then(() => { window.dispatchEvent(new Event("agent-k-model-changed")); return refresh(); }); }}><option value="">—</option>{models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name ?? model.id} · {model.provider === "ollama" ? "Ollama" : model.provider === "vllm" ? "vLLM" : model.provider}</option>)}</select></label>
+                  <label>{t("defaultModel")}<select value={settings.defaultModel} onChange={(event) => void update({ defaultModel: event.target.value })}><option value="">—</option>{models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name ?? model.id} · {model.provider === "ollama" ? "Ollama" : model.provider === "vllm" ? "vLLM" : model.provider}</option>)}</select></label>
                   <label>{t("thinking")}<select value={state.thinkingLevel ?? "off"} onChange={(event) => void desktop.command({ type: "set_thinking_level", level: event.target.value }).then(() => refresh())}>{["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => <option key={level}>{level}</option>)}</select></label>
                 </div>
                 {providers.length > 0 && <div className="provider-actions"><button onClick={() => { setDraft({ id: "", name: "", baseUrl: "https://", api: "openai-completions", apiKey: "", models: [], local: false }); setEditor("provider"); }} type="button"><i className="fa-solid fa-plus" /> {t("providerAdd")}</button><button onClick={() => { setDraft({ id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKey: "ollama", models: [], local: true }); setEditor("local"); }} type="button"><i className="fa-solid fa-desktop" /> {t("localAdd")}</button></div>}
