@@ -49,6 +49,7 @@ export function fileMatchContext(
 export function languageIdFor(path: string, disabledIds: readonly string[] = []): string {
   void disabledIds;
   const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  if (["cmakelists.txt", "cmakelist.txt"].includes(name)) return "cmake";
   if ([".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile"].includes(name))
     return "shell";
   const extension = name.split(".").pop()?.toLowerCase() ?? "";
@@ -57,7 +58,7 @@ export function languageIdFor(path: string, disabledIds: readonly string[] = [])
     cs: "csharp", go: "go", java: "java", lua: "lua", php: "php", py: "python", pyw: "python",
     ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript",
     json: "json", jsonc: "json", yml: "yaml", yaml: "yaml", sh: "shell", bash: "shell", zsh: "shell",
-    bat: "bat", cmd: "bat",
+    bat: "bat", cmd: "bat", cmake: "cmake",
     ps1: "powershell", rs: "rust", css: "css", scss: "scss", less: "less", xml: "xml",
     rb: "ruby", swift: "swift", kt: "kotlin", kts: "kotlin", dart: "dart", r: "r", sql: "sql",
     graphql: "graphql", gql: "graphql", mdx: "mdx", toml: "ini", ini: "ini", cfg: "ini", conf: "ini",

@@ -3,8 +3,8 @@
   "id": "agent-k.text",
   "name": "Text editor",
   "match": {
-    "extensions": ["py", "pyw", "js", "jsx", "ts", "tsx", "mjs", "cjs", "rs", "go", "java", "c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx", "cs", "sh", "bash", "zsh", "ps1", "bat", "cmd", "css", "scss", "sass", "less", "vue", "svelte", "php", "rb", "swift", "kt", "kts", "dart", "lua", "r", "sql", "graphql", "gql", "mdx", "txt", "log", "lock", "json", "jsonc", "yaml", "yml", "toml", "xml", "ini", "cfg", "conf", "env", "properties", "csv", "tsv"],
-    "fileNames": ["Dockerfile", "Makefile", "LICENSE", "README", ".gitignore", ".gitattributes", ".editorconfig", ".npmrc", ".prettierrc", ".eslintrc"],
+    "extensions": ["py", "pyw", "js", "jsx", "ts", "tsx", "mjs", "cjs", "rs", "go", "java", "c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx", "cs", "sh", "bash", "zsh", "ps1", "bat", "cmd", "cmake", "css", "scss", "sass", "less", "vue", "svelte", "php", "rb", "swift", "kt", "kts", "dart", "lua", "r", "sql", "graphql", "gql", "mdx", "txt", "log", "lock", "json", "jsonc", "yaml", "yml", "toml", "xml", "ini", "cfg", "conf", "env", "properties", "csv", "tsv"],
+    "fileNames": ["Dockerfile", "Makefile", "CMakeLists.txt", "CMakeList.txt", "LICENSE", "README", ".gitignore", ".gitattributes", ".editorconfig", ".npmrc", ".prettierrc", ".eslintrc"],
     "mimeTypes": ["text/*", "application/json", "application/toml", "application/xml", "application/yaml"]
   },
   "editor": "plugin",

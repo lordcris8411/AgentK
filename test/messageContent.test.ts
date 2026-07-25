@@ -12,6 +12,16 @@ test("hides Agent K file-format context from user messages", () => {
   );
 });
 
+test("hides the general Agent K file-editor instruction from user messages", () => {
+  assert.equal(
+    displayUserContent(
+      "user",
+      '打开build_wicked.bat\n\n<agent_k_file_editor>\nInternal open-file instruction.\n</agent_k_file_editor>',
+    ),
+    "打开build_wicked.bat",
+  );
+});
+
 test("hides expanded skill instructions and preserves the question", () => {
   assert.equal(
     displayUserContent(

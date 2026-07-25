@@ -39,6 +39,31 @@ import HtmlWorkerUrl from "monaco-editor/esm/vs/language/html/html.worker?worker
 import JsonWorkerUrl from "monaco-editor/esm/vs/language/json/json.worker?worker&url";
 import TypeScriptWorkerUrl from "monaco-editor/esm/vs/language/typescript/ts.worker?worker&url";
 
+// Monaco does not bundle a CMake grammar. Register the small, declarative
+// language here so every text-editor instance can use it for CMakeLists.txt
+// and .cmake files.
+monaco.languages.register({
+  aliases: ["CMake", "cmake"],
+  extensions: [".cmake"],
+  filenames: ["CMakeLists.txt", "CMakeList.txt"],
+  id: "cmake",
+});
+monaco.languages.setMonarchTokensProvider("cmake", {
+  tokenizer: {
+    root: [
+      [/#.*$/, "comment"],
+      [/\$\{[A-Za-z_][\w]*\}/, "variable"],
+      [/\$<[^>]+>/, "variable"],
+      [/"([^"\\]|\\.)*"/, "string"],
+      [/\b(?:ON|OFF|TRUE|FALSE|YES|NO|Y|N|IGNORE|NOTFOUND)\b/i, "constant"],
+      [/\b(?:if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|return|break|continue)\b/i, "keyword.control"],
+      [/\b(?:add_custom_command|add_custom_target|add_definitions|add_executable|add_library|add_subdirectory|cmake_minimum_required|configure_file|enable_language|file|find_package|include|install|link_directories|message|option|project|set|set_property|target_compile_definitions|target_compile_features|target_compile_options|target_include_directories|target_link_libraries|target_sources)\b/i, "keyword"],
+      [/[()]/, "delimiter.parenthesis"],
+      [/[A-Za-z_][\w-]*/, "identifier"],
+    ],
+  },
+});
+
 async function createWorker(url: string, name?: string): Promise<Worker> {
   const response = await fetch(url);
   if (!response.ok)

@@ -289,7 +289,11 @@ function filterSlashCommands(commands: SlashCommand[], query: string) {
     .filter((entry) => entry.score !== undefined)
     .sort(
       (left, right) =>
-        (left.score ?? 0) - (right.score ?? 0) || left.order - right.order,
+        (left.score ?? 0) - (right.score ?? 0) ||
+        left.command.name.localeCompare(right.command.name, undefined, {
+          sensitivity: "base",
+        }) ||
+        left.order - right.order,
     )
     .map((entry) => entry.command);
 }

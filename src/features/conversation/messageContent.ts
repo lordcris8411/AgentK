@@ -1,5 +1,7 @@
 const fileFormatContextPattern =
   /\s*<agent_k_file_format>[\s\S]*?<\/agent_k_file_format>\s*$/u;
+const fileEditorContextPattern =
+  /\s*<agent_k_file_editor>[\s\S]*?<\/agent_k_file_editor>\s*$/u;
 const attachedFilesContextPattern =
   /\s*<attached_files>[\s\S]*?<\/attached_files>(?:\s*Use the available file tools to inspect these local files when needed\.)?\s*$/u;
 const leadingSkillPattern = /^\s*<skill\b([^>]*)>[\s\S]*?<\/skill>\s*/u;
@@ -16,6 +18,7 @@ function withoutAgentKContext(content: string): string {
     previous = visible;
     visible = visible
       .replace(fileFormatContextPattern, "")
+      .replace(fileEditorContextPattern, "")
       .replace(attachedFilesContextPattern, "");
   } while (visible !== previous);
   return visible.trim();
