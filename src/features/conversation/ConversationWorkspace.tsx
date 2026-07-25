@@ -3021,6 +3021,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
     const cacheRate = usage.cache + usage.input > 0 ? usage.cache / (usage.cache + usage.input) : 0;
     return { ...usage, cacheRate, cost: usage.cost };
   }, [billingProvider, items]);
+  const showBilling = Boolean(billing && billingProvider);
   useEffect(() => {
     setBillingHidden(false);
     if (!billingProvider) {
@@ -3437,7 +3438,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
       <form
         className={`composer${composerDragActive ? " is-dragging" : ""}${
           running || submitting ? " is-working" : ""
-        }${billing && !billingHidden ? " has-billing" : ""}`}
+        }${showBilling && !billingHidden ? " has-billing" : ""}`}
         onDragEnter={(event) => {
           if (
             Array.from(event.dataTransfer.items).some((item) => item.kind === "file")
@@ -3820,7 +3821,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
               </div>
             )}
           </div>
-          {billing && (
+          {showBilling && (
             <button
               aria-label={billingHidden ? (en ? "Show billing" : "显示资费") : (en ? "Hide billing" : "隐藏资费")}
               className="composer-billing-toggle"
@@ -3865,7 +3866,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
           </button>
         </div>
       </form>
-      {billing && !billingHidden && (
+      {showBilling && !billingHidden && billing && (
         <div className="conversation-billing" title={en ? "Usage and balance for this session" : "本会话用量与余额"}>
           <span><i aria-hidden="true" className="fa-solid fa-microchip" /> {deepSeekModel ?? (billingProvider === "openrouter" ? "OpenRouter" : "DeepSeek")}</span>
           <span><i aria-hidden="true" className="fa-solid fa-arrow-right-to-bracket" /> {en ? "Input" : "输入"} {formatContextTokens(billing.input)}</span>
