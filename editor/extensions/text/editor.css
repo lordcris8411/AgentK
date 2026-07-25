@@ -12,6 +12,14 @@ body {
   font-family: "Noto Sans SC", "Segoe UI", sans-serif;
 }
 
+.agent-k-definition-link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.agent-k-cpp-member { color: #c49732 !important; }
+.agent-k-cpp-class { color: #4fc1ff !important; }
+.agent-k-cpp-enum { color: #f9d65c !important; }
+.agent-k-cpp-macro { color: #c586c0 !important; }
+.agent-k-cpp-method { color: #9cdc8c !important; }
+.agent-k-cpp-namespace { color: #c586c0 !important; }
+
 @media (prefers-color-scheme: dark) {
   body { background: #252422; }
 }

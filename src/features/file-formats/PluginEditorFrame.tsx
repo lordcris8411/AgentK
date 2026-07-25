@@ -51,6 +51,8 @@ type PluginEditorFrameProps = {
   onDirtyChange(dirty: boolean): void;
   onContentChange(content: string): void;
   onError(message: string): void;
+  onLanguageRequest?(method: string, parameters: unknown): Promise<unknown>;
+  onOpenFile?(absolutePath: string, line?: number, column?: number): void;
   onReferenceLine(line: number, column: number): void;
   onSaveRequest(content: string): void;
   path: string;
@@ -125,6 +127,8 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
       onDirtyChange,
       onContentChange,
       onError,
+      onLanguageRequest,
+      onOpenFile,
       onReferenceLine,
       onSaveRequest,
       path,
@@ -140,8 +144,11 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
     const initializedDocumentRef = useRef<string | undefined>(undefined);
     const nonceRef = useRef(crypto.randomUUID());
     const pendingReads = useRef(new Map<string, (content: string) => void>());
+    const pendingNavigation = useRef<{ column: number; line: number } | undefined>(undefined);
     const [frameUrl, setFrameUrl] = useState<string>();
     const [ready, setReady] = useState(false);
+    const readyRef = useRef(ready);
+    readyRef.current = ready;
     const [loadError, setLoadError] = useState<string>();
     const serializedActions = JSON.stringify(actions);
 
@@ -200,13 +207,17 @@ ${dependencies.map((dependency) => `<link rel="stylesheet" href="${escapeAttribu
 <style>${escapeInline(runtime.css, "style")}</style></head>
 <body><div id="agent-k-editor-root"></div>
 <script>
+const describeRuntimeError = (value) => {
+  if (value instanceof Error) return value.name + ": " + value.message + (value.stack ? "\\n" + value.stack : "");
+  return String(value);
+};
 const reportRuntimeError = (value) => parent.postMessage({
     apiVersion: 1,
     channel: "agent-k-editor",
     type: "runtime-error",
-    value: value instanceof Error ? value.message : String(value),
+    value: describeRuntimeError(value),
   }, "*");
-addEventListener("error", (event) => reportRuntimeError(event.error ?? event.message));
+addEventListener("error", (event) => reportRuntimeError(event.error ?? (event.message + " (" + event.filename + ":" + event.lineno + ":" + event.colno + ")")));
 addEventListener("unhandledrejection", (event) => reportRuntimeError(event.reason));
 </script>
 <script>
@@ -318,6 +329,21 @@ void (async () => {
           case "error":
             if (typeof message.value === "string") onError(message.value);
             break;
+          case "language-request": {
+            const request = message.value as { method?: unknown; params?: unknown };
+            if (!onLanguageRequest || typeof message.requestId !== "string" || typeof request?.method !== "string") break;
+            void onLanguageRequest(request.method, request.params).then((result) => {
+              frameRef.current?.contentWindow?.postMessage({ apiVersion: EDITOR_API_VERSION, channel: EDITOR_CHANNEL, nonce: nonceRef.current, requestId: message.requestId, type: "language-response", value: { result } }, "*");
+            }).catch((cause) => frameRef.current?.contentWindow?.postMessage({ apiVersion: EDITOR_API_VERSION, channel: EDITOR_CHANNEL, nonce: nonceRef.current, requestId: message.requestId, type: "language-response", value: { error: String(cause) } }, "*"));
+            break;
+          }
+          case "open-file":
+            if (typeof message.value === "string") onOpenFile?.(message.value);
+            else if (message.value && typeof message.value === "object") {
+              const target = message.value as { column?: unknown; line?: unknown; path?: unknown };
+              if (typeof target.path === "string") onOpenFile?.(target.path, typeof target.line === "number" ? target.line : undefined, typeof target.column === "number" ? target.column : undefined);
+            }
+            break;
           case "ready":
             setReady(true);
             break;
@@ -336,7 +362,7 @@ void (async () => {
       };
       window.addEventListener("message", receive);
       return () => window.removeEventListener("message", receive);
-    }, [absolutePath, binary, byteSize, codec, content, language, locale, mimeType, onContentChange, onDirtyChange, onError, onReferenceLine, onSaveRequest, path, plugin.mediaKind, readOnly, theme, wordWrap]);
+    }, [absolutePath, binary, byteSize, codec, content, language, locale, mimeType, onContentChange, onDirtyChange, onError, onLanguageRequest, onOpenFile, onReferenceLine, onSaveRequest, path, plugin.mediaKind, readOnly, theme, wordWrap]);
 
     useEffect(() => {
       if (
@@ -360,6 +386,19 @@ void (async () => {
     }, [path, plugin.id]);
 
     useEffect(() => {
+      let stop: (() => void) | undefined;
+      void desktop.onEvent((event) => {
+        if (event.type !== "cpp_project") return;
+        const project = event.project as { root?: unknown; status?: unknown } | undefined;
+        if (project?.status !== "ready" || typeof project.root !== "string") return;
+        const file = absolutePath.replaceAll("\\", "/").toLowerCase();
+        const root = project.root.replaceAll("\\", "/").toLowerCase();
+        if (file === root || file.startsWith(`${root}/`)) send("action", { id: "cpp-project-ready", parameters: { root: project.root } });
+      }).then((unlisten) => { stop = unlisten; });
+      return () => stop?.();
+    }, [absolutePath]);
+
+    useEffect(() => {
       const layout = (event: Event) => {
         const suspended = (event as CustomEvent<boolean>).detail;
         if (typeof suspended === "boolean") send("set-layout-suspended", suspended);
@@ -374,6 +413,12 @@ void (async () => {
     useEffect(() => {
       if (ready) send("set-word-wrap", wordWrap);
     }, [ready, wordWrap]);
+    useEffect(() => {
+      if (!ready || !pendingNavigation.current) return;
+      const target = pendingNavigation.current;
+      pendingNavigation.current = undefined;
+      send("navigate", target);
+    }, [ready]);
     useEffect(() => {
       if (!ready) return;
       for (const action of actions)
@@ -391,6 +436,7 @@ void (async () => {
         send("mark-saved", savedContent);
       },
       navigate(line, column = 1) {
+        if (!readyRef.current) { pendingNavigation.current = { column, line }; return; }
         send("navigate", { column, line });
       },
       readContent() {

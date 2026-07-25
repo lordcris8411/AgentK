@@ -40,6 +40,7 @@ import {
   loadFirstPartyFileFormatPlugins,
 } from "./file-formats.js";
 import { installSkillHub, previewSkillHub } from "./skill-hub.js";
+import { CppService } from "./cpp-service.js";
 import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
 
 export interface DesktopBackendOptions {
@@ -71,10 +72,12 @@ export class DesktopBackend {
   private pool?: RpcPool;
   private readonly projectConsoles = new Map<string, ProjectConsoleProcess>();
   private readonly webProjects = new Map<string, ReturnType<typeof spawn>>();
+  private readonly cpp: CppService;
 
   constructor(options: DesktopBackendOptions) {
     this.options = options;
     this.files = new FileService(options.appDataPath, options.cachePath);
+    this.cpp = new CppService(options.cachePath, (event) => this.options.emit(event));
     this.bundledExtensionsDirectory = join(options.appDataPath, "bundled-extensions");
     this.bundledSkillsDirectory = join(options.appDataPath, "bundled-skills");
   }
@@ -285,6 +288,22 @@ export class DesktopBackend {
           requiredString(args.path, "path"),
           requiredString(args.terminalId, "terminalId"),
         );
+      case "load_cpp_project":
+        return this.cpp.load(await this.files.workspaceDirectory(requiredString(args.root, "root"), requiredString(args.path, "path")));
+      case "list_cpp_projects":
+        return this.cpp.list();
+      case "list_cpp_lsp_trace":
+        return this.cpp.trace();
+      case "unload_cpp_project":
+        return this.cpp.unload(requiredString(args.root, "root"));
+      case "restart_cpp_project":
+        return this.cpp.restart(requiredString(args.root, "root"));
+      case "cancel_cpp_load":
+        return this.cpp.cancel();
+      case "cpp_lsp_request":
+        return this.cpp.lsp(requiredString(args.file, "file"), requiredString(args.method, "method"), args.params);
+      case "cpp_lsp_notify":
+        return this.cpp.notify(requiredString(args.file, "file"), requiredString(args.method, "method"), args.params);
       case "write_text_file":
         return this.files.writeText(requiredString(args.root, "root"), requiredString(args.path, "path"), requiredString(args.content, "content"));
       case "create_directory":
@@ -338,6 +357,7 @@ export class DesktopBackend {
     for (const child of this.webProjects.values()) child.kill();
     this.webProjects.clear();
     this.pool?.shutdown();
+    this.cpp.shutdown();
     this.files.shutdown();
   }
 

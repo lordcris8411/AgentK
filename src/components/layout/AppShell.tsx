@@ -42,6 +42,7 @@ const WORKSPACE_MINIMUM = 780;
 const RESIZERS_WIDTH = 12;
 const PANEL_POINTER_INTERVAL_MS = 1000 / 60;
 const PANEL_TOGGLE_LAYOUT_DELAY_MS = 260;
+const WINDOW_RESIZE_LAYOUT_IDLE_MS = 120;
 const WINDOW_RESIZE_DIRECTIONS: WindowResizeDirection[] = [
   "North",
   "NorthEast",
@@ -235,7 +236,21 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
   }, [leftHidden, leftWidth, rightHidden, rightWidth]);
   useEffect(() => {
     let animationFrame = 0;
+    let resumeEditorLayoutsTimer: number | undefined;
+    const suspendEditorLayouts = () => {
+      window.dispatchEvent(new CustomEvent("agent-k-editor-layout-suspended", { detail: true }));
+      if (resumeEditorLayoutsTimer !== undefined)
+        window.clearTimeout(resumeEditorLayoutsTimer);
+      resumeEditorLayoutsTimer = window.setTimeout(() => {
+        resumeEditorLayoutsTimer = undefined;
+        window.dispatchEvent(new CustomEvent("agent-k-editor-layout-suspended", { detail: false }));
+      }, WINDOW_RESIZE_LAYOUT_IDLE_MS);
+    };
     const resize = () => {
+      // Monaco layout is expensive enough to make native window drags feel
+      // sticky. The iframe keeps following CSS dimensions; reflow Monaco once
+      // the native resize stream has gone idle instead of for every pixel.
+      suspendEditorLayouts();
       cancelAnimationFrame(animationFrame);
       animationFrame = requestAnimationFrame(() => {
         const windowWidth = window.innerWidth;
@@ -259,6 +274,9 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
     window.addEventListener("resize", resize);
     return () => {
       cancelAnimationFrame(animationFrame);
+      if (resumeEditorLayoutsTimer !== undefined)
+        window.clearTimeout(resumeEditorLayoutsTimer);
+      window.dispatchEvent(new CustomEvent("agent-k-editor-layout-suspended", { detail: false }));
       window.removeEventListener("resize", resize);
     };
   }, []);

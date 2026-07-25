@@ -51,6 +51,9 @@ defineEditor((host, initial) => {
   });
   let saved = initial.content;
   let layoutSuspended = false;
+  let layoutFrame: number | undefined;
+  let layoutHeight = 0;
+  let layoutWidth = 0;
   let previewing = false;
   let contentTimer: number | undefined;
   let contextLine: number | undefined;
@@ -93,15 +96,26 @@ defineEditor((host, initial) => {
     event.stopPropagation();
     host.requestSave(model.getValue());
   });
-  const observer = new ResizeObserver(() => {
-    if (!layoutSuspended && !previewing && source.clientWidth > 0 && source.clientHeight > 0)
-      editor.layout({ width: source.clientWidth, height: source.clientHeight });
-  });
+  const layout = () => {
+    layoutFrame = undefined;
+    if (layoutSuspended || previewing) return;
+    const { clientHeight: height, clientWidth: width } = source;
+    if (height <= 0 || width <= 0 || (height === layoutHeight && width === layoutWidth)) return;
+    layoutHeight = height;
+    layoutWidth = width;
+    editor.layout({ height, width });
+  };
+  const scheduleLayout = () => {
+    if (layoutSuspended || previewing || layoutFrame !== undefined) return;
+    layoutFrame = requestAnimationFrame(layout);
+  };
+  const observer = new ResizeObserver(scheduleLayout);
   observer.observe(source);
 
   return {
     dispose() {
       if (contentTimer !== undefined) window.clearTimeout(contentTimer);
+      if (layoutFrame !== undefined) cancelAnimationFrame(layoutFrame);
       observer.disconnect();
       keydown.dispose();
       context.dispose();

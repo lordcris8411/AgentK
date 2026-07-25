@@ -25,6 +25,8 @@ export type FileEntry = {
   loaded: boolean;
   children: FileEntry[];
 };
+export type CppProject = { root: string; name: string; status: "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped"; error?: string; cmake: boolean; compileCommands: boolean };
+export type CppLspTrace = { elapsedMs?: number; error?: string; file?: string; method: string; phase: "rejected" | "request" | "response" | "sent" | "timeout" | "write-error"; timestamp: number; version?: number };
 
 export type ClientSettings = {
   version: number;
@@ -282,6 +284,14 @@ export const desktop = {
     invoke<{ id: string; url: string }>("start_web_project", { root, path }),
   compileCmakeProject: (root: string, path: string, terminalId: string) =>
     invoke<void>("compile_cmake_project", { root, path, terminalId }),
+  loadCppProject: (root: string, path = "") => invoke<CppProject>("load_cpp_project", { root, path }),
+  listCppProjects: () => invoke<CppProject[]>("list_cpp_projects"),
+  listCppLspTrace: () => invoke<CppLspTrace[]>("list_cpp_lsp_trace"),
+  unloadCppProject: (root: string) => invoke<void>("unload_cpp_project", { root }),
+  restartCppProject: (root: string) => invoke<CppProject>("restart_cpp_project", { root }),
+  cancelCppLoad: () => invoke<void>("cancel_cpp_load"),
+  cppLspRequest: (file: string, method: string, params: unknown) => invoke<unknown>("cpp_lsp_request", { file, method, params }),
+  cppLspNotify: (file: string, method: string, params: unknown) => invoke<void>("cpp_lsp_notify", { file, method, params }),
   write: (root: string, path: string, content: string) =>
     invoke<void>("write_text_file", { root, path, content }),
   mkdir: (root: string, path: string) =>

@@ -40,6 +40,8 @@ export type EditorHost = {
   requestSave(content: string): void;
   referenceLine(line: number, column?: number): void;
   updateContent(content: string): void;
+  languageRequest(method: string, params: unknown): Promise<unknown>;
+  openFile(path: string, line?: number, column?: number): void;
 };
 
 export type EditorFactory = (
@@ -79,7 +81,7 @@ type HostMessage = {
   channel: typeof EDITOR_CHANNEL;
   nonce: string;
   requestId?: string;
-  type: "action" | "focus" | "initialize" | "mark-saved" | "navigate" | "read-content" | "set-content" | "set-layout-suspended" | "set-theme" | "set-word-wrap";
+  type: "action" | "focus" | "initialize" | "language-response" | "mark-saved" | "navigate" | "read-content" | "set-content" | "set-layout-suspended" | "set-theme" | "set-word-wrap";
   value?: unknown;
 };
 
@@ -105,6 +107,8 @@ export function defineEditor(factory: EditorFactory): void {
   let initialization = Promise.resolve();
   let initializationRevision = 0;
   let nonce = "";
+  let nextLanguageRequest = 1;
+  const languagePending = new Map<string, { reject(reason: Error): void; resolve(value: unknown): void; timeout: number }>();
 
   const host: EditorHost = {
     get root() {
@@ -126,6 +130,21 @@ export function defineEditor(factory: EditorFactory): void {
     },
     updateContent(content) {
       if (nonce) post(nonce, "content-change", content);
+    },
+    languageRequest(method, params) {
+      if (!nonce) return Promise.reject(new Error("Editor language service is unavailable"));
+      const requestId = `language-${nextLanguageRequest++}`;
+      post(nonce, "language-request", { method, params }, requestId);
+      return new Promise((resolveRequest, reject) => {
+        const timeout = window.setTimeout(() => {
+          const pending = languagePending.get(requestId); if (!pending) return;
+          languagePending.delete(requestId); pending.reject(new Error(`Language request timed out (${method})`));
+        }, 6_000);
+        languagePending.set(requestId, { resolve: resolveRequest, reject, timeout });
+      });
+    },
+    openFile(path, line, column) {
+      if (nonce) post(nonce, "open-file", { column, line, path });
     },
   };
 
@@ -168,6 +187,14 @@ export function defineEditor(factory: EditorFactory): void {
     if (!instance || message.nonce !== nonce) return;
 
     switch (message.type) {
+      case "language-response": {
+        if (!message.requestId) break;
+        const pending = languagePending.get(message.requestId); if (!pending) break;
+        languagePending.delete(message.requestId); window.clearTimeout(pending.timeout);
+        const response = message.value as { error?: unknown; result?: unknown };
+        response?.error ? pending.reject(new Error(String(response.error))) : pending.resolve(response?.result);
+        break;
+      }
       case "action": {
         const action = message.value as { id?: unknown; parameters?: unknown };
         if (typeof action?.id === "string")

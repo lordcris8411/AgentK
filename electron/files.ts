@@ -398,6 +398,17 @@ export class FileService {
     return target;
   }
 
+  async workspaceDirectory(rootInput: string, path: string): Promise<string> {
+    const root = await canonicalRoot(rootInput);
+    const requested = path ? await workspacePath(root, path) : root;
+    const target = await realpath(requested);
+    if (target !== root && !isPathInside(root, target))
+      throw new Error("Project path is outside the active workspace");
+    if (!(await stat(target)).isDirectory())
+      throw new Error("Project path is not a directory");
+    return target;
+  }
+
   async projectContext(rootInput: string): Promise<string> {
     const root = await canonicalRoot(rootInput);
     const entries = (await readdir(root, { withFileTypes: true }))

@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { desktop, type FileEntry } from "../../lib/desktop";
+import type { CppProject } from "../../lib/desktop";
 import { desktopWindow, platform } from "../../lib/platform";
 import { ProjectConsole } from "./ProjectConsole";
 import {
@@ -49,6 +50,10 @@ type WorkspaceEditorState = {
 type PluginEditorProps = ComponentPropsWithoutRef<typeof PluginEditorFrame>;
 const EDITOR_RUNTIME_CACHE_LIMIT = 40;
 type PluginMenuAction = { id: string; label: string; pluginId: string };
+
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
 
 async function createPluginMenuActions(
   root: string,
@@ -565,6 +570,7 @@ export function InspectorPanel({
   const editorRuntimeRecency = useRef<string[]>([]);
   const [active, setActive] = useState<string>();
   const [lineNavigation, setLineNavigation] = useState<{
+    column: number;
     line: number;
     path: string;
     requestId: number;
@@ -599,11 +605,20 @@ export function InspectorPanel({
     y: number;
   }>();
   const [pluginMenuActions, setPluginMenuActions] = useState<PluginMenuAction[]>([]);
+  const [cppProgress, setCppProgress] = useState<{ detail?: string; error?: string; log?: string; rate?: number; stage: string; bytes?: number; total?: number }>();
+  const [cppDiagnostics, setCppDiagnostics] = useState<Record<string, Array<Record<string, unknown>>>>({});
+  const [cppProjects, setCppProjects] = useState<CppProject[]>([]);
+  const [cppProjectsDialogOpen, setCppProjectsDialogOpen] = useState(false);
+  const [cppTraceDialogText, setCppTraceDialogText] = useState<string>();
   const inspectorRef = useRef<HTMLElement>(null);
+  const editorBodyRef = useRef<HTMLDivElement>(null);
   const pluginEditorRef = useRef<PluginEditorHandle | null>(null);
   const activePathRef = useRef<string | undefined>(undefined);
   const activationRequest = useRef(0);
   const resizingExplorer = useRef(false);
+  const explorerWidthRef = useRef(explorerWidth);
+  const explorerResizeFrame = useRef<number | undefined>(undefined);
+  const pendingExplorerWidth = useRef<number | undefined>(undefined);
   const refreshInFlight = useRef(new Set<string>());
   const currentRoot = useRef(root);
   const tabsRoot = useRef(root);
@@ -612,30 +627,89 @@ export function InspectorPanel({
   currentRoot.current = root;
   treeRef.current = tree;
   activePathRef.current = active;
+  explorerWidthRef.current = explorerWidth;
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void desktop.onEvent((event) => {
+      if (event.type !== "cpp_progress") return;
+      const value = event as { bytes?: unknown; detail?: unknown; rate?: unknown; stage?: unknown; total?: unknown };
+      if (typeof value.stage !== "string") return;
+      const stage = value.stage;
+      setCppProgress((previous) => ({ stage, ...(typeof value.detail === "string" ? { detail: value.detail } : {}), ...(typeof value.bytes === "number" ? { bytes: value.bytes } : {}), ...(typeof value.total === "number" ? { total: value.total } : {}), ...(typeof value.rate === "number" ? { rate: value.rate } : {}), ...(stage === "cmake" && typeof value.detail === "string" ? { log: `${previous?.log ?? ""}${value.detail}`.slice(-16_000) } : {}) }));
+      if (value.stage === "ready") window.setTimeout(() => setCppProgress(undefined), 900);
+    }).then((unlisten) => { stop = unlisten; });
+    return () => stop?.();
+  }, []);
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void desktop.onEvent((event) => {
+      if (event.type !== "cpp_diagnostics" || typeof event.file !== "string" || !Array.isArray(event.diagnostics)) return;
+      const diagnostics = event.diagnostics as unknown[];
+      const key = event.file.replaceAll("\\", "/").toLowerCase();
+      setCppDiagnostics((current) => ({ ...current, [key]: diagnostics.filter((item): item is Record<string, unknown> => !!item && typeof item === "object") }));
+    }).then((unlisten) => { stop = unlisten; });
+    return () => stop?.();
+  }, []);
+  useEffect(() => {
+    const show = () => setCppProjectsDialogOpen(true);
+    window.addEventListener("agent-k-show-cpp-projects", show);
+    return () => window.removeEventListener("agent-k-show-cpp-projects", show);
+  }, []);
+  useEffect(() => {
+    const show = (event: Event) => {
+      const text = (event as CustomEvent<unknown>).detail;
+      if (typeof text === "string") setCppTraceDialogText(text);
+    };
+    window.addEventListener("agent-k-show-cpp-lsp-trace", show);
+    return () => window.removeEventListener("agent-k-show-cpp-lsp-trace", show);
+  }, []);
+  useEffect(() => {
+    let disposed = false;
+    void desktop.listCppProjects().then((projects) => { if (!disposed) setCppProjects(projects); });
+    let stop: (() => void) | undefined;
+    void desktop.onEvent((event) => {
+      if (event.type === "cpp_project") void desktop.listCppProjects().then((projects) => { if (!disposed) setCppProjects(projects); });
+      if (event.type === "cpp_project_removed") void desktop.listCppProjects().then((projects) => { if (!disposed) setCppProjects(projects); });
+    }).then((unlisten) => { stop = unlisten; });
+    return () => { disposed = true; stop?.(); };
+  }, []);
   useEffect(() => {
     const move = (event: MouseEvent) => {
       if (!resizingExplorer.current || !inspectorRef.current) return;
       const left = inspectorRef.current.getBoundingClientRect().left;
-      setExplorerWidth(
-        Math.max(
-          110,
-          Math.min(
-            inspectorRef.current.clientWidth - 120,
-            event.clientX - left,
-          ),
-        ),
-      );
+      pendingExplorerWidth.current = Math.max(110, Math.min(inspectorRef.current.clientWidth - 120, event.clientX - left));
+      if (explorerResizeFrame.current !== undefined) return;
+      explorerResizeFrame.current = requestAnimationFrame(() => {
+        explorerResizeFrame.current = undefined;
+        const width = pendingExplorerWidth.current;
+        if (width === undefined) return;
+        explorerWidthRef.current = width;
+        editorBodyRef.current?.style.setProperty("--explorer-width", `${width}px`);
+      });
     };
     const stop = () => {
+      if (!resizingExplorer.current) return;
+      if (explorerResizeFrame.current !== undefined) {
+        cancelAnimationFrame(explorerResizeFrame.current);
+        explorerResizeFrame.current = undefined;
+      }
+      if (pendingExplorerWidth.current !== undefined) {
+        explorerWidthRef.current = pendingExplorerWidth.current;
+        editorBodyRef.current?.style.setProperty("--explorer-width", `${pendingExplorerWidth.current}px`);
+        pendingExplorerWidth.current = undefined;
+      }
       resizingExplorer.current = false;
       document.body.classList.remove("is-resizing");
       window.dispatchEvent(new CustomEvent("agent-k-editor-layout-suspended", { detail: false }));
+      setExplorerWidth(explorerWidthRef.current);
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", stop);
     return () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", stop);
+      if (explorerResizeFrame.current !== undefined)
+        cancelAnimationFrame(explorerResizeFrame.current);
     };
   }, []);
   useEffect(() => () => pointerDragCleanup.current(), []);
@@ -805,16 +879,18 @@ export function InspectorPanel({
     }
   };
   const activateTab = (path: string) => {
+    const pathKey = path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
+    const targetPath = tabs.find((tab) => tab.path.replaceAll("\\", "/").toLocaleLowerCase("en-US") === pathKey)?.path ?? path;
     const previousPath = activePathRef.current;
     const request = ++activationRequest.current;
     const finish = () => {
       if (request !== activationRequest.current) return;
-      activePathRef.current = path;
-      setActive(path);
+      activePathRef.current = targetPath;
+      setActive(targetPath);
     };
     const previousTab = tabs.find((tab) => tab.path === previousPath);
     if (
-      previousPath !== path &&
+      previousPath !== targetPath &&
       previousTab?.format?.editor === "plugin" &&
       previousTab.runtimeDirty &&
       pluginEditorRef.current
@@ -873,7 +949,10 @@ export function InspectorPanel({
     }));
   }, [active, fileFormatPlugins, root, settings.disabledFileEditors, settings.disabledFileEditorSkills]);
   const open = async (path: string) => {
-    if (!root || tabs.some((tab) => tab.path === path)) {
+    const pathKey = path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
+    const alreadyOpen = (tab: Tab) => tab.path.replaceAll("\\", "/").toLocaleLowerCase("en-US") === pathKey;
+    const appendTab = (tab: Tab) => setTabs((current) => current.some(alreadyOpen) ? current : [...current, tab]);
+    if (!root || tabs.some(alreadyOpen)) {
       activateTab(path);
       return;
     }
@@ -894,7 +973,7 @@ export function InspectorPanel({
     }
     const format = resolveFileFormat(match, plugins, settings.disabledFileEditors);
     if (!format) {
-      setTabs((current) => [...current, { path, content: "", saved: "", unsupported: true }]);
+      appendTab({ path, content: "", saved: "", unsupported: true });
       activateTab(path);
       return;
     }
@@ -902,20 +981,7 @@ export function InspectorPanel({
     if (format.editor === "plugin" && previewKind) {
       try {
         const data = await desktop.readBinary(root, path);
-        setTabs((current) => [
-          ...current,
-          {
-            binary: data,
-            content: "",
-            path,
-            previewBytes: data.byteLength,
-            previewCodec:
-              previewKind === "video" ? detectVideoCodec(data) : undefined,
-            mimeType: match.mimeType,
-            saved: "",
-            format,
-          },
-        ]);
+        appendTab({ binary: data, content: "", path, previewBytes: data.byteLength, previewCodec: previewKind === "video" ? detectVideoCodec(data) : undefined, mimeType: match.mimeType, saved: "", format });
         activateTab(path);
       } catch (cause) {
         onError(`无法预览文件：${String(cause)}`);
@@ -923,19 +989,13 @@ export function InspectorPanel({
       return;
     }
     if (!(format.editable === true || path.toLowerCase().endsWith(".lock"))) {
-      setTabs((current) => [
-        ...current,
-        { path, content: "", saved: "", unsupported: true, format, mimeType: match.mimeType },
-      ]);
+      appendTab({ path, content: "", saved: "", unsupported: true, format, mimeType: match.mimeType });
       activateTab(path);
       return;
     }
     try {
       const content = await desktop.read(root, path);
-      setTabs((current) => [
-        ...current,
-        { path, content, saved: content, format, mimeType: match.mimeType },
-      ]);
+      appendTab({ path, content, saved: content, format, mimeType: match.mimeType });
       activateTab(path);
     } catch (cause) {
       onError(`无法打开文件：${String(cause)}`);
@@ -943,9 +1003,10 @@ export function InspectorPanel({
   };
   useEffect(() => {
     const openReferencedLine = (event: Event) => {
-      const detail = (event as CustomEvent<{ line?: number; path?: string }>).detail;
+      const detail = (event as CustomEvent<{ column?: number; line?: number; path?: string }>).detail;
       if (!detail?.path || !detail.line) return;
       const target = {
+        column: Math.max(1, Math.floor(detail.column ?? 1)),
         line: Math.max(1, Math.floor(detail.line)),
         path: detail.path.replaceAll("\\", "/"),
         requestId: Date.now() + Math.random(),
@@ -1005,7 +1066,10 @@ export function InspectorPanel({
           ? { ...tab, previewMode: false }
           : tab,
       ));
-      pluginEditorRef.current?.navigate(lineNavigation.line, 1);
+      pluginEditorRef.current?.navigate(lineNavigation.line, lineNavigation.column);
+      setLineNavigation((current) =>
+        current?.requestId === lineNavigation.requestId ? undefined : current,
+      );
     });
     return () => cancelAnimationFrame(frame);
   }, [active, lineNavigation, tabs]);
@@ -1024,6 +1088,11 @@ export function InspectorPanel({
   };
   const current = tabsRoot.current === root
     ? tabs.find((tab) => tab.path === active)
+    : undefined;
+  const currentCppProject = root && current && ["c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx"].includes(current.path.split(".").pop()?.toLowerCase() ?? "")
+    ? cppProjects.filter((project) => {
+      const file = absoluteWorkspacePath(root, current.path).replaceAll("\\", "/").toLowerCase(); const projectRoot = project.root.replaceAll("\\", "/").toLowerCase(); return file.startsWith(`${projectRoot}/`) || file === projectRoot;
+    }).sort((a, b) => b.root.length - a.root.length)[0]
     : undefined;
   const captureRenderedPreview = (requestedOutputPath?: string) => {
     const target = current?.webPreviewUrl
@@ -1100,7 +1169,11 @@ export function InspectorPanel({
   }, [current, en]);
   const activeEditorRuntimeKey =
     root && current?.format?.editor === "plugin"
-      ? `${root}\0${current.format.id}\0${current.path}`
+      // A C++ editor created before clangd becomes ready has already completed
+      // its didOpen attempt. Include the ready service identity in its cached
+      // runtime key so that it is recreated and sends didOpen again when the
+      // containing project finishes loading.
+      ? `${root}\0${current.format.id}\0${current.path}\0${currentCppProject?.status === "ready" ? currentCppProject.root : "no-cpp-service"}`
       : undefined;
   const displayedEditorRuntimeKeys = activeEditorRuntimeKey
     ? insertCachedEditorRuntime(
@@ -1486,15 +1559,21 @@ export function InspectorPanel({
       window.removeEventListener("drop", drop);
     };
   }, [root]);
+  const currentCppDiagnostics = root && current
+    ? cppDiagnostics[absoluteWorkspacePath(root, current.path).replaceAll("\\", "/").toLowerCase()]
+    : undefined;
   const activePluginEditorProps: PluginEditorProps | undefined =
     current?.format?.editor === "plugin" && root
       ? {
-          actions: ["agent-k.html", "agent-k.markdown"].includes(current.format.id)
+          actions: [
+            ...(["agent-k.html", "agent-k.markdown"].includes(current.format.id)
             ? [{
                 id: "set-preview",
                 parameters: { enabled: current.previewMode === true },
               }]
-            : [],
+            : []),
+            ...(currentCppDiagnostics ? [{ id: "set-cpp-diagnostics", parameters: { diagnostics: currentCppDiagnostics } }] : []),
+          ],
           absolutePath: absoluteWorkspacePath(root, current.path),
           binary: current.binary,
           byteSize: current.previewBytes,
@@ -1517,6 +1596,21 @@ export function InspectorPanel({
             ));
           },
           onError,
+          onLanguageRequest(method, parameters) {
+            const file = absoluteWorkspacePath(root, current.path);
+            return method.includes("/did")
+              ? desktop.cppLspNotify(file, method, parameters)
+              : desktop.cppLspRequest(file, method, parameters);
+          },
+          onOpenFile(absolutePath, line, column) {
+            const relative = relativeWorkspacePath(root, absolutePath.replace(/^file:\/\//, ""));
+            if (!relative) return;
+            if (line !== undefined) {
+              window.dispatchEvent(new CustomEvent("agent-k-open-file-line", { detail: { column, line, path: relative } }));
+              return;
+            }
+            void open(relative);
+          },
           onReferenceLine(line) {
             window.dispatchEvent(new CustomEvent("agent-k-add-line-reference", {
               detail: { line, path: current.path },
@@ -1547,6 +1641,7 @@ export function InspectorPanel({
       ) : null}
       <div
         className="editor-body"
+        ref={editorBodyRef}
         style={
           { "--explorer-width": `${explorerWidth}px` } as Record<string, string>
         }
@@ -1687,6 +1782,11 @@ export function InspectorPanel({
               </button>
             ))}
           </div>
+          {currentCppProject ? <div className={`cpp-status-bar is-${currentCppProject.status}`} title={currentCppProject.error}>
+            <i className="fa-solid fa-code" /> <span>C++ · {currentCppProject.name}</span><span>{currentCppProject.status}</span>
+            <button onClick={() => void desktop.restartCppProject(currentCppProject.root)} type="button">{en ? "Restart" : "重启"}</button>
+            <button onClick={() => void desktop.unloadCppProject(currentCppProject.root)} type="button">{en ? "Unload" : "卸载"}</button>
+          </div> : null}
           {current && !current.unsupported && current.format?.editable ? (
             <div className="editor-floating-actions">
               <>
@@ -1966,6 +2066,25 @@ export function InspectorPanel({
             <i className="fa-solid fa-terminal" />
             在外部控制台中打开目录
           </button>
+          {contextMenu.entry.isDir && (
+            <button
+              onClick={() => {
+                if (!root) return;
+                const path = contextMenu.entry.path;
+                setContextMenu(undefined);
+                setCppProgress({ stage: "preparing", detail: en ? "Preparing C++ toolchain…" : "正在准备 C++ 工具链…" });
+                void desktop.loadCppProject(root, path).then((project) => {
+                  if (project.status === "failed") setCppProgress((current) => ({ ...(current ?? { stage: "failed" }), stage: "failed", error: project.error }));
+                  else setCppProgress(undefined);
+                }).catch((cause) => setCppProgress({ stage: "failed", error: String(cause) }));
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <i className="fa-solid fa-code" />
+              {en ? "Load C++ project" : "加载 C++ 工程"}
+            </button>
+          )}
           {pluginMenuActions.map((action) => (
             <button
               key={`${action.pluginId}:${action.id}`}
@@ -2174,6 +2293,34 @@ export function InspectorPanel({
               </button>
             </footer>
           </form>
+        </div>
+      ) : null}
+      {cppProgress ? (
+        <div className="inspector-dialog-backdrop">
+          <section aria-modal="true" className="inspector-dialog cpp-progress-dialog" role="dialog">
+            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{cppProgress.stage === "failed" ? (en ? "C++ project load failed" : "C++ 工程加载失败") : (en ? "Preparing C++ project" : "正在准备 C++ 工程")}</h2><p>{cppProgress.detail ?? cppProgress.stage}</p></div><button aria-label={cppProgress.stage === "failed" ? (en ? "Close" : "关闭") : (en ? "Cancel C++ project load" : "取消加载 C++ 工程")} className="cpp-progress-close" disabled={cppProgress.stage === "cancelling"} onClick={() => { if (cppProgress.stage === "failed") { setCppProgress(undefined); return; } setCppProgress((current) => current ? { ...current, stage: "cancelling", detail: en ? "Cancelling…" : "正在取消…" } : current); void desktop.cancelCppLoad().catch((cause) => setCppProgress({ stage: "failed", error: String(cause) })); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
+            {cppProgress.total ? <progress className="cpp-toolchain-progress" max={cppProgress.total} value={Math.min(cppProgress.bytes ?? 0, cppProgress.total)} /> : <p>{en ? "Working…" : "处理中…"}</p>}
+            {cppProgress.bytes !== undefined ? <small>{formatMegabytes(cppProgress.bytes)}{cppProgress.total ? ` / ${formatMegabytes(cppProgress.total)} · ${(Math.min(cppProgress.bytes, cppProgress.total) / cppProgress.total * 100).toFixed(2)}%` : ""}{cppProgress.rate !== undefined ? ` · ${formatMegabytes(cppProgress.rate)}/s` : ""}</small> : null}
+            {cppProgress.error ? <p>{cppProgress.error}</p> : null}
+            {cppProgress.log ? <details><summary>{en ? "CMake output" : "CMake 输出"}</summary><pre className="cpp-progress-log">{cppProgress.log}</pre></details> : null}
+          </section>
+        </div>
+      ) : null}
+      {cppProjectsDialogOpen ? (
+        <div className="inspector-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCppProjectsDialogOpen(false); }}>
+          <section aria-modal="true" className="inspector-dialog" role="dialog">
+            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{en ? "Active C++ projects" : "已加载的 C++ 工程"}</h2><p>{cppProjects.length ? (en ? `${cppProjects.length} projects` : `${cppProjects.length} 个工程`) : (en ? "No projects loaded" : "当前没有已加载工程")}</p></div><button aria-label={en ? "Close" : "关闭"} className="inspector-dialog-close" onClick={() => setCppProjectsDialogOpen(false)} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
+            {cppProjects.map((project) => <div className="cpp-project-row" key={project.root}><strong>{project.name}</strong><small>{project.root}</small><span>{project.status}{project.error ? ` · ${project.error}` : ""}</span><div><button onClick={() => void desktop.restartCppProject(project.root)} type="button">{en ? "Restart" : "重启"}</button><button onClick={() => void desktop.unloadCppProject(project.root)} type="button">{en ? "Unload" : "卸载"}</button></div></div>)}
+          </section>
+        </div>
+      ) : null}
+      {cppTraceDialogText ? (
+        <div className="inspector-dialog-backdrop">
+          <section aria-modal="true" className="inspector-dialog cpp-trace-dialog" role="dialog">
+            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-wave-square" /></span><div><h2>{en ? "C++ LSP trace" : "C++ LSP 跟踪记录"}</h2><p>{en ? "Recent language-service messages" : "最近的语言服务消息"}</p></div><button aria-label={en ? "Close" : "关闭"} className="inspector-dialog-close" onClick={() => setCppTraceDialogText(undefined)} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
+            <pre className="cpp-progress-log">{cppTraceDialogText}</pre>
+            <div className="cpp-trace-actions"><button onClick={() => void platform.copyText(cppTraceDialogText).catch((cause) => onError(String(cause)))} type="button">{en ? "Copy" : "复制"}</button></div>
+          </section>
         </div>
       ) : null}
     </aside>

@@ -1644,6 +1644,7 @@ export function ConversationWorkspace({
     { name: "name", description: en ? "Set the session name" : "设置会话名称", source: "builtin" },
     { name: "session", description: en ? "Show session information and statistics" : "显示会话信息与统计", source: "builtin" },
     { name: "reload", description: en ? "Reload Pi resources and configuration" : "重新加载 Pi 资源和配置", source: "builtin" },
+    { name: "active-cpp-projects", description: en ? "Show loaded C++ projects" : "查看已加载的 C++ 工程", source: "builtin" },
   ], [en]);
   useEffect(() => {
     let cancelled = false;
@@ -2551,6 +2552,37 @@ export function ConversationWorkspace({
         showToast: false,
       });
       pushNotification(en ? "Session statistics were added to notifications" : "会话统计已添加到通知中心");
+      return true;
+    }
+    if (name === "active-cpp-projects") {
+      const [operation, ...rootParts] = argumentsText.split(/\s+/);
+      const projectRoot = rootParts.join(" ").trim();
+      if (operation === "trace") {
+        const trace = await desktop.listCppLspTrace();
+        const text = trace.length
+          ? trace.slice(-40).map((event) => `${new Date(event.timestamp).toLocaleTimeString()} ${event.phase.toUpperCase()} ${event.method}${event.version === undefined ? "" : ` v${event.version}`}${event.elapsedMs === undefined ? "" : ` ${event.elapsedMs}ms`}${event.error ? ` · ${event.error}` : ""}${event.file ? `\n  ${event.file}` : ""}`).join("\n")
+          : (en ? "No C++ LSP trace entries yet." : "尚无 C++ LSP 跟踪记录。");
+        window.dispatchEvent(new CustomEvent("agent-k-show-cpp-lsp-trace", { detail: text }));
+        pushNotification(en ? "C++ LSP trace opened" : "已打开 C++ LSP 跟踪记录", "info");
+        return true;
+      }
+      if (operation === "unload" && projectRoot) {
+        await desktop.unloadCppProject(projectRoot);
+        pushNotification(en ? "C++ project unloaded" : "C++ 工程已卸载");
+        return true;
+      }
+      if (operation === "restart" && projectRoot) {
+        await desktop.restartCppProject(projectRoot);
+        pushNotification(en ? "C++ project restarted" : "C++ 工程已重启");
+        return true;
+      }
+      const projects = await desktop.listCppProjects();
+      window.dispatchEvent(new Event("agent-k-show-cpp-projects"));
+      const text = projects.length
+        ? `${projects.map((project) => `${project.name}\n${project.root}\n${project.status}${project.error ? ` · ${project.error}` : ""}`).join("\n\n")}\n\n${en ? "Use /active-cpp-projects restart <root> or unload <root>." : "使用 /active-cpp-projects restart <根路径> 或 unload <根路径> 管理工程。"}`
+        : (en ? "No C++ projects are loaded." : "当前没有已加载的 C++ 工程。");
+      pushNotification(text, "info", { read: true, showToast: false });
+      pushNotification(en ? "C++ projects were added to notifications" : "C++ 工程状态已添加到通知中心");
       return true;
     }
     if (name === "reload") {

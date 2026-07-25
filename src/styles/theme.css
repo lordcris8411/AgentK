@@ -3240,6 +3240,27 @@ body.is-tree-dragging * {
   min-width: 0;
   position: relative;
 }
+.cpp-status-bar { align-items: center; background: var(--panel-background, #f3f4f6); border-bottom: 1px solid var(--border-color, #d1d5db); display: flex; font-size: 12px; gap: 8px; min-height: 26px; padding: 0 9px; }
+.cpp-status-bar span:nth-of-type(2) { margin-left: auto; opacity: .72; text-transform: capitalize; }
+.cpp-status-bar button { background: transparent; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 2px 4px; }
+.cpp-status-bar.is-failed { color: #b42318; }
+.cpp-status-bar.is-ready { color: #067647; }
+.cpp-toolchain-progress { appearance: none; display: block; height: 8px; margin: 0; width: 100%; }
+.cpp-toolchain-progress::-webkit-progress-bar { background: #dfdbd6; border: 1px solid #b9b2ab; border-radius: 4px; }
+.cpp-toolchain-progress::-webkit-progress-value { background: #8fc7f3; border-radius: 3px; }
+.cpp-progress-dialog { padding: 20px; width: min(430px, 100%); }
+.cpp-progress-dialog > header { margin-bottom: 16px; }
+.cpp-progress-dialog > header > div { min-width: 0; }
+.cpp-progress-close, .inspector-dialog-close { align-items: center; background: transparent; border: 0; border-radius: 7px; color: #7e7770; cursor: pointer; display: inline-flex; flex: 0 0 30px; font-size: 15px; height: 30px; justify-content: center; margin-left: auto; padding: 0; width: 30px; }
+.cpp-progress-close:hover:not(:disabled), .inspector-dialog-close:hover:not(:disabled) { background: #e9e4df; color: #393531; }
+.cpp-progress-close:disabled, .inspector-dialog-close:disabled { cursor: default; opacity: .45; }
+.cpp-progress-log { max-height: 220px; max-width: 520px; overflow: auto; white-space: pre-wrap; }
+.cpp-trace-dialog { max-width: min(760px, calc(100vw - 32px)); }
+.cpp-trace-dialog .cpp-progress-log { max-height: min(55vh, 560px); overflow: auto; user-select: text; }
+.cpp-trace-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.cpp-project-row { border-top: 1px solid var(--border-color, #d1d5db); display: grid; gap: 4px; padding: 10px 0; }
+.cpp-project-row small, .cpp-project-row span { overflow-wrap: anywhere; opacity: .78; }
+.cpp-project-row > div { display: flex; gap: 6px; }
 .editor-area > .monaco-editor {
   flex: 1;
   min-height: 0;
