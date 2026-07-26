@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   ClientSettings,
@@ -17,6 +17,7 @@ const MAX_EDITOR_CSS_BYTES = 2 * 1024 * 1024;
 const MAX_EDITOR_ASSETS_BYTES = 24 * 1024 * 1024;
 const EDITOR_DEPENDENCY_ID = /^[a-z0-9][a-z0-9._-]{1,80}@[0-9]+\.[0-9]+\.[0-9]+$/i;
 const mediaKinds = new Set(["image", "audio", "video", "pdf"]);
+const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -67,12 +68,14 @@ function parsePluginValue(raw: unknown, path: string, scope: FileFormatPluginRes
   const value = asRecord(raw);
   const id = typeof value.id === "string" ? value.id.trim() : "";
   const name = typeof value.name === "string" ? value.name.trim() : "";
+  const description = typeof value.description === "string" ? value.description.trim() : "";
   const editor = typeof value.editor === "string" ? value.editor : "";
   const rawMatch = asRecord(value.match);
   const rawExtensions = strings(rawMatch.extensions);
   const rawFileNames = strings(rawMatch.fileNames);
   const rawAbsolutePaths = strings(rawMatch.absolutePaths);
   const rawMimeTypes = strings(rawMatch.mimeTypes);
+  const contextMarkers = strings(value.contextMarkers);
   const extensions = rawExtensions
     .map((item) => item.toLowerCase().replace(/^\./, ""))
     .filter((item) => /^[a-z0-9][a-z0-9+_-]*$/i.test(item));
@@ -123,11 +126,12 @@ function parsePluginValue(raw: unknown, path: string, scope: FileFormatPluginRes
     ? undefined
     : safeRuntimeDirectory(rawRuntime.assets);
   const runtimeDependencies = strings(rawRuntime.dependencies);
+  const version = typeof value.version === "string" ? value.version.trim() : "0.0.0";
   const languageId = typeof value.languageId === "string"
     ? value.languageId.trim()
     : undefined;
   if (
-    !runtimeEntry ||
+    !runtimeEntry || !SEMVER.test(version) ||
     (rawRuntime.menu !== undefined && !runtimeMenu) ||
     (rawRuntime.style !== undefined && !runtimeStyle) ||
     (rawRuntime.assets !== undefined && !runtimeAssets) ||
@@ -145,8 +149,10 @@ function parsePluginValue(raw: unknown, path: string, scope: FileFormatPluginRes
     apiVersion: 1,
     id,
     name,
+    ...(description ? { description } : {}),
     path,
     scope,
+    version,
     match: {
       ...(absolutePaths.length ? { absolutePaths } : {}),
       ...(extensions.length ? { extensions } : {}),
@@ -166,7 +172,32 @@ function parsePluginValue(raw: unknown, path: string, scope: FileFormatPluginRes
     ...(typeof value.mimeType === "string" ? { mimeType: value.mimeType } : {}),
     ...(mediaKind ? { mediaKind } : {}),
     ...(capabilities.length ? { capabilities } : {}),
+    ...(contextMarkers.length ? { contextMarkers } : {}),
   };
+}
+
+function compareVersion(left: string, right: string): number {
+  const a = left.split(".").map(Number); const b = right.split(".").map(Number);
+  return (a[0] ?? 0) - (b[0] ?? 0) || (a[1] ?? 0) - (b[1] ?? 0) || (a[2] ?? 0) - (b[2] ?? 0);
+}
+
+/** Install a reviewed directory package into the user-level plugin discovery root. */
+export async function installUserFileFormatPlugin(
+  sourceDirectory: string,
+  builtins: readonly FileFormatPluginResource[],
+): Promise<FileFormatPluginResource> {
+  const source = await realpath(sourceDirectory);
+  const plugin = await readPlugin(source, "user");
+  if (!plugin) throw new Error("Selected directory is not a valid Editor plugin package");
+  if (!existsSync(join(source, "SKILL.md"))) throw new Error("Editor plugin package must include SKILL.md");
+  const builtin = builtins.find((candidate) => candidate.id === plugin.id);
+  if (builtin && compareVersion(builtin.version ?? "1.0.0", plugin.version ?? "0.0.0") > 0)
+    throw new Error(`Built-in Editor '${plugin.id}' (${builtin.version ?? "1.0.0"}) is newer than this package (${plugin.version ?? "0.0.0"})`);
+  const destination = join(piAgentDirectory(), "skills", plugin.id);
+  if (existsSync(destination)) throw new Error(`A user Editor plugin with id '${plugin.id}' is already installed`);
+  await mkdir(join(piAgentDirectory(), "skills"), { recursive: true });
+  await cp(source, destination, { recursive: true, errorOnExist: true, force: false });
+  return { ...plugin, path: join(destination, "editor.json") };
 }
 
 async function readPlugin(directory: string, scope: FileFormatPluginResource["scope"]): Promise<FileFormatPluginResource | undefined> {
@@ -344,6 +375,26 @@ export async function getEditorPluginRuntime(
     ...(menuJavascript ? { menuJavascript } : {}),
     pluginId,
   };
+}
+
+/** Read only the bundled Skill after resolving the plugin through discovery. */
+export async function getEditorPluginSkill(
+  appDataPath: string,
+  cwd: string,
+  firstPartyPlugins: readonly FileFormatPluginResource[],
+  pluginId: string,
+): Promise<string> {
+  const plugin = (await getFileFormatPlugins(appDataPath, cwd, firstPartyPlugins))
+    .find((candidate) => candidate.id === pluginId);
+  if (!plugin) throw new Error(`Editor plugin is unavailable: ${pluginId}`);
+  const packageDirectory = dirname(plugin.path);
+  const [realPackageDirectory, skillPath] = await Promise.all([
+    realpath(packageDirectory), realpath(join(packageDirectory, "SKILL.md")),
+  ]);
+  if (!pathInside(realPackageDirectory, skillPath)) throw new Error("Editor Skill escapes its package directory");
+  const source = await readFile(skillPath, "utf8");
+  if (Buffer.byteLength(source, "utf8") > MAX_SKILL_SOURCE_BYTES) throw new Error("Editor Skill is too large");
+  return source;
 }
 
 export async function getEditorPluginDependency(

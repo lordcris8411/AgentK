@@ -1,7 +1,9 @@
 {
   "apiVersion": 1,
+  "version": "1.0.0",
   "id": "agent-k.audio",
   "name": "Audio player",
+  "description": "Preview and play audio files directly in Agent K.",
   "match": {
     "extensions": ["mp3", "wav", "flac", "ogg", "oga", "m4a", "aac", "wma", "opus"],
     "mimeTypes": ["audio/*"]

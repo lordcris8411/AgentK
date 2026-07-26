@@ -29,6 +29,8 @@ language-server-plugins/
 ```json
 {
   "apiVersion": 1,
+  "displayName": "Example language server",
+  "commands": [{ "id": "active-example-projects", "title": "Active Example projects", "kind": "project-manager" }],
   "id": "example-lsp",
   "languages": ["example"],
   "projectMarkers": ["example.config"],
@@ -50,6 +52,15 @@ Workers receive IPC requests of the form `{ type: "request", id, method,
 args }` and answer with `{ type: "response", id, result }` or `{ type:
 "response", id, error }`. They may publish `{ type: "event", event }` for
 progress, status and diagnostics.
+
+Project-aware plugins implement the generic worker methods `list`, `load`,
+`unload`, `restart` and `cancel`. `list` returns project records containing at
+least `root`, `name` and `status`; the host adds `languageServerId` and
+`languageServerName` before exposing them to the UI. The project manager UI,
+directory context menu and slash commands are therefore driven solely by the
+manifest (`projectMarkers` and optional `commands`), not by a language name.
+`project-manager` commands additionally support `trace`, `restart <root>` and
+`unload <root>` through the same worker RPC route.
 
 The built-in `cpp-clangd` worker is the reference implementation. Its
 `debugServer` declaration reserves the Debug Adapter Protocol path for WinDbg

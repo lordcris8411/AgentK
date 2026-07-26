@@ -8,9 +8,14 @@ import { fileURLToPath } from "node:url";
  */
 export type LanguageServerPluginManifest = {
   apiVersion: 1;
+  displayName: string;
   id: string;
   languages: string[];
   projectMarkers: string[];
+  projectMenu?: { loadLabel: string; unloadLabel: string };
+  editorContribution?: { description: string; editorPluginId: string; id: string; name: string; version: string };
+  skill?: { markdown: string; name: string };
+  commands?: Array<{ id: string; title: string; kind: "project-manager" }>;
   worker: URL;
   debugServer?: {
     adapters: Array<{ command: string; platforms: NodeJS.Platform[] }>;
@@ -90,7 +95,13 @@ export class LanguageServerHost {
         if (code !== 0 && signal !== "SIGTERM") fail(new Error(`${this.manifest.id} language worker exited (${code ?? signal ?? "unknown"})`));
       });
       child.on("message", (message: WorkerMessage) => {
-        if (message.type === "event") { this.emit(message.event); return; }
+        if (message.type === "event") {
+          // Events cross the worker boundary as a plugin-neutral envelope.
+          // Renderers must route by plugin id, never by a language-specific
+          // event name or built-in implementation detail.
+          this.emit({ ...message.event, languageServerId: this.manifest.id });
+          return;
+        }
         const pending = this.pending.get(message.id); if (!pending) return;
         this.pending.delete(message.id);
         message.error ? pending.reject(new Error(message.error)) : pending.resolve(message.result);

@@ -27,6 +27,7 @@ my-editor/
 ```json
 {
   "apiVersion": 1,
+  "version": "1.0.0",
   "id": "example.hex-editor",
   "name": "Hex Editor",
   "match": {
@@ -51,6 +52,7 @@ my-editor/
 | `apiVersion` | 可编程插件必填 | 当前必须为 `1`。 |
 | `id` | 是 | 2–81 个字符的稳定标识；仅允许字母、数字、`.`、`_`、`-`。 |
 | `name` | 是 | 设置、错误信息和诊断中使用的名称。 |
+| `version` | 否 | 三段式语义版本；未填写按 `0.0.0`。手动安装与同 ID 内置编辑器比较时，低于内置版本的包会被拒绝。 |
 | `match.extensions` | 至少一项匹配规则 | 不带点的扩展名；匹配时忽略大小写。 |
 | `match.fileNames` | 至少一项匹配规则 | 精确 basename，区分大小写。不得包含目录分隔符。 |
 | `match.absolutePaths` | 至少一项匹配规则 | 精确绝对路径；支持 POSIX、Windows 盘符和 UNC 路径。Windows 路径匹配不区分大小写。 |
@@ -66,6 +68,7 @@ my-editor/
 | `mediaKind` | 否 | 二进制预览类别：`image`、`audio`、`video` 或 `pdf`。设置后宿主以 `initial.binary` 提供文件数据。 |
 | `capabilities` | 否 | 暴露给 Pi 的编辑器能力描述。每项包含 `id`、`label`、`description`，可选 `parameters` 把参数名映射为 `string`、`number` 或 `boolean`。 |
 | `contextActions` | 否 | 附加到文件树菜单末尾的动作；每项包含 `id`、`label`，`when` 可为 `file`、`directory` 或 `both`。 |
+| `contextMarkers` | 否 | 目录上下文动作的 marker 文件名列表。声明后，只有右键目录包含任一 marker 时才加载该插件的目录菜单动作；文件菜单不受影响。 |
 
 路径必须留在插件目录内；Agent K 会解析真实路径并拒绝 `..`、绝对路径和逃逸插件目录的符号链接。JavaScript、CSS 与资源目录也有独立大小上限。
 

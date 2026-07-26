@@ -286,7 +286,7 @@ export async function getPiResources(
     if (resource.kind !== "skill") continue;
     const plugin = fileFormatByDirectory.get(resolve(dirname(resource.path)));
     if (!plugin) continue;
-    resource.fileFormat = { id: plugin.id, name: plugin.name, enabled: true };
+    resource.fileFormat = { id: plugin.id, name: plugin.name, version: plugin.version, enabled: true };
   }
   const registryPath = join(appDataPath, "pi-resources.json");
   const registry = await readJson<PiResource[]>(registryPath, []);

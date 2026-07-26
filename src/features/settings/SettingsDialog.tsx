@@ -3,6 +3,7 @@ import {
   desktop,
   type BrowserOption,
   type FileFormatPluginResource,
+  type LanguageServerPlugin,
   type ProviderCatalogItem,
   type ProviderDraft,
   type PiResource,
@@ -117,6 +118,7 @@ export function SettingsDialog({
   const [firstPartyEditors, setFirstPartyEditors] = useState<
     FileFormatPluginResource[]
   >([]);
+  const [languageServerPlugins, setLanguageServerPlugins] = useState<LanguageServerPlugin[]>([]);
   const [providers, setProviders] = useState<ProviderCatalogItem[]>([]);
   const [models, setModels] = useState<Array<{ provider: string; id: string; name?: string }>>([]);
   const [state, setState] = useState<{ model?: { provider: string; id: string }; thinkingLevel?: string }>({});
@@ -139,6 +141,7 @@ export function SettingsDialog({
   const [skillHubPreview, setSkillHubPreview] = useState<SkillHubPreview>();
   const [skillHubScope, setSkillHubScope] = useState<SkillHubScope>(cwd ? "project" : "user");
   const [selectedSkill, setSelectedSkill] = useState<PiResource>();
+  const [editorSkillViewer, setEditorSkillViewer] = useState<{ name: string; source: string }>();
   const [authTarget, setAuthTarget] = useState<ProviderCatalogItem>();
   const [authKey, setAuthKey] = useState("");
   const [notice, setNotice] = useState<string>();
@@ -205,6 +208,38 @@ export function SettingsDialog({
       setBusy(false);
     }
   };
+  const installEditorPlugin = async () => {
+    const sourceDirectory = await platform.openDialog({ directory: true, title: "安装编辑器扩展" });
+    if (typeof sourceDirectory !== "string") return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const installed = await desktop.installEditorPlugin(sourceDirectory);
+      setNotice(`已安装 ${installed.name}${installed.version ? ` v${installed.version}` : ""}`);
+      if (cwd && runtimeId) setResources(withPendingResourceChanges(await desktop.piResources(cwd, runtimeId), resourceChanges));
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const viewEditorSkill = async (plugin: Pick<FileFormatPluginResource, "id" | "name">) => {
+    if (!cwd) return;
+    setBusy(true); setError(undefined);
+    try { setEditorSkillViewer({ name: plugin.name, source: await desktop.editorPluginSkill(cwd, plugin.id) }); }
+    catch (cause) { setError(String(cause)); }
+    finally { setBusy(false); }
+  };
+  const toggleLanguagePlugin = async (id: string, skillOnly = false) => {
+    const key = skillOnly ? "disabledLanguageServerSkills" : "disabledLanguageServers";
+    const current = settings[key]; const disabled = !current.includes(id);
+    const next = disabled ? [...current, id] : current.filter((value) => value !== id);
+    const updateValue = skillOnly ? { disabledLanguageServerSkills: next } : { disabledLanguageServers: next, disabledLanguageServerSkills: disabled ? [...new Set([...settings.disabledLanguageServerSkills, id])] : settings.disabledLanguageServerSkills };
+    setBusy(true); setError(undefined);
+    try { await update(updateValue); setLanguageServerPlugins(await desktop.listLanguageServerPlugins()); }
+    catch (cause) { setError(String(cause)); }
+    finally { setBusy(false); }
+  };
   useEffect(() => {
     if (!open) return;
     setPage(initialPage);
@@ -257,6 +292,10 @@ export function SettingsDialog({
     return () => {
       cancelled = true;
     };
+  }, [open, page]);
+  useEffect(() => {
+    if (!open || page !== "editors") return;
+    void desktop.listLanguageServerPlugins().then(setLanguageServerPlugins).catch((cause) => setError(String(cause)));
   }, [open, page]);
   useEffect(() => {
     if (!open || !["skills", "extensions", "editors"].includes(page)) return;
@@ -825,7 +864,9 @@ export function SettingsDialog({
               <>
                 <div className="settings-title-row">
                   <h2>{t("editors")}</h2>
-                  <button
+                  <div className="settings-title-actions"><button disabled={busy || resourcesLocked} onClick={() => void installEditorPlugin()} type="button">
+                    <i className="fa-solid fa-box-open" /> 安装扩展
+                  </button><button
                     disabled={busy || !runtimeId || resourcesLocked}
                     onClick={() => {
                       if (!runtimeId || !cwd) return;
@@ -850,7 +891,7 @@ export function SettingsDialog({
                     type="button"
                   >
                     <i className="fa-solid fa-rotate" /> {t("refresh")}
-                  </button>
+                  </button></div>
                 </div>
                 <p className="settings-description">{t("editorManagerDescription")}</p>
                 {resourcesLocked && (
@@ -870,10 +911,11 @@ export function SettingsDialog({
                       <article className="resource-card" key={plugin.id}>
                         <div>
                           <strong>{plugin.name}</strong>
-                          <small title={plugin.path}>{plugin.id} · {plugin.path}</small>
-                          <span>{t("builtIn")} · {plugin.editor}</span>
+                          <small title={plugin.path}>{plugin.id} · v{plugin.version ?? "0.0.0"}</small>
+                          <span>{plugin.description || `${t("builtIn")} · ${plugin.editor}`}</span>
                         </div>
                         <div className="resource-card-actions">
+                          <button aria-label={`${plugin.name} Skill`} className="editor-skill-button" disabled={busy || !cwd} onClick={() => void viewEditorSkill(plugin)} title="查看 Editor Skill" type="button"><i aria-hidden="true" className="fa-regular fa-file-lines" /></button>
                           <div className="resource-switch">
                             <span>{t("editorHost")}</span>
                             <button
@@ -907,6 +949,15 @@ export function SettingsDialog({
                     );
                   })}
                 </div>
+                {languageServerPlugins.some((plugin) => plugin.editorContribution) && <><div className="editor-manager-heading">
+                  <h3>语言项目扩展</h3>
+                  <p>由语言服务插件提供工程能力，并复用对应的文件编辑器。</p>
+                </div><div className="resource-list editor-language-list">
+                  {languageServerPlugins.flatMap((plugin) => plugin.editorContribution ? [{ plugin, contribution: plugin.editorContribution }] : []).map(({ plugin, contribution }) => <article className="resource-card" key={`${plugin.id}:${contribution.id}`}>
+                    <div><strong>{contribution.name}</strong><span>{contribution.description}</span><small>{contribution.id} · v{contribution.version} · {plugin.displayName} · {contribution.editorPluginId}</small></div>
+                    <div className="resource-card-actions">{plugin.skill && <button aria-label={`${plugin.skill.name} Skill`} className="editor-skill-button" disabled={busy} onClick={() => setEditorSkillViewer({ name: plugin.skill!.name, source: plugin.skill!.markdown })} title="查看 Language Skill" type="button"><i aria-hidden="true" className="fa-regular fa-file-lines" /></button>}<div className="resource-switch"><span>语言扩展</span><button aria-checked={plugin.enabled !== false} className={plugin.enabled !== false ? "resource-toggle is-active" : "resource-toggle"} disabled={busy} onClick={() => void toggleLanguagePlugin(plugin.id)} role="switch" type="button"><span /></button></div><div className="resource-switch"><span>Language Skill</span><button aria-checked={!settings.disabledLanguageServerSkills.includes(plugin.id)} className={!settings.disabledLanguageServerSkills.includes(plugin.id) ? "resource-toggle is-active" : "resource-toggle"} disabled={busy || plugin.enabled === false} onClick={() => void toggleLanguagePlugin(plugin.id, true)} role="switch" type="button"><span /></button></div></div>
+                  </article>)}
+                </div></>}
                 <div className="editor-manager-heading">
                   <h3>{t("installedEditors")}</h3>
                   <p>{t("filePluginDependency")}</p>
@@ -918,10 +969,11 @@ export function SettingsDialog({
                       <article className="resource-card" key={`editor:${resource.path}`}>
                         <div>
                           <strong>{resource.fileFormat?.name ?? resource.name}</strong>
-                          <small>{resource.description || resource.path}</small>
-                          <span>{resource.scope === "project" ? t("projectScope") : t("userScope")} · {resource.path}</span>
+                          <small title={resource.path}>{resource.fileFormat?.id}{resource.fileFormat?.version ? ` · v${resource.fileFormat.version}` : ""}</small>
+                          <span>{resource.description || (resource.scope === "project" ? t("projectScope") : t("userScope"))}</span>
                         </div>
                         <div className="resource-card-actions">
+                          <button aria-label={`${resource.fileFormat?.name ?? resource.name} Skill`} className="editor-skill-button" disabled={busy || !cwd || !resource.fileFormat} onClick={() => resource.fileFormat && void viewEditorSkill({ id: resource.fileFormat.id, name: resource.fileFormat.name })} title="查看 Editor Skill" type="button"><i aria-hidden="true" className="fa-regular fa-file-lines" /></button>
                           <div className="resource-switch">
                             <span>{t("editorHost")}</span>
                             <button
@@ -982,6 +1034,7 @@ export function SettingsDialog({
         {authTarget && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{providerDisplayName(authTarget)} · {t("apiKey")}</h3><label>{t("apiKey")}<input autoComplete="off" autoFocus type="password" value={authKey} onChange={(event) => setAuthKey(event.target.value)} /></label><footer><button onClick={() => { setAuthTarget(undefined); setAuthKey(""); }} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy || !authKey.trim()} onClick={() => void saveAuthKey()} type="button">{t("save")}</button></footer></div></div>}
         {pendingDelete && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{t("delete")} {pendingDelete.name}?</h3><p className="settings-description">{pendingDelete.id} will be removed from models.json.</p><footer><button onClick={() => setPendingDelete(undefined)} type="button">{t("cancel")}</button><button className="danger-button" onClick={() => { setBusy(true); void desktop.deleteProvider(pendingDelete.id).then(() => desktop.reloadPiRuntimes()).then(() => refresh()).catch((cause) => setError(String(cause))).finally(() => { setPendingDelete(undefined); setBusy(false); }); }} type="button">{t("delete")}</button></footer></div></div>}
         {selectedSkill && <div className="settings-subdialog"><div className="settings-subdialog-card skill-details"><h3>{t("skillDetails")}</h3><dl><div><dt>{t("displayName")}</dt><dd>{selectedSkill.name}</dd></div><div><dt>{t("skillDescriptionLabel")}</dt><dd>{selectedSkill.description || t("noSkillDescription")}</dd></div><div><dt>{t("skillScopeLabel")}</dt><dd>{selectedSkill.scope === "project" ? t("projectScope") : t("userScope")}</dd></div><div><dt>{t("skillPathLabel")}</dt><dd>{selectedSkill.path}</dd></div></dl><footer><button className="primary-button" onClick={() => setSelectedSkill(undefined)} type="button">{t("close")}</button></footer></div></div>}
+        {editorSkillViewer && <div className="settings-subdialog"><div className="settings-subdialog-card skill-hub-preview"><h3>{editorSkillViewer.name} · Editor Skill</h3><label>SKILL.md<textarea readOnly value={editorSkillViewer.source} /></label><footer><button className="primary-button" onClick={() => setEditorSkillViewer(undefined)} type="button">{t("close")}</button></footer></div></div>}
         {skillHubPreview && <div className="settings-subdialog"><div className="settings-subdialog-card skill-hub-preview"><h3>{t("skillHubReview")}</h3><div className="skill-hub-preview-meta"><strong>{skillHubPreview.name}</strong>{skillHubPreview.description && <span>{skillHubPreview.description}</span>}<small>{skillHubPreview.source} · {skillHubPreview.files.length} {t("skillHubFiles")}</small></div><label>{t("skillHubInstallScope")}<select disabled={!cwd} onChange={(event) => setSkillHubScope(event.target.value as SkillHubScope)} value={skillHubScope}><option value="project">{t("projectScope")}</option><option value="user">{t("userScope")}</option></select></label><div className="skill-hub-file-list">{skillHubPreview.files.map((file) => <span key={file.path}>{file.path}<small>{Math.ceil(file.bytes / 1024)} KB</small></span>)}</div><label>{t("skillHubContent")}<textarea readOnly value={skillHubPreview.skillMarkdown} /></label><footer><button onClick={() => setSkillHubPreview(undefined)} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy || !cwd} onClick={() => void installSkill()} type="button">{t("skillHubInstall")}</button></footer></div></div>}
       </section>
     </div>

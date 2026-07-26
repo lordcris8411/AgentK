@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { existsSync } from "node:fs";
-import { cp, readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { existsSync, watch, type FSWatcher } from "node:fs";
+import { cp, readFile, realpath } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 import type {
@@ -36,7 +36,9 @@ import { applyPiResourceChanges, getPiResources } from "./resources.js";
 import {
   getEditorPluginDependency,
   getEditorPluginRuntime,
+  getEditorPluginSkill,
   getFileFormatPlugins,
+  installUserFileFormatPlugin,
   loadFirstPartyFileFormatPlugins,
 } from "./file-formats.js";
 import { installSkillHub, previewSkillHub } from "./skill-hub.js";
@@ -74,6 +76,9 @@ export class DesktopBackend {
   private readonly projectConsoles = new Map<string, ProjectConsoleProcess>();
   private readonly webProjects = new Map<string, ReturnType<typeof spawn>>();
   private readonly languageServers: LanguageServerRegistry;
+  private workspaceWatcher?: FSWatcher;
+  private workspaceWatchRoot?: string;
+  private readonly workspaceWatchTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(options: DesktopBackendOptions) {
     this.options = options;
@@ -94,7 +99,7 @@ export class DesktopBackend {
     const startupText = (english: string, chinese: string) =>
       settings.locale === "en-US" ? english : chinese;
     await this.files.initialize();
-    await this.languageServers.initialize();
+    await this.reloadLanguageServers(settings.disabledLanguageServers);
     await migrateMisclassifiedVllm();
     await cp(this.options.bundledExtensionsSource, this.bundledExtensionsDirectory, {
       recursive: true,
@@ -142,7 +147,7 @@ export class DesktopBackend {
       case "get_client_settings":
         return loadClientSettings(this.options.appDataPath);
       case "save_client_settings":
-        return saveClientSettings(this.options.appDataPath, args.settings);
+        { const saved = await saveClientSettings(this.options.appDataPath, args.settings); for (const plugin of this.languageServers.list()) this.languageServers.setEnabled(plugin.id, !saved.disabledLanguageServers.includes(plugin.id)); return saved; }
       case "list_browsers":
         return listBrowsers();
       case "open_external_url":
@@ -162,7 +167,9 @@ export class DesktopBackend {
       case "open_provider_login":
         return openProviderLogin(requiredString(args.providerId, "providerId"), this.requirePiLaunch());
       case "reload_pi_runtimes":
-        return pool.reload();
+        await pool.reload();
+        await this.reloadLanguageServers((await loadClientSettings(this.options.appDataPath)).disabledLanguageServers);
+        return;
       case "get_pi_resources":
         return getPiResources(
           this.options.appDataPath,
@@ -181,8 +188,17 @@ export class DesktopBackend {
         );
       case "get_first_party_file_format_plugins":
         return this.firstPartyEditorPlugins;
+      case "install_editor_plugin":
+        return installUserFileFormatPlugin(requiredString(args.sourceDirectory, "sourceDirectory"), this.firstPartyEditorPlugins);
       case "get_editor_plugin_runtime":
         return getEditorPluginRuntime(
+          this.options.appDataPath,
+          requiredString(args.cwd, "cwd"),
+          this.firstPartyEditorPlugins,
+          requiredString(args.pluginId, "pluginId"),
+        );
+      case "get_editor_plugin_skill":
+        return getEditorPluginSkill(
           this.options.appDataPath,
           requiredString(args.cwd, "cwd"),
           this.firstPartyEditorPlugins,
@@ -295,24 +311,12 @@ export class DesktopBackend {
           requiredString(args.path, "path"),
           requiredString(args.terminalId, "terminalId"),
         );
-      case "load_cpp_project":
-        return this.languageServers.call("cpp-clangd", "load", await this.files.workspaceDirectory(requiredString(args.root, "root"), requiredString(args.path, "path")));
-      case "list_cpp_projects":
-        return this.languageServers.call("cpp-clangd", "list");
-      case "list_cpp_lsp_trace":
-        return this.languageServers.call("cpp-clangd", "trace");
-      case "unload_cpp_project":
-        return this.languageServers.call("cpp-clangd", "unload", requiredString(args.root, "root"));
-      case "restart_cpp_project":
-        return this.languageServers.call("cpp-clangd", "restart", requiredString(args.root, "root"));
-      case "cancel_cpp_load":
-        return this.languageServers.call("cpp-clangd", "cancel");
-      case "cpp_lsp_request":
-        return this.languageServers.call("cpp-clangd", "lsp", requiredString(args.file, "file"), requiredString(args.method, "method"), args.params);
-      case "cpp_lsp_notify":
-        return this.languageServers.call("cpp-clangd", "notify", requiredString(args.file, "file"), requiredString(args.method, "method"), args.params);
       case "list_language_server_plugins":
         return this.languageServers.list();
+      case "list_language_server_projects":
+        return this.languageServers.listProjects();
+      case "language_server_call":
+        return this.languageServers.call(requiredString(args.id, "id"), requiredString(args.method, "method"), ...(Array.isArray(args.args) ? args.args : []));
       case "language_server_request":
         return this.languageServers.callForLanguage(requiredString(args.language, "language"), "lsp", requiredString(args.file, "file"), requiredString(args.method, "method"), args.params);
       case "language_server_notify":
@@ -358,6 +362,8 @@ export class DesktopBackend {
         return this.files.openInFileManager(requiredString(args.root, "root"), requiredString(args.path, "path"));
       case "search_files":
         return this.files.search(requiredString(args.root, "root"), requiredString(args.query, "query"));
+      case "watch_workspace":
+        return this.watchWorkspace(optionalString(args.root));
       case "file_url":
         return this.files.fileUrl(requiredString(args.path, "path"));
       default:
@@ -366,12 +372,42 @@ export class DesktopBackend {
   }
 
   shutdown(): void {
+    this.stopWorkspaceWatch();
     for (const id of this.projectConsoles.keys()) this.stopProjectConsole(id);
     for (const child of this.webProjects.values()) child.kill();
     this.webProjects.clear();
     this.pool?.shutdown();
     this.languageServers.shutdown();
     this.files.shutdown();
+  }
+
+  private stopWorkspaceWatch(): void {
+    this.workspaceWatcher?.close(); this.workspaceWatcher = undefined; this.workspaceWatchRoot = undefined;
+    for (const timer of this.workspaceWatchTimers.values()) clearTimeout(timer);
+    this.workspaceWatchTimers.clear();
+  }
+
+  private async watchWorkspace(rootInput?: string): Promise<void> {
+    this.stopWorkspaceWatch();
+    if (!rootInput) return;
+    const root = await realpath(rootInput);
+    this.workspaceWatchRoot = root;
+    try {
+      this.workspaceWatcher = watch(root, { recursive: true }, (_kind, name) => {
+        if (!name || !this.workspaceWatchRoot) return;
+        const absolute = resolve(root, String(name));
+        if (!isPathInside(root, absolute)) return;
+        const path = relative(root, absolute).replaceAll("\\", "/");
+        const previous = this.workspaceWatchTimers.get(path); if (previous) clearTimeout(previous);
+        this.workspaceWatchTimers.set(path, setTimeout(() => {
+          this.workspaceWatchTimers.delete(path);
+          if (this.workspaceWatchRoot === root) this.options.emit({ type: "workspace_file_changed", root, path });
+        }, 80));
+      });
+      this.workspaceWatcher.on("error", (cause) => this.options.emit({ type: "workspace_watch_error", root, error: String(cause) }));
+    } catch (cause) {
+      this.options.emit({ type: "workspace_watch_error", root, error: String(cause) });
+    }
   }
 
   private async compileCmakeProject(
@@ -520,6 +556,12 @@ export class DesktopBackend {
     const consoleProcess = this.projectConsoles.get(id);
     if (!consoleProcess) return;
     consoleProcess.terminal.kill();
+  }
+
+  private async reloadLanguageServers(disabled: readonly string[]): Promise<void> {
+    await this.languageServers.reload();
+    for (const id of disabled) this.languageServers.setEnabled(id, false);
+    this.options.emit({ type: "language_server_registry_reloaded" });
   }
 
   private requirePool(): RpcPool {

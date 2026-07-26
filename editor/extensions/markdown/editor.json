@@ -1,7 +1,9 @@
 {
   "apiVersion": 1,
+  "version": "1.0.0",
   "id": "agent-k.markdown",
   "name": "Markdown",
+  "description": "Edit Markdown with formatted document preview.",
   "match": {
     "extensions": ["md", "markdown", "mdown", "mkd"],
     "mimeTypes": ["text/markdown"]

@@ -13,6 +13,7 @@ export type SessionSummary = {
 export type ProjectSummary = {
   cwd: string;
   name: string;
+  description?: string;
   isHome?: boolean;
   pinned?: boolean;
   updatedAt: number;
@@ -25,13 +26,21 @@ export type FileEntry = {
   loaded: boolean;
   children: FileEntry[];
 };
-export type CppProject = { root: string; name: string; status: "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped"; error?: string; cmake: boolean; compileCommands: boolean };
-export type CppLspTrace = { elapsedMs?: number; error?: string; file?: string; method: string; phase: "rejected" | "request" | "response" | "sent" | "timeout" | "write-error"; timestamp: number; version?: number };
+export type LanguageServerProject = { languageServerId: string; languageServerName: string; root: string; name: string; status: "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped"; error?: string; [key: string]: unknown };
+export type LanguageServerTrace = { elapsedMs?: number; error?: string; file?: string; method: string; phase: "rejected" | "request" | "response" | "sent" | "timeout" | "write-error"; timestamp: number; version?: number };
 export type LanguageServerPlugin = {
   apiVersion: 1;
+  displayName: string;
+  enabled?: boolean;
+  skillEnabled?: boolean;
+  contextMarkers?: string[];
   id: string;
   languages: string[];
   projectMarkers: string[];
+  projectMenu?: { loadLabel: string; unloadLabel: string };
+  editorContribution?: { description: string; editorPluginId: string; id: string; name: string; version: string };
+  skill?: { markdown: string; name: string };
+  commands?: Array<{ id: string; title: string; kind: "project-manager" }>;
   debugServer?: { adapters: Array<{ command: string; platforms: string[] }>; protocol: "dap" };
 };
 
@@ -49,6 +58,8 @@ export type ClientSettings = {
   editorWordWrap: boolean;
   disabledFileEditors: string[];
   disabledFileEditorSkills: string[];
+  disabledLanguageServers: string[];
+  disabledLanguageServerSkills: string[];
   pinnedWorkspaces: string[];
   defaultModel: string;
   sessionModels: Record<string, string>;
@@ -71,6 +82,7 @@ export type WorkerPoolStatus = {
 export type BrowserOption = {
   id: string;
   name: string;
+  version?: string;
 };
 
 export type RuntimeInfo = {
@@ -91,6 +103,7 @@ export type PiResource = {
   fileFormat?: {
     id: string;
     name: string;
+    version?: string;
     enabled: boolean;
   };
 };
@@ -105,6 +118,8 @@ export type FileFormatPluginResource = {
   apiVersion: 1;
   id: string;
   name: string;
+  description?: string;
+  version?: string;
   path: string;
   scope: "builtin" | "user" | "project";
   skillEnabled?: boolean;
@@ -217,8 +232,11 @@ export const desktop = {
     invoke<FileFormatPluginResource[]>("get_file_format_plugins", { cwd }),
   firstPartyFileFormatPlugins: () =>
     invoke<FileFormatPluginResource[]>("get_first_party_file_format_plugins"),
+  installEditorPlugin: (sourceDirectory: string) => invoke<FileFormatPluginResource>("install_editor_plugin", { sourceDirectory }),
   editorPluginRuntime: (cwd: string, pluginId: string) =>
     invoke<EditorPluginRuntime>("get_editor_plugin_runtime", { cwd, pluginId }),
+  editorPluginSkill: (cwd: string, pluginId: string) =>
+    invoke<string>("get_editor_plugin_skill", { cwd, pluginId }),
   editorPluginDependency: (dependencyId: string) =>
     invoke<EditorPluginDependency>("get_editor_plugin_dependency", { dependencyId }),
   applyPiResourceChanges: (
@@ -291,17 +309,11 @@ export const desktop = {
     invoke<{ id: string; url: string }>("start_web_project", { root, path }),
   compileCmakeProject: (root: string, path: string, terminalId: string) =>
     invoke<void>("compile_cmake_project", { root, path, terminalId }),
-  loadCppProject: (root: string, path = "") => invoke<CppProject>("load_cpp_project", { root, path }),
-  listCppProjects: () => invoke<CppProject[]>("list_cpp_projects"),
-  listCppLspTrace: () => invoke<CppLspTrace[]>("list_cpp_lsp_trace"),
   listLanguageServerPlugins: () => invoke<LanguageServerPlugin[]>("list_language_server_plugins"),
+  listLanguageServerProjects: () => invoke<LanguageServerProject[]>("list_language_server_projects"),
+  languageServerCall: (id: string, method: string, ...args: unknown[]) => invoke<unknown>("language_server_call", { args, id, method }),
   languageServerRequest: (language: string, file: string, method: string, params: unknown) => invoke<unknown>("language_server_request", { language, file, method, params }),
   languageServerNotify: (language: string, file: string, method: string, params: unknown) => invoke<void>("language_server_notify", { language, file, method, params }),
-  unloadCppProject: (root: string) => invoke<void>("unload_cpp_project", { root }),
-  restartCppProject: (root: string) => invoke<CppProject>("restart_cpp_project", { root }),
-  cancelCppLoad: () => invoke<void>("cancel_cpp_load"),
-  cppLspRequest: (file: string, method: string, params: unknown) => invoke<unknown>("cpp_lsp_request", { file, method, params }),
-  cppLspNotify: (file: string, method: string, params: unknown) => invoke<void>("cpp_lsp_notify", { file, method, params }),
   write: (root: string, path: string, content: string) =>
     invoke<void>("write_text_file", { root, path, content }),
   mkdir: (root: string, path: string) =>
@@ -332,6 +344,7 @@ export const desktop = {
     invoke<void>("open_in_file_manager", { root, path }),
   search: (root: string, query: string) =>
     invoke<string[]>("search_files", { root, query }),
+  watchWorkspace: (root?: string) => invoke<void>("watch_workspace", { root }),
   onEvent: (listener: (event: Record<string, unknown>) => void) =>
     Promise.resolve(window.agentK.onPiEvent(listener)),
   onProjectConsoleEvent: (listener: (event: Record<string, unknown>) => void) => {

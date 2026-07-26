@@ -27,6 +27,8 @@ export type FileFormatPlugin = {
   apiVersion: 1;
   id: string;
   name: string;
+  description?: string;
+  version?: string;
   match: {
     absolutePaths?: readonly string[];
     extensions?: readonly string[];
@@ -37,6 +39,7 @@ export type FileFormatPlugin = {
   runtime: { assets?: string; dependencies?: string[]; entry: string; menu?: string; style?: string };
   scope?: "builtin" | "user" | "project";
   skillEnabled?: boolean;
+  contextMarkers?: readonly string[];
   editable?: boolean;
   languageId?: string;
   mimeType?: string;

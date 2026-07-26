@@ -14,6 +14,8 @@ export interface ClientSettings {
   editorWordWrap: boolean;
   disabledFileEditors: string[];
   disabledFileEditorSkills: string[];
+  disabledLanguageServers: string[];
+  disabledLanguageServerSkills: string[];
   pinnedWorkspaces: string[];
   defaultModel: string;
   sessionModels: Record<string, string>;
@@ -38,6 +40,7 @@ export interface SessionSummary {
 export interface ProjectSummary {
   cwd: string;
   name: string;
+  description?: string;
   isHome?: boolean;
   updatedAt: number;
   sessions: SessionSummary[];
@@ -64,6 +67,7 @@ export interface PiResource {
   fileFormat?: {
     id: string;
     name: string;
+    version?: string;
     enabled: boolean;
   };
 }
@@ -78,9 +82,12 @@ export interface FileFormatPluginResource {
   apiVersion: 1;
   id: string;
   name: string;
+  description?: string;
+  version?: string;
   path: string;
   scope: "builtin" | "user" | "project";
   skillEnabled?: boolean;
+  contextMarkers?: string[];
   match: {
     absolutePaths?: string[];
     extensions?: string[];

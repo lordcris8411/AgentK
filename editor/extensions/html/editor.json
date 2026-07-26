@@ -1,7 +1,9 @@
 {
   "apiVersion": 1,
+  "version": "1.0.0",
   "id": "agent-k.html",
   "name": "HTML",
+  "description": "Edit HTML and preview the rendered page.",
   "match": { "extensions": ["html", "htm"], "mimeTypes": ["text/html"] },
   "editor": "plugin",
   "editable": true,

@@ -1,7 +1,9 @@
 {
   "apiVersion": 1,
+  "version": "1.0.0",
   "id": "agent-k.image",
   "name": "Image preview",
+  "description": "Preview image files with native-size media rendering.",
   "match": {
     "extensions": ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"],
     "mimeTypes": ["image/*"]

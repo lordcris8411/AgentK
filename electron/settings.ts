@@ -39,6 +39,8 @@ const DEFAULT_SETTINGS: ClientSettings = {
   editorWordWrap: false,
   disabledFileEditors: [],
   disabledFileEditorSkills: [],
+  disabledLanguageServers: [],
+  disabledLanguageServerSkills: [],
   pinnedWorkspaces: [],
   defaultModel: "",
   sessionModels: {},
@@ -111,6 +113,8 @@ export function parseClientSettings(value: unknown): ClientSettings {
       ...settings.disabledFileEditors,
     ]),
   ];
+  settings.disabledLanguageServers = editorSettingIds(source.disabledLanguageServers);
+  settings.disabledLanguageServerSkills = [...new Set([...editorSettingIds(source.disabledLanguageServerSkills), ...settings.disabledLanguageServers])];
   settings.pinnedWorkspaces = [
     ...new Set(
       asArray(source.pinnedWorkspaces).filter(
@@ -140,7 +144,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.windowHeight = Number(source.windowHeight);
   if (typeof source.windowMaximized === "boolean")
     settings.windowMaximized = source.windowMaximized;
-  settings.version = Math.max(7, Number(source.version) || 7);
+  settings.version = Math.max(8, Number(source.version) || 8);
   return settings;
 }
 
@@ -169,6 +173,8 @@ export async function saveClientSettings(
     settings.editorWordWrap === original.editorWordWrap &&
     sameStringArray(original.disabledFileEditors, settings.disabledFileEditors) &&
     sameStringArray(original.disabledFileEditorSkills, settings.disabledFileEditorSkills) &&
+    sameStringArray(original.disabledLanguageServers, settings.disabledLanguageServers) &&
+    sameStringArray(original.disabledLanguageServerSkills, settings.disabledLanguageServerSkills) &&
     sameStringArray(original.pinnedWorkspaces, settings.pinnedWorkspaces) &&
     settings.defaultModel === original.defaultModel &&
     JSON.stringify(settings.sessionModels) === JSON.stringify(original.sessionModels) &&

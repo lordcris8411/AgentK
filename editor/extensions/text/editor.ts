@@ -74,6 +74,7 @@ defineEditor((host, initial) => {
   );
   const editor = monaco.editor.create(host.root, {
     automaticLayout: false,
+    contextmenu: false,
     inertialScroll: true,
     minimap: { enabled: false },
     model,
@@ -95,7 +96,7 @@ defineEditor((host, initial) => {
   const openDocument = () => {
     if (!cpp) return languageSync;
     languageSync = languageSync.catch(() => undefined).then(() => host.languageRequest("textDocument/didOpen", { textDocument: document() })
-      .then(() => { cppDocumentOpened = true; })
+      .then((accepted) => { cppDocumentOpened = accepted === true; })
       .catch(() => { cppDocumentOpened = false; }));
     return languageSync;
   };
@@ -167,9 +168,9 @@ defineEditor((host, initial) => {
   };
   type LspRange = { start: { line: number; character: number }; end: { line: number; character: number } };
   type LspLocation = { uri?: string; range?: LspRange; targetUri?: string; targetRange?: LspRange; targetSelectionRange?: LspRange };
-  const definitionTargets = async (at: Monaco.Position) => {
+  const locationTargets = async (method: string, at: Monaco.Position, extra: Record<string, unknown> = {}) => {
     await flushDocumentSync();
-    const result = await host.languageRequest("textDocument/definition", { textDocument: { uri: model.uri.toString() }, position: position(at) }) as LspLocation | LspLocation[] | undefined;
+    const result = await host.languageRequest(method, { textDocument: { uri: model.uri.toString() }, position: position(at), ...extra }) as LspLocation | LspLocation[] | undefined;
     return (Array.isArray(result) ? result : result ? [result] : []).flatMap((item) => {
       const uri = item.targetUri ?? item.uri; const range = item.targetSelectionRange ?? item.targetRange ?? item.range;
       return typeof uri === "string" && range ? [{ uri, range }] : [];
@@ -257,12 +258,112 @@ defineEditor((host, initial) => {
   });
   const definitionClick = editor.onMouseDown((event) => {
     if (!cpp || !(event.event.ctrlKey || event.event.metaKey) || !event.target.position) return;
-    void definitionTargets(event.target.position).then((locations) => {
-      const target = locations[0]; const path = target ? pathFromFileUri(target.uri) : undefined;
-      if (path) host.openFile(path, target.range.start.line + 1, target.range.start.character + 1);
-    }).catch(() => undefined);
+    void openFirstLocation("textDocument/definition", event.target.position);
+  });
+  const openFirstLocation = async (method: "textDocument/declaration" | "textDocument/definition", at: Monaco.Position) => {
+    const target = (await locationTargets(method, at))[0];
+    const path = target ? pathFromFileUri(target.uri) : undefined;
+    if (path) host.openFile(path, target.range.start.line + 1, target.range.start.character + 1);
+  };
+  const referencePanel = globalThis.document.createElement("section");
+  referencePanel.className = "agent-k-cpp-references";
+  referencePanel.hidden = true; referencePanel.style.display = "none";
+  host.root.append(referencePanel);
+  let referencePanelRevision = 0;
+  let referenceDragCleanup: (() => void) | undefined;
+  const hideReferences = () => {
+    referencePanelRevision += 1;
+    referenceDragCleanup?.(); referenceDragCleanup = undefined;
+    referencePanel.hidden = true;
+    referencePanel.style.display = "none";
+  };
+  const placeReferences = (at: Monaco.Position) => {
+    const visible = editor.getScrolledVisiblePosition(at);
+    const rootBounds = host.root.getBoundingClientRect();
+    const left = Math.max(8, Math.min((visible?.left ?? 12) + 12, rootBounds.width - referencePanel.offsetWidth - 8));
+    const top = Math.max(8, Math.min((visible?.top ?? 12) + (visible?.height ?? 18) + 8, rootBounds.height - referencePanel.offsetHeight - 8));
+    referencePanel.style.left = `${left}px`; referencePanel.style.right = "auto"; referencePanel.style.top = `${top}px`;
+  };
+  const previewFor = async (path: string, line: number) => {
+    const text = path.replaceAll("\\", "/").toLowerCase() === initial.absolutePath.replaceAll("\\", "/").toLowerCase()
+      ? model.getValue()
+      : await host.languageRequest("agent-k/read-file", { path }) as string;
+    return text.split(/\r?\n/)[line]?.trim() ?? "";
+  };
+  const showReferences = async (at: Monaco.Position) => {
+    // References do not carry a kind. A single definition and declaration
+    // lookup lets us classify their locations without one request per file.
+    const [targets, definitions, declarations] = await Promise.all([
+      locationTargets("textDocument/references", at, { context: { includeDeclaration: true } }),
+      locationTargets("textDocument/definition", at),
+      locationTargets("textDocument/declaration", at),
+    ]);
+    const revision = ++referencePanelRevision;
+    const sameLocation = (left: { uri: string; range: LspRange }, right: { uri: string; range: LspRange }) =>
+      left.uri.replaceAll("\\", "/").toLowerCase() === right.uri.replaceAll("\\", "/").toLowerCase()
+      && left.range.start.line === right.range.start.line && left.range.start.character === right.range.start.character;
+    const referenceKind = (target: { uri: string; range: LspRange }) => definitions.some((item) => sameLocation(item, target))
+      ? (initial.locale === "en-US" ? "Definition" : "定义")
+      : declarations.some((item) => sameLocation(item, target))
+        ? (initial.locale === "en-US" ? "Declaration" : "声明")
+        : (initial.locale === "en-US" ? "Reference" : "引用");
+    referencePanel.replaceChildren();
+    const header = globalThis.document.createElement("div");
+    header.className = "agent-k-cpp-references-header";
+    const title = globalThis.document.createElement("strong");
+    title.textContent = initial.locale === "en-US" ? `${targets.length} References` : `${targets.length} 个引用`;
+    const close = globalThis.document.createElement("button");
+    close.type = "button"; close.textContent = "×"; close.title = initial.locale === "en-US" ? "Close" : "关闭";
+    close.onclick = (event) => { event.preventDefault(); event.stopPropagation(); hideReferences(); };
+    header.append(title, close); referencePanel.append(header);
+    header.onpointerdown = (event) => {
+      if ((event.target as HTMLElement | null)?.closest("button")) return;
+      event.preventDefault(); event.stopPropagation();
+      const startX = event.clientX; const startY = event.clientY;
+      const startLeft = referencePanel.offsetLeft; const startTop = referencePanel.offsetTop;
+      const move = (moveEvent: PointerEvent) => {
+        const rootBounds = host.root.getBoundingClientRect();
+        const left = Math.max(8, Math.min(startLeft + moveEvent.clientX - startX, rootBounds.width - referencePanel.offsetWidth - 8));
+        const top = Math.max(8, Math.min(startTop + moveEvent.clientY - startY, rootBounds.height - referencePanel.offsetHeight - 8));
+        referencePanel.style.left = `${left}px`; referencePanel.style.top = `${top}px`;
+      };
+      const end = () => { referenceDragCleanup?.(); };
+      referenceDragCleanup?.();
+      globalThis.addEventListener("pointermove", move); globalThis.addEventListener("pointerup", end, { once: true });
+      referenceDragCleanup = () => { globalThis.removeEventListener("pointermove", move); globalThis.removeEventListener("pointerup", end); referenceDragCleanup = undefined; };
+    };
+    for (const target of targets) {
+      const path = pathFromFileUri(target.uri); if (!path) continue;
+      const item = globalThis.document.createElement("button");
+      item.type = "button"; item.className = "agent-k-cpp-reference";
+      const location = globalThis.document.createElement("span");
+      location.className = "agent-k-cpp-reference-location";
+      const kind = globalThis.document.createElement("em");
+      kind.className = "agent-k-cpp-reference-kind"; kind.textContent = referenceKind(target);
+      location.append(kind, globalThis.document.createTextNode(`${path.replaceAll("\\", "/").split("/").pop() ?? path}:${target.range.start.line + 1}`));
+      const preview = globalThis.document.createElement("span");
+      preview.className = "agent-k-cpp-reference-preview"; preview.textContent = "…";
+      item.append(location, preview);
+      item.title = path;
+      item.onclick = (event) => { event.preventDefault(); event.stopPropagation(); host.openFile(path, target.range.start.line + 1, target.range.start.character + 1); };
+      referencePanel.append(item);
+      void previewFor(path, target.range.start.line).then((value) => {
+        if (revision === referencePanelRevision) preview.textContent = value || "…";
+      }).catch(() => {
+        if (revision === referencePanelRevision) preview.textContent = initial.locale === "en-US" ? "Preview unavailable" : "无法读取预览";
+      });
+    }
+    referencePanel.hidden = false; referencePanel.style.display = "block"; placeReferences(at);
+  };
+  referencePanel.onpointerdown = (event) => { event.preventDefault(); };
+  const referenceBlur = editor.onDidBlurEditorText(() => hideReferences());
+  const languageFocus = editor.onDidFocusEditorText(() => {
+    // A tab can outlive an unload/reload or be opened before the worker is
+    // ready. Retry didOpen only until clangd confirms it accepted the write.
+    if (cpp && !cppDocumentOpened) void openDocument();
   });
   let contextLine: number | undefined;
+  let contextPosition: Monaco.Position | undefined;
   let contentTimer: number | undefined;
   let suggestTimer: number | undefined;
   const changes = model.onDidChangeContent(() => {
@@ -286,21 +387,61 @@ defineEditor((host, initial) => {
       }
     }
   });
+  const contextMenu = globalThis.document.createElement("section");
+  contextMenu.className = "agent-k-editor-context-menu";
+  contextMenu.hidden = true; host.root.append(contextMenu);
+  // Keep Monaco focused while choosing an item. Otherwise its blur handler
+  // hides the menu between pointerdown and click, swallowing every action.
+  contextMenu.onpointerdown = (event) => { event.preventDefault(); };
+  const hideContextMenu = () => { contextMenu.hidden = true; };
+  const addContextAction = (label: string, run: () => void | Promise<void>) => {
+    const item = globalThis.document.createElement("button");
+    item.type = "button"; item.textContent = label;
+    item.onclick = (event) => { event.preventDefault(); event.stopPropagation(); hideContextMenu(); void run(); };
+    contextMenu.append(item);
+  };
+  const addContextSeparator = () => contextMenu.append(globalThis.document.createElement("hr"));
   const context = editor.onContextMenu((event) => {
     contextLine = event.target.position?.lineNumber;
-  });
-  editor.addAction({
-    contextMenuGroupId: "navigation",
-    contextMenuOrder: 1.25,
-    id: "agent-k-add-line-to-conversation",
-    label: initial.locale === "en-US" ? "Add this line to conversation" : "添加本行到对话",
-    run(sourceEditor) {
-      const position = sourceEditor.getPosition();
+    contextPosition = event.target.position ?? undefined;
+    const at = contextPosition ?? editor.getPosition();
+    contextMenu.replaceChildren();
+    // This is intentionally first in every editor, not just C++.
+    addContextAction(initial.locale === "en-US" ? "Add this line to conversation" : "添加本行到对话", () => {
+      const position = at ?? editor.getPosition();
       host.referenceLine(contextLine ?? position?.lineNumber ?? 1, position?.column ?? 1);
       contextLine = undefined;
-    },
+    });
+    // cppDocumentOpened is true only after the language worker accepted
+    // didOpen, which also proves that this file belongs to a loaded project.
+    if (cpp && cppDocumentOpened && at) {
+      addContextAction(initial.locale === "en-US" ? "Go to Declaration" : "跳转到声明", () => openFirstLocation("textDocument/declaration", at));
+      addContextAction(initial.locale === "en-US" ? "Go to Definition" : "跳转到定义", () => openFirstLocation("textDocument/definition", at));
+      addContextAction(initial.locale === "en-US" ? "Find All References" : "查找所有引用", () => showReferences(at));
+    }
+    addContextSeparator();
+    addContextAction(initial.locale === "en-US" ? "Cut" : "剪切", () => editor.trigger("agent-k-context-menu", "editor.action.clipboardCutAction", {}));
+    addContextAction(initial.locale === "en-US" ? "Copy" : "复制", () => editor.trigger("agent-k-context-menu", "editor.action.clipboardCopyAction", {}));
+    addContextAction(initial.locale === "en-US" ? "Paste" : "粘贴", () => editor.trigger("agent-k-context-menu", "editor.action.clipboardPasteAction", {}));
+    const visible = at ? editor.getScrolledVisiblePosition(at) : undefined;
+    contextMenu.hidden = false;
+    const mouse = event.event as { posx?: unknown; posy?: unknown };
+    const bounds = host.root.getBoundingClientRect();
+    const rawLeft = typeof mouse.posx === "number" ? mouse.posx - bounds.left : (visible?.left ?? 8) + 8;
+    const rawTop = typeof mouse.posy === "number" ? mouse.posy - bounds.top : (visible?.top ?? 8) + (visible?.height ?? 18);
+    const left = Math.max(8, Math.min(rawLeft, host.root.clientWidth - contextMenu.offsetWidth - 8));
+    const top = Math.max(8, Math.min(rawTop, host.root.clientHeight - contextMenu.offsetHeight - 8));
+    contextMenu.style.left = `${left}px`; contextMenu.style.top = `${top}px`;
   });
+  const contextBlur = editor.onDidBlurEditorText(() => window.setTimeout(hideContextMenu, 0));
+  const contextOutside = (event: PointerEvent) => {
+    if (!contextMenu.contains(event.target as Node)) hideContextMenu();
+  };
+  globalThis.document.addEventListener("pointerdown", contextOutside, true);
   const keydown = editor.onKeyDown((event) => {
+    if (event.keyCode === monaco.KeyCode.Escape && !referencePanel.hidden) {
+      event.preventDefault(); event.stopPropagation(); hideReferences(); return;
+    }
     if (!(event.ctrlKey || event.metaKey) || event.keyCode !== monaco.KeyCode.KeyS) return;
     event.preventDefault();
     event.stopPropagation();
@@ -330,8 +471,12 @@ defineEditor((host, initial) => {
       observer.disconnect();
       keydown.dispose();
       context.dispose();
+      contextBlur.dispose(); contextMenu.remove();
+      globalThis.document.removeEventListener("pointerdown", contextOutside, true);
       changes.dispose();
       definitionHover.dispose(); definitionClick.dispose(); definitionLink.clear();
+      languageFocus.dispose(); referenceBlur.dispose();
+      hideReferences(); referencePanel.remove();
       memberDecorations.clear();
       if (cpp) void host.languageRequest("textDocument/didClose", { textDocument: { uri: model.uri.toString() } }).catch(() => undefined);
       completion?.dispose(); hover?.dispose(); semantic?.dispose();
@@ -339,9 +484,9 @@ defineEditor((host, initial) => {
       model.dispose();
     },
     executeAction(action, parameters) {
-      if (action === "set-cpp-diagnostics" && Array.isArray(parameters.diagnostics))
+      if (action === "set-language-diagnostics" && Array.isArray(parameters.diagnostics))
         applyDiagnostics(parameters.diagnostics as LspDiagnostic[]);
-      if (action === "cpp-project-ready") {
+      if (action === "language-server-project-ready") {
         cppDocumentOpened = false;
         void openDocument();
       }

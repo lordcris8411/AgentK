@@ -22,7 +22,7 @@ export class CppService {
   private cancellationRequested = false;
   private readonly traces: CppLspTrace[] = [];
   constructor(private readonly cachePath: string, private readonly emit: (event: Record<string, unknown>) => void) {}
-  private publish(entry: Entry) { this.emit({ type: "cpp_project", project: this.public(entry) }); }
+  private publish(entry: Entry) { this.emit({ type: "language_server_project", project: this.public(entry) }); }
   private public(entry: Entry): CppProject { const { root, name, status, error, cmake, compileCommands } = entry; return { root, name, status, ...(error ? { error } : {}), cmake, compileCommands }; }
   list(): CppProject[] { return [...this.projects.values()].map((entry) => this.public(entry)); }
   trace(): CppLspTrace[] { return [...this.traces]; }
@@ -48,9 +48,9 @@ export class CppService {
       if (cmake) { entry.status = "configuring"; this.publish(entry); commandsDir = await this.configure(root, bin); entry.compileCommands = true; }
       await this.start(entry, join(bin, process.platform === "win32" ? "clangd.exe" : "clangd"), commandsDir, bin);
       return this.public(entry);
-    } catch (cause) { await rm(`${join(this.cachePath, "cpp-toolchain", process.platform, process.arch)}.partial`, { recursive: true, force: true }); if (this.cancellationRequested) { this.projects.delete(root); this.emit({ type: "cpp_project_removed", root }); return { ...this.public(entry), status: "stopped" }; } entry.status = "failed"; entry.error = cause instanceof Error ? cause.message : String(cause); this.publish(entry); return this.public(entry); }
+    } catch (cause) { await rm(`${join(this.cachePath, "cpp-toolchain", process.platform, process.arch)}.partial`, { recursive: true, force: true }); if (this.cancellationRequested) { this.projects.delete(root); this.emit({ type: "language_server_project_removed", root }); return { ...this.public(entry), status: "stopped" }; } entry.status = "failed"; entry.error = cause instanceof Error ? cause.message : String(cause); this.publish(entry); return this.public(entry); }
   }
-  async unload(root: string) { const entry = this.projects.get(await realpath(root)); if (!entry) return; this.stop(entry); this.projects.delete(entry.root); this.emit({ type: "cpp_project_removed", root: entry.root }); }
+  async unload(root: string) { const entry = this.projects.get(await realpath(root)); if (!entry) return; this.stop(entry); this.projects.delete(entry.root); this.emit({ type: "language_server_project_removed", root: entry.root }); }
   async restart(root: string) { await this.unload(root); return this.load(root); }
   shutdown() { for (const entry of this.projects.values()) this.stop(entry); this.projects.clear(); }
   cancel(): void { this.cancellationRequested = true; this.provisionAbort?.abort(); this.activeCommand?.kill(); }
@@ -77,18 +77,18 @@ export class CppService {
       return undefined;
     }
   }
-  async notify(file: string, method: string, params: unknown): Promise<void> {
+  async notify(file: string, method: string, params: unknown): Promise<boolean> {
     const canonical = resolve(file); const project = this.projectFor(canonical); const entry = project ? this.projects.get(project.root) : undefined;
-    if (!entry) { this.record({ method, phase: "rejected", timestamp: Date.now(), ...this.traceMetadata(params), error: "file is outside loaded C++ projects" }); return; }
-    await this.enqueueNotification(entry, method, params);
+    if (!entry) { this.record({ method, phase: "rejected", timestamp: Date.now(), ...this.traceMetadata(params), error: "file is outside loaded C++ projects" }); return false; }
+    return this.enqueueNotification(entry, method, params);
   }
-  private enqueueNotification(entry: Entry, method: string, params: unknown): Promise<void> {
+  private enqueueNotification(entry: Entry, method: string, params: unknown): Promise<boolean> {
     const metadata = this.traceMetadata(params);
-    const write = entry.writeQueue.catch(() => undefined).then(() => new Promise<void>((resolveWrite) => {
-      if (!entry.child || entry.status !== "ready" || entry.child.killed || entry.child.stdin.destroyed || !entry.child.stdin.writable) { this.record({ method, phase: "rejected", timestamp: Date.now(), ...metadata, error: "clangd stdin is unavailable" }); resolveWrite(); return; }
-      const payload = JSON.stringify({ jsonrpc: "2.0", method, params }); entry.child.stdin.write(`Content-Length: ${Buffer.byteLength(payload)}\r\n\r\n${payload}`, (cause) => { this.record({ method, phase: cause ? "write-error" : "sent", timestamp: Date.now(), ...metadata, ...(cause ? { error: String(cause) } : {}) }); resolveWrite(); });
+    const write = entry.writeQueue.catch(() => undefined).then(() => new Promise<boolean>((resolveWrite) => {
+      if (!entry.child || entry.status !== "ready" || entry.child.killed || entry.child.stdin.destroyed || !entry.child.stdin.writable) { this.record({ method, phase: "rejected", timestamp: Date.now(), ...metadata, error: "clangd stdin is unavailable" }); resolveWrite(false); return; }
+      const payload = JSON.stringify({ jsonrpc: "2.0", method, params }); entry.child.stdin.write(`Content-Length: ${Buffer.byteLength(payload)}\r\n\r\n${payload}`, (cause) => { this.record({ method, phase: cause ? "write-error" : "sent", timestamp: Date.now(), ...metadata, ...(cause ? { error: String(cause) } : {}) }); resolveWrite(!cause); });
     }));
-    entry.writeQueue = write;
+    entry.writeQueue = write.then(() => undefined);
     return write;
   }
   private stop(entry: Entry) {
@@ -101,7 +101,7 @@ export class CppService {
   private async managedBin(): Promise<string> {
     const bin = join(this.cachePath, "cpp-toolchain", process.platform, process.arch, "bin");
     const executable = process.platform === "win32" ? ".exe" : "";
-    if (["clangd", "clang", "clang++", "cmake", "ninja"].every((name) => existsSync(join(bin, `${name}${executable}`)))) { this.emit({ type: "cpp_progress", stage: "preparing", detail: "Reusing cached C++ toolchain" }); return bin; }
+    if (["clangd", "clang", "clang++", "cmake", "ninja"].every((name) => existsSync(join(bin, `${name}${executable}`)))) { this.emit({ type: "language_server_progress", stage: "preparing", detail: "Reusing cached C++ toolchain" }); return bin; }
     this.provisionAbort ??= new AbortController(); this.provisioning ??= this.provision(bin, this.provisionAbort.signal).finally(() => { this.provisioning = undefined; this.provisionAbort = undefined; });
     return this.provisioning;
   }
@@ -113,7 +113,7 @@ export class CppService {
     const cmake = process.platform === "win32" ? "cmake-3.31.6-windows-x86_64.zip" : "cmake-3.31.6-linux-x86_64.tar.gz";
     const ninja = process.platform === "win32" ? "ninja-win.zip" : "ninja-linux.zip";
     const llvm = process.platform === "win32" ? "clang+llvm-22.1.6-x86_64-pc-windows-msvc.tar.xz" : "LLVM-22.1.6-Linux-X64.tar.xz";
-    this.emit({ type: "cpp_progress", stage: "preparing", detail: `Preparing managed ${platform} toolchain` });
+    this.emit({ type: "language_server_progress", stage: "preparing", detail: `Preparing managed ${platform} toolchain` });
     await this.downloadRelease("Kitware", "CMake", "v3.31.6", cmake, staging, archiveCache, "cmake", process.platform === "win32" ? "d163cd3ab4959b0a53fa8988f2ddbd2e6c501658201e6a154386bad9dbe4f836" : "5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf", signal);
     await this.downloadRelease("ninja-build", "ninja", "v1.12.1", ninja, staging, archiveCache, "ninja", process.platform === "win32" ? "f550fec705b6d6ff58f2db3c374c2277a37691678d6aba463adcbb129108467a" : "6f98805688d19672bd699fbbfa2c2cf0fc054ac3df1f0e6a47664d963d530255", signal);
     await this.downloadRelease("llvm", "llvm-project", "llvmorg-22.1.6", llvm, staging, archiveCache, "llvm", process.platform === "win32" ? "657343edf361ca463bd642e39c74b251c6338b96cdbd55ff277555298b027696" : "c5ac8ef89ca39d30cb32e9b83772f995dd891c685ebc188d593c943a64d5f8b5", signal);
@@ -130,7 +130,7 @@ export class CppService {
     await this.moveDirectoryEntries(dirname(cmakeSource), join(staging, "bin"));
     await this.moveDirectoryEntries(dirname(clangSource), join(staging, "bin"));
     for (const name of candidates) { const found = await this.findExecutable(staging, `${name}${executable}`); if (!found) throw new Error(`Provisioned ${name} is missing`); const target = join(staging, "bin", `${name}${executable}`); if (found !== target) await rename(found, target); }
-    await rm(root, { recursive: true, force: true }); await rename(staging, root); this.emit({ type: "cpp_progress", stage: "ready", detail: "Managed C++ toolchain is ready" }); return bin;
+    await rm(root, { recursive: true, force: true }); await rename(staging, root); this.emit({ type: "language_server_progress", stage: "ready", detail: "Managed C++ toolchain is ready" }); return bin;
   }
   private async findExecutable(directory: string, name: string): Promise<string | undefined> {
     const entries = await readdir(directory, { withFileTypes: true });
@@ -142,17 +142,17 @@ export class CppService {
   private async archiveMatches(path: string, expectedSha256: string): Promise<boolean> { if (!existsSync(path)) return false; try { const hash = createHash("sha256"); const { createReadStream } = await import("node:fs"); await pipeline(createReadStream(path), hash); return hash.digest("hex") === expectedSha256; } catch { return false; } }
   private async downloadRelease(owner: string, repo: string, tag: string, assetName: string, directory: string, archiveCache: string, tool: string, expectedSha256: string, signal: AbortSignal): Promise<void> {
     const archive = join(directory, assetName); const cachedArchive = join(archiveCache, assetName);
-    if (await this.archiveMatches(cachedArchive, expectedSha256)) { const size = (await stat(cachedArchive)).size; this.emit({ type: "cpp_progress", stage: "downloading", tool, bytes: size, total: size, rate: 0, detail: `${assetName} (reused cache)` }); await copyFile(cachedArchive, archive); this.emit({ type: "cpp_progress", stage: "extracting", tool, detail: assetName }); await this.extract(archive, directory); await rm(archive, { force: true }); return; }
+    if (await this.archiveMatches(cachedArchive, expectedSha256)) { const size = (await stat(cachedArchive)).size; this.emit({ type: "language_server_progress", stage: "downloading", tool, bytes: size, total: size, rate: 0, detail: `${assetName} (reused cache)` }); await copyFile(cachedArchive, archive); this.emit({ type: "language_server_progress", stage: "extracting", tool, detail: assetName }); await this.extract(archive, directory); await rm(archive, { force: true }); return; }
     await rm(cachedArchive, { force: true }); const api = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${tag}`, { headers: { Accept: "application/vnd.github+json", "User-Agent": "Agent-K" }, signal }); if (!api.ok) throw new Error(`Unable to locate ${tool} release (${api.status})`);
     const release = await api.json() as { assets?: Array<{ name: string; browser_download_url: string }> }; const asset = release.assets?.find((item) => item.name === assetName); if (!asset) throw new Error(`Release asset is unavailable for ${tool}`); const response = await fetch(asset.browser_download_url, { headers: { "User-Agent": "Agent-K" }, signal }); if (!response.ok || !response.body) throw new Error(`Unable to download ${tool} (${response.status})`);
     const total = Number(response.headers.get("content-length") ?? 0); let received = 0; const started = Date.now(); const reader = response.body.getReader(); const emit = this.emit;
     const cancellation = new Error("C++ project load cancelled");
-    const stream = new Readable({ read() { void reader.read().then((next) => { if (next.done) this.push(null); else { received += next.value.byteLength; const seconds = Math.max(0.001, (Date.now() - started) / 1000); emit({ type: "cpp_progress", stage: "downloading", tool, bytes: received, total, rate: Math.round(received / seconds), detail: assetName }); this.push(Buffer.from(next.value)); } }).catch((cause) => this.destroy(cause)); } });
+    const stream = new Readable({ read() { void reader.read().then((next) => { if (next.done) this.push(null); else { received += next.value.byteLength; const seconds = Math.max(0.001, (Date.now() - started) / 1000); emit({ type: "language_server_progress", stage: "downloading", tool, bytes: received, total, rate: Math.round(received / seconds), detail: assetName }); this.push(Buffer.from(next.value)); } }).catch((cause) => this.destroy(cause)); } });
     const abortDownload = () => { void reader.cancel().catch(() => undefined); stream.destroy(cancellation); };
     if (signal.aborted) abortDownload(); else signal.addEventListener("abort", abortDownload, { once: true });
     try { await pipeline(stream, createWriteStream(archive)); } finally { signal.removeEventListener("abort", abortDownload); }
     if (!await this.archiveMatches(archive, expectedSha256)) throw new Error(`Checksum verification failed for ${tool}`); const cachedPartial = `${cachedArchive}.partial`; await rm(cachedPartial, { force: true }); await copyFile(archive, cachedPartial); await rename(cachedPartial, cachedArchive);
-    this.emit({ type: "cpp_progress", stage: "extracting", tool, detail: assetName }); await this.extract(archive, directory); await rm(archive, { force: true });
+    this.emit({ type: "language_server_progress", stage: "extracting", tool, detail: assetName }); await this.extract(archive, directory); await rm(archive, { force: true });
   }
   private async extract(archive: string, directory: string): Promise<void> { await this.run(process.platform === "win32" ? "tar.exe" : "tar", ["-xf", archive, "-C", directory], directory, ""); }
   private async configure(root: string, bin: string): Promise<string> {
@@ -193,7 +193,7 @@ export class CppService {
     }
     if (changed) await writeFile(commandsPath, `${JSON.stringify(commands, undefined, 2)}\n`, "utf8");
   }
-  private run(command: string, args: string[], cwd: string, bin: string) { return new Promise<void>((resolveRun, reject) => { const child = spawn(command, args, { cwd, windowsHide: true, env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` } }); this.activeCommand = child; let log = ""; child.stdout.on("data", b => { log += b; this.emit({ type: "cpp_progress", stage: "cmake", detail: String(b) }); }); child.stderr.on("data", b => { log += b; this.emit({ type: "cpp_progress", stage: "cmake", detail: String(b) }); }); child.once("error", reject); child.once("close", code => { if (this.activeCommand === child) this.activeCommand = undefined; code === 0 ? resolveRun() : reject(new Error(log || `CMake exited with ${code}`)); }); }); }
+  private run(command: string, args: string[], cwd: string, bin: string) { return new Promise<void>((resolveRun, reject) => { const child = spawn(command, args, { cwd, windowsHide: true, env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` } }); this.activeCommand = child; let log = ""; child.stdout.on("data", b => { log += b; this.emit({ type: "language_server_progress", stage: "cmake", detail: String(b) }); }); child.stderr.on("data", b => { log += b; this.emit({ type: "language_server_progress", stage: "cmake", detail: String(b) }); }); child.once("error", reject); child.once("close", code => { if (this.activeCommand === child) this.activeCommand = undefined; code === 0 ? resolveRun() : reject(new Error(log || `CMake exited with ${code}`)); }); }); }
   private async start(entry: Entry, clangd: string, commandsDir: string, bin: string) {
     if (!existsSync(clangd)) throw new Error("Managed clangd is unavailable");
     entry.status = "starting"; this.publish(entry);
@@ -226,7 +226,7 @@ export class CppService {
         try {
           const message = JSON.parse(payload) as { id?: number; method?: unknown; params?: { diagnostics?: unknown; uri?: unknown }; result?: unknown; error?: { message?: string } };
           if (message.method === "textDocument/publishDiagnostics" && typeof message.params?.uri === "string" && Array.isArray(message.params.diagnostics)) {
-            try { this.emit({ type: "cpp_diagnostics", file: fileURLToPath(message.params.uri), diagnostics: message.params.diagnostics }); } catch { /* Ignore malformed server URIs. */ }
+            try { this.emit({ type: "language_server_diagnostics", file: fileURLToPath(message.params.uri), diagnostics: message.params.diagnostics }); } catch { /* Ignore malformed server URIs. */ }
             continue;
           }
           if (typeof message.id !== "number") continue;
@@ -243,7 +243,7 @@ export class CppService {
     // The progress dialog must track the authoritative service lifecycle, not
     // merely the load RPC's return. This also covers a renderer IPC response
     // arriving after CMake/clangd have already completed successfully.
-    this.emit({ type: "cpp_progress", stage: "ready", detail: "C++ language service is ready" });
+    this.emit({ type: "language_server_progress", stage: "ready", detail: "C++ language service is ready" });
   }
   request(entry: Entry, method: string, params: unknown): Promise<unknown> {
     if (!entry.child || entry.child.killed || entry.child.stdin.destroyed || !entry.child.stdin.writable) return Promise.reject(new Error("clangd is not running"));

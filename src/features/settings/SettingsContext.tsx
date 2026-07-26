@@ -14,7 +14,7 @@ export type Locale = "zh-CN" | "en-US";
 export type ThemeMode = "light" | "dark" | "system";
 
 const fallback: ClientSettings = {
-  version: 7,
+  version: 8,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
@@ -27,6 +27,8 @@ const fallback: ClientSettings = {
   editorWordWrap: false,
   disabledFileEditors: [],
   disabledFileEditorSkills: [],
+  disabledLanguageServers: [],
+  disabledLanguageServerSkills: [],
   pinnedWorkspaces: [],
   defaultModel: "",
   sessionModels: {},

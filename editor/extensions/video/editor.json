@@ -1,7 +1,9 @@
 {
   "apiVersion": 1,
+  "version": "1.0.0",
   "id": "agent-k.video",
   "name": "Video player",
+  "description": "Preview video files directly in Agent K.",
   "match": {
     "extensions": ["mp4", "m4v", "mkv", "mov", "avi", "webm", "wmv", "flv", "mpeg", "mpg", "3gp", "ogv"],
     "mimeTypes": ["video/*"]

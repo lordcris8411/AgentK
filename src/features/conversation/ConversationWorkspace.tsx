@@ -1465,6 +1465,7 @@ export function ConversationWorkspace({
   const [reportedContextTokens, setReportedContextTokens] = useState<number>();
   const [modelMenu, setModelMenu] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
+  const [languageServerPlugins, setLanguageServerPlugins] = useState<Awaited<ReturnType<typeof desktop.listLanguageServerPlugins>>>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
   const [commandRevision, setCommandRevision] = useState(0);
   const [commandPicker, setCommandPicker] = useState<CommandPicker>();
@@ -1483,6 +1484,7 @@ export function ConversationWorkspace({
     name: string;
     path: string;
   }>();
+  useEffect(() => { void desktop.listLanguageServerPlugins().then(setLanguageServerPlugins).catch(() => setLanguageServerPlugins([])); }, []);
   const streamingId = useRef<string | undefined>(undefined);
   const pendingAssistantUpdate = useRef<{
     id: string;
@@ -1496,7 +1498,9 @@ export function ConversationWorkspace({
   const composerRef = useRef<HTMLDivElement | null>(null);
   const draftValueRef = useRef("");
   const draftCommitTimer = useRef<number | undefined>(undefined);
-  const composerHistoryRef = useRef<string[]>([]);
+  const composerHistoriesRef = useRef(new Map<string, string[]>());
+  const composerHistorySessionRef = useRef(session?.path ?? "__draft__");
+  composerHistorySessionRef.current = session?.path ?? "__draft__";
   const composerHistoryDraftRef = useRef("");
   const composerHistoryIndexRef = useRef(-1);
   const slashMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1522,11 +1526,17 @@ export function ConversationWorkspace({
   }, []);
   const rememberComposerInput = useCallback((value: string) => {
     if (!value.trim()) return;
-    const history = composerHistoryRef.current;
+    const key = composerHistorySessionRef.current;
+    const history = composerHistoriesRef.current.get(key) ?? [];
     if (history[0] !== value) history.unshift(value);
     if (history.length > 100) history.splice(100);
+    composerHistoriesRef.current.set(key, history);
     composerHistoryIndexRef.current = -1;
   }, []);
+  useEffect(() => {
+    composerHistoryIndexRef.current = -1;
+    composerHistoryDraftRef.current = "";
+  }, [session?.path]);
   const discardAssistantUpdate = useCallback(() => {
     pendingAssistantUpdate.current = undefined;
     if (assistantUpdateTimer.current !== undefined) {
@@ -1654,8 +1664,8 @@ export function ConversationWorkspace({
     { name: "name", description: en ? "Set the session name" : "设置会话名称", source: "builtin" },
     { name: "session", description: en ? "Show session information and statistics" : "显示会话信息与统计", source: "builtin" },
     { name: "reload", description: en ? "Reload Pi resources and configuration" : "重新加载 Pi 资源和配置", source: "builtin" },
-    { name: "active-cpp-projects", description: en ? "Show loaded C++ projects" : "查看已加载的 C++ 工程", source: "builtin" },
-  ], [en]);
+    ...languageServerPlugins.flatMap((plugin) => (plugin.commands ?? []).map((command) => ({ name: command.id, description: command.title, source: "builtin" as const }))),
+  ], [en, languageServerPlugins]);
   useEffect(() => {
     let cancelled = false;
     if (!connected || !session?.runtimeId) {
@@ -2564,35 +2574,37 @@ export function ConversationWorkspace({
       pushNotification(en ? "Session statistics were added to notifications" : "会话统计已添加到通知中心");
       return true;
     }
-    if (name === "active-cpp-projects") {
+    const languageProjectCommand = languageServerPlugins.flatMap((plugin) => (plugin.commands ?? []).map((command) => ({ command, plugin }))).find(({ command }) => command.id === name);
+    if (languageProjectCommand?.command.kind === "project-manager") {
+      const { plugin } = languageProjectCommand;
       const [operation, ...rootParts] = argumentsText.split(/\s+/);
       const projectRoot = rootParts.join(" ").trim();
       if (operation === "trace") {
-        const trace = await desktop.listCppLspTrace();
+        const trace = await desktop.languageServerCall(plugin.id, "trace") as Array<{ elapsedMs?: number; error?: string; file?: string; method: string; phase: string; timestamp: number; version?: number }>;
         const text = trace.length
           ? trace.slice(-40).map((event) => `${new Date(event.timestamp).toLocaleTimeString()} ${event.phase.toUpperCase()} ${event.method}${event.version === undefined ? "" : ` v${event.version}`}${event.elapsedMs === undefined ? "" : ` ${event.elapsedMs}ms`}${event.error ? ` · ${event.error}` : ""}${event.file ? `\n  ${event.file}` : ""}`).join("\n")
-          : (en ? "No C++ LSP trace entries yet." : "尚无 C++ LSP 跟踪记录。");
+          : (en ? "No language-service trace entries yet." : "尚无语言服务跟踪记录。");
         window.dispatchEvent(new CustomEvent("agent-k-show-cpp-lsp-trace", { detail: text }));
-        pushNotification(en ? "C++ LSP trace opened" : "已打开 C++ LSP 跟踪记录", "info");
+        pushNotification(en ? "Language-service trace opened" : "已打开语言服务跟踪记录", "info");
         return true;
       }
       if (operation === "unload" && projectRoot) {
-        await desktop.unloadCppProject(projectRoot);
-        pushNotification(en ? "C++ project unloaded" : "C++ 工程已卸载");
+        await desktop.languageServerCall(plugin.id, "unload", projectRoot);
+        pushNotification(en ? "Language project unloaded" : "语言工程已卸载");
         return true;
       }
       if (operation === "restart" && projectRoot) {
-        await desktop.restartCppProject(projectRoot);
-        pushNotification(en ? "C++ project restarted" : "C++ 工程已重启");
+        await desktop.languageServerCall(plugin.id, "restart", projectRoot);
+        pushNotification(en ? "Language project restarted" : "语言工程已重启");
         return true;
       }
-      const projects = await desktop.listCppProjects();
+      const projects = (await desktop.listLanguageServerProjects()).filter((project) => project.languageServerId === plugin.id);
       window.dispatchEvent(new Event("agent-k-show-cpp-projects"));
       const text = projects.length
-        ? `${projects.map((project) => `${project.name}\n${project.root}\n${project.status}${project.error ? ` · ${project.error}` : ""}`).join("\n\n")}\n\n${en ? "Use /active-cpp-projects restart <root> or unload <root>." : "使用 /active-cpp-projects restart <根路径> 或 unload <根路径> 管理工程。"}`
-        : (en ? "No C++ projects are loaded." : "当前没有已加载的 C++ 工程。");
+        ? `${projects.map((project) => `${project.name}\n${project.root}\n${project.status}${project.error ? ` · ${project.error}` : ""}`).join("\n\n")}\n\n${en ? `Use /${name} restart <root> or unload <root>.` : `使用 /${name} restart <根路径> 或 unload <根路径> 管理工程。`}`
+        : (en ? "No language projects are loaded." : "当前没有已加载的语言工程。");
       pushNotification(text, "info", { read: true, showToast: false });
-      pushNotification(en ? "C++ projects were added to notifications" : "C++ 工程状态已添加到通知中心");
+      pushNotification(en ? "Language projects were added to notifications" : "语言工程状态已添加到通知中心");
       return true;
     }
     if (name === "reload") {
@@ -3720,7 +3732,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
             }
             const browsingHistory = composerHistoryIndexRef.current >= 0;
             if (event.key === "ArrowUp" && !event.nativeEvent.isComposing && (!draftValueRef.current.trim() || browsingHistory)) {
-              const history = composerHistoryRef.current;
+              const history = composerHistoriesRef.current.get(composerHistorySessionRef.current) ?? [];
               if (history.length) {
                 event.preventDefault();
                 if (!browsingHistory) composerHistoryDraftRef.current = draftValueRef.current;
@@ -3742,7 +3754,8 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
             if (event.key === "ArrowDown" && !event.nativeEvent.isComposing && browsingHistory) {
               event.preventDefault();
               const index = composerHistoryIndexRef.current - 1;
-              const next = index >= 0 ? composerHistoryRef.current[index] : composerHistoryDraftRef.current;
+              const history = composerHistoriesRef.current.get(composerHistorySessionRef.current) ?? [];
+              const next = index >= 0 ? history[index] : composerHistoryDraftRef.current;
               if (next === undefined) return;
               composerHistoryIndexRef.current = index;
               commitDraft(next);

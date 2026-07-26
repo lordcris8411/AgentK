@@ -7,8 +7,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { desktop, type FileEntry } from "../../lib/desktop";
-import type { CppProject } from "../../lib/desktop";
+import { desktop, type FileEntry, type LanguageServerPlugin, type LanguageServerProject } from "../../lib/desktop";
 import { desktopWindow, platform } from "../../lib/platform";
 import { ProjectConsole } from "./ProjectConsole";
 import {
@@ -40,6 +39,7 @@ type Tab = {
   format?: FileFormatPlugin;
   previewMode?: boolean;
   runtimeDirty?: boolean;
+  externalChanged?: boolean;
   webPreviewUrl?: string;
   webPreviewReloadToken?: number;
 };
@@ -75,7 +75,7 @@ async function createPluginMenuActions(
   const viteConfig = entry.isDir && ["vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"]
     .some((name) => directoryEntryNames.has(name));
   const context = { absolutePath: absoluteWorkspacePath(root, entry.path), directoryEntries, isDirectory: entry.isDir, packageJson, path: entry.path, viteConfig };
-  const results = await Promise.all(plugins.filter((plugin) => plugin.runtime.menu).map(async (plugin) => {
+  const results = await Promise.all(plugins.filter((plugin) => plugin.runtime.menu && (!entry.isDir || !plugin.contextMarkers?.length || plugin.contextMarkers.some((marker) => directoryEntryNames.has(marker.toLowerCase())))).map(async (plugin) => {
     const runtime = await desktop.editorPluginRuntime(root, plugin.id);
     const menuJavascript = runtime.menuJavascript;
     if (!menuJavascript) return [];
@@ -605,9 +605,10 @@ export function InspectorPanel({
     y: number;
   }>();
   const [pluginMenuActions, setPluginMenuActions] = useState<PluginMenuAction[]>([]);
-  const [cppProgress, setCppProgress] = useState<{ detail?: string; error?: string; log?: string; rate?: number; stage: string; bytes?: number; total?: number }>();
+  const [cppProgress, setCppProgress] = useState<{ languageServerId?: string; detail?: string; error?: string; log?: string; rate?: number; stage: string; bytes?: number; total?: number }>();
   const [cppDiagnostics, setCppDiagnostics] = useState<Record<string, Array<Record<string, unknown>>>>({});
-  const [cppProjects, setCppProjects] = useState<CppProject[]>([]);
+  const [languageProjects, setLanguageProjects] = useState<LanguageServerProject[]>([]);
+  const [languagePlugins, setLanguagePlugins] = useState<LanguageServerPlugin[]>([]);
   const [cppProjectsDialogOpen, setCppProjectsDialogOpen] = useState(false);
   const [cppTraceDialogText, setCppTraceDialogText] = useState<string>();
   const [cppTraceCopied, setCppTraceCopied] = useState(false);
@@ -615,6 +616,8 @@ export function InspectorPanel({
   const editorBodyRef = useRef<HTMLDivElement>(null);
   const pluginEditorRef = useRef<PluginEditorHandle | null>(null);
   const activePathRef = useRef<string | undefined>(undefined);
+  const tabsRef = useRef<Tab[]>([]);
+  const localWrites = useRef(new Map<string, string>());
   const activationRequest = useRef(0);
   const resizingExplorer = useRef(false);
   const explorerWidthRef = useRef(explorerWidth);
@@ -628,17 +631,18 @@ export function InspectorPanel({
   currentRoot.current = root;
   treeRef.current = tree;
   activePathRef.current = active;
+  tabsRef.current = tabs;
   explorerWidthRef.current = explorerWidth;
   useEffect(() => {
     let stop: (() => void) | undefined;
     void desktop.onEvent((event) => {
-      if (event.type !== "cpp_progress") return;
-      const value = event as { bytes?: unknown; detail?: unknown; rate?: unknown; stage?: unknown; total?: unknown };
+      if (event.type !== "language_server_progress") return;
+      const value = event as { bytes?: unknown; detail?: unknown; languageServerId?: unknown; rate?: unknown; stage?: unknown; total?: unknown };
       if (typeof value.stage !== "string") return;
       const stage = value.stage;
       const rawDetail = typeof value.detail === "string" ? value.detail : undefined;
       setCppProgress((previous) => ({
-        stage,
+        stage, ...(typeof value.languageServerId === "string" ? { languageServerId: value.languageServerId } : {}),
         ...(rawDetail ? { detail: stage === "cmake" ? (en ? "Configuring CMake…" : "正在配置 CMake…") : rawDetail } : {}),
         ...(typeof value.bytes === "number" ? { bytes: value.bytes } : {}),
         ...(typeof value.total === "number" ? { total: value.total } : {}),
@@ -652,7 +656,7 @@ export function InspectorPanel({
   useEffect(() => {
     let stop: (() => void) | undefined;
     void desktop.onEvent((event) => {
-      if (event.type !== "cpp_diagnostics" || typeof event.file !== "string" || !Array.isArray(event.diagnostics)) return;
+      if (event.type !== "language_server_diagnostics" || typeof event.file !== "string" || !Array.isArray(event.diagnostics)) return;
       const diagnostics = event.diagnostics as unknown[];
       const key = event.file.replaceAll("\\", "/").toLowerCase();
       setCppDiagnostics((current) => ({ ...current, [key]: diagnostics.filter((item): item is Record<string, unknown> => !!item && typeof item === "object") }));
@@ -674,11 +678,12 @@ export function InspectorPanel({
   }, []);
   useEffect(() => {
     let disposed = false;
-    void desktop.listCppProjects().then((projects) => { if (!disposed) setCppProjects(projects); });
+    const refresh = () => void desktop.listLanguageServerProjects().then((projects) => { if (!disposed) setLanguageProjects(projects); });
+    void desktop.listLanguageServerPlugins().then((plugins) => { if (!disposed) setLanguagePlugins(plugins); });
+    refresh();
     let stop: (() => void) | undefined;
     void desktop.onEvent((event) => {
-      if (event.type === "cpp_project") void desktop.listCppProjects().then((projects) => { if (!disposed) setCppProjects(projects); });
-      if (event.type === "cpp_project_removed") void desktop.listCppProjects().then((projects) => { if (!disposed) setCppProjects(projects); });
+      if (event.type === "language_server_project" || event.type === "language_server_project_removed") refresh();
     }).then((unlisten) => { stop = unlisten; });
     return () => { disposed = true; stop?.(); };
   }, []);
@@ -815,6 +820,34 @@ export function InspectorPanel({
     refresh(false);
     const interval = window.setInterval(() => refresh(true), 5_000);
     return () => window.clearInterval(interval);
+  }, [root]);
+  useEffect(() => {
+    void desktop.watchWorkspace(root);
+    return () => { void desktop.watchWorkspace(); };
+  }, [root]);
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    const normalize = (path: string) => path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
+    void desktop.onEvent((event) => {
+      if (event.type !== "workspace_file_changed" || event.root !== root || typeof event.path !== "string" || !root) return;
+      const path = event.path;
+      const tab = tabsRef.current.find((candidate) => normalize(candidate.path) === normalize(path));
+      if (!tab || tab.unsupported || tab.binary) return;
+      void desktop.read(root, path).then((content) => {
+        const currentTab = tabsRef.current.find((candidate) => normalize(candidate.path) === normalize(path));
+        if (!currentTab) return;
+        const expected = localWrites.current.get(normalize(path));
+        if (expected === content) { localWrites.current.delete(normalize(path)); return; }
+        if (currentTab.content !== currentTab.saved || currentTab.runtimeDirty) {
+          setTabs((currentTabs) => currentTabs.map((candidate) => normalize(candidate.path) === normalize(path) ? { ...candidate, externalChanged: true } : candidate));
+          return;
+        }
+        setTabs((currentTabs) => currentTabs.map((candidate) => normalize(candidate.path) === normalize(path) ? { ...candidate, content, externalChanged: false, saved: content } : candidate));
+        if (normalize(activePathRef.current ?? "") === normalize(path) && currentTab.format?.editor === "plugin")
+          pluginEditorRef.current?.setContent(content);
+      }).catch(() => undefined);
+    }).then((unlisten) => { stop = unlisten; });
+    return () => stop?.();
   }, [root]);
   useEffect(() => {
     const refreshFileFormats = () => {
@@ -1098,13 +1131,16 @@ export function InspectorPanel({
   const current = tabsRoot.current === root
     ? tabs.find((tab) => tab.path === active)
     : undefined;
-  const currentCppProject = root && current && ["c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx"].includes(current.path.split(".").pop()?.toLowerCase() ?? "")
-    ? cppProjects.filter((project) => {
+  const currentLanguageProject = root && current
+    ? languageProjects.filter((project) => {
       const file = absoluteWorkspacePath(root, current.path).replaceAll("\\", "/").toLowerCase(); const projectRoot = project.root.replaceAll("\\", "/").toLowerCase(); return file.startsWith(`${projectRoot}/`) || file === projectRoot;
     }).sort((a, b) => b.root.length - a.root.length)[0]
     : undefined;
-  const contextCppProject = root && contextMenu?.entry.isDir
-    ? cppProjects.find((project) => project.root.replaceAll("\\", "/").toLowerCase() === absoluteWorkspacePath(root, contextMenu.entry.path).replaceAll("\\", "/").toLowerCase())
+  const contextLanguageProject = root && contextMenu?.entry.isDir
+    ? languageProjects.find((project) => project.root.replaceAll("\\", "/").toLowerCase() === absoluteWorkspacePath(root, contextMenu.entry.path).replaceAll("\\", "/").toLowerCase())
+    : undefined;
+  const contextLanguagePlugin = contextMenu?.entry.isDir
+    ? languagePlugins.find((plugin) => plugin.projectMarkers.some((marker) => contextMenu.entry.children.some((child) => child.name.toLowerCase() === marker.toLowerCase())))
     : undefined;
   const captureRenderedPreview = (requestedOutputPath?: string) => {
     const target = current?.webPreviewUrl
@@ -1185,7 +1221,7 @@ export function InspectorPanel({
       // its didOpen attempt. Include the ready service identity in its cached
       // runtime key so that it is recreated and sends didOpen again when the
       // containing project finishes loading.
-      ? `${root}\0${current.format.id}\0${current.path}\0${currentCppProject?.status === "ready" ? currentCppProject.root : "no-cpp-service"}`
+      ? `${root}\0${current.format.id}\0${current.path}\0${currentLanguageProject?.status === "ready" ? currentLanguageProject.root : "no-language-service"}`
       : undefined;
   const displayedEditorRuntimeKeys = activeEditorRuntimeKey
     ? insertCachedEditorRuntime(
@@ -1214,11 +1250,12 @@ export function InspectorPanel({
   const persistContent = async (tab: Tab, content: string): Promise<boolean> => {
     if (!root) return false;
     try {
+      localWrites.current.set(tab.path.replaceAll("\\", "/").toLocaleLowerCase("en-US"), content);
       await desktop.write(root, tab.path, content);
       setTabs((currentTabs) =>
         currentTabs.map((candidate) =>
           candidate.path === tab.path
-            ? { ...candidate, content, runtimeDirty: false, saved: content }
+            ? { ...candidate, content, externalChanged: false, runtimeDirty: false, saved: content }
             : candidate,
         ),
       );
@@ -1571,7 +1608,7 @@ export function InspectorPanel({
       window.removeEventListener("drop", drop);
     };
   }, [root]);
-  const currentCppDiagnostics = root && current
+  const currentLanguageDiagnostics = root && current
     ? cppDiagnostics[absoluteWorkspacePath(root, current.path).replaceAll("\\", "/").toLowerCase()]
     : undefined;
   const activePluginEditorProps: PluginEditorProps | undefined =
@@ -1584,7 +1621,7 @@ export function InspectorPanel({
                 parameters: { enabled: current.previewMode === true },
               }]
             : []),
-            ...(currentCppDiagnostics ? [{ id: "set-cpp-diagnostics", parameters: { diagnostics: currentCppDiagnostics } }] : []),
+            ...(currentLanguageDiagnostics ? [{ id: "set-language-diagnostics", parameters: { diagnostics: currentLanguageDiagnostics } }] : []),
           ],
           absolutePath: absoluteWorkspacePath(root, current.path),
           binary: current.binary,
@@ -1611,6 +1648,14 @@ export function InspectorPanel({
           onLanguageRequest(method, parameters) {
             const file = absoluteWorkspacePath(root, current.path);
             const language = current.format?.languageId ?? languageFor(current.path);
+            if (method === "agent-k/read-file") {
+              const requested = parameters as { path?: unknown } | undefined;
+              const relative = typeof requested?.path === "string"
+                ? relativeWorkspacePath(root, requested.path.replace(/^file:\/\//, ""))
+                : undefined;
+              if (!relative) return Promise.reject(new Error("File is outside the current workspace"));
+              return desktop.read(root, relative);
+            }
             return method.includes("/did")
               ? desktop.languageServerNotify(language, file, method, parameters)
               : desktop.languageServerRequest(language, file, method, parameters);
@@ -1787,10 +1832,12 @@ export function InspectorPanel({
                 className={tab.path === active ? "file-tab active" : "file-tab"}
                 key={tab.path}
                 onClick={() => activateTab(tab.path)}
+                title={tab.externalChanged ? (en ? "Changed on disk; local edits were preserved" : "磁盘文件已变更；已保留本地未保存修改") : undefined}
                 type="button"
               >
                 {tab.path.split(/[\\/]/).pop()}
                 {tab.content !== tab.saved || tab.runtimeDirty ? " •" : ""}
+                {tab.externalChanged ? " ↻" : ""}
                 <span
                   onClick={(event) => {
                     event.stopPropagation();
@@ -1802,14 +1849,12 @@ export function InspectorPanel({
               </button>
             ))}
           </div>
-          {currentCppProject ? <div className={`cpp-status-bar is-${currentCppProject.status}`} title={currentCppProject.error}>
-            <i className="fa-solid fa-code" /> <span>C++ · {currentCppProject.name}</span><span>{currentCppProject.status}</span>
-            <button onClick={() => void desktop.restartCppProject(currentCppProject.root)} type="button">{en ? "Restart" : "重启"}</button>
-            <button onClick={() => void desktop.unloadCppProject(currentCppProject.root)} type="button">{en ? "Unload" : "卸载"}</button>
-          </div> : null}
           {current && !current.unsupported && current.format?.editable ? (
             <div className="editor-floating-actions">
               <>
+                  {currentLanguageProject ? <span className={`cpp-inline-status is-${currentLanguageProject.status}`} title={currentLanguageProject.error ?? `${currentLanguageProject.languageServerName} · ${currentLanguageProject.name} · ${currentLanguageProject.status}`}>
+                    <i aria-hidden="true" className="fa-solid fa-code" /><span>{currentLanguageProject.languageServerName} · {currentLanguageProject.name} · {currentLanguageProject.status}</span>
+                  </span> : null}
                   {["agent-k.html", "agent-k.markdown"].includes(current.format.id) ? (
                     <button
                       aria-pressed={current.previewMode === true}
@@ -2086,26 +2131,27 @@ export function InspectorPanel({
             <i className="fa-solid fa-terminal" />
             在外部控制台中打开目录
           </button>
-          {contextMenu.entry.isDir && (contextCppProject ? (
+          {contextMenu.entry.isDir && (contextLanguageProject ? (
             <button
               onClick={() => {
                 setContextMenu(undefined);
-                void desktop.unloadCppProject(contextCppProject.root).catch((cause) => onError(String(cause)));
+                void desktop.languageServerCall(contextLanguageProject.languageServerId, "unload", contextLanguageProject.root).catch((cause) => onError(String(cause)));
               }}
               role="menuitem"
               type="button"
             >
               <i className="fa-solid fa-code" />
-              {en ? "Unload C++ project" : "卸载 C++ 工程"}
+              {contextLanguageProject ? (languagePlugins.find((plugin) => plugin.id === contextLanguageProject.languageServerId)?.projectMenu?.unloadLabel ?? (en ? "Unload language project" : "卸载语言工程")) : null}
             </button>
-          ) : (
+          ) : contextLanguagePlugin ? (
             <button
               onClick={() => {
                 if (!root) return;
                 const path = contextMenu.entry.path;
                 setContextMenu(undefined);
-                setCppProgress({ stage: "preparing", detail: en ? "Preparing C++ toolchain…" : "正在准备 C++ 工具链…" });
-                void desktop.loadCppProject(root, path).then((project) => {
+                setCppProgress({ languageServerId: contextLanguagePlugin.id, stage: "preparing", detail: en ? `Preparing ${contextLanguagePlugin.displayName}…` : `正在准备 ${contextLanguagePlugin.displayName}…` });
+                void desktop.languageServerCall(contextLanguagePlugin.id, "load", absoluteWorkspacePath(root, path)).then((result) => {
+                  const project = result as LanguageServerProject;
                   if (project.status === "failed") setCppProgress((current) => ({ ...(current ?? { stage: "failed" }), stage: "failed", error: project.error }));
                   else setCppProgress(undefined);
                 }).catch((cause) => setCppProgress({ stage: "failed", error: String(cause) }));
@@ -2114,9 +2160,9 @@ export function InspectorPanel({
               type="button"
             >
               <i className="fa-solid fa-code" />
-              {en ? "Load C++ project" : "加载 C++ 工程"}
+              {contextLanguagePlugin.projectMenu?.loadLabel ?? (en ? `Load ${contextLanguagePlugin.displayName} project` : `加载 ${contextLanguagePlugin.displayName} 工程`)}
             </button>
-          ))}
+          ) : null)}
           {pluginMenuActions.map((action) => (
             <button
               key={`${action.pluginId}:${action.id}`}
@@ -2330,7 +2376,7 @@ export function InspectorPanel({
       {cppProgress ? (
         <div className="inspector-dialog-backdrop">
           <section aria-modal="true" className="inspector-dialog cpp-progress-dialog" role="dialog">
-            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{cppProgress.stage === "failed" ? (en ? "C++ project load failed" : "C++ 工程加载失败") : (en ? "Preparing C++ project" : "正在准备 C++ 工程")}</h2><p>{cppProgress.detail ?? cppProgress.stage}</p></div><button aria-label={cppProgress.stage === "failed" ? (en ? "Close" : "关闭") : (en ? "Cancel C++ project load" : "取消加载 C++ 工程")} className="cpp-progress-close" disabled={cppProgress.stage === "cancelling"} onClick={() => { if (cppProgress.stage === "failed") { setCppProgress(undefined); return; } setCppProgress((current) => current ? { ...current, stage: "cancelling", detail: en ? "Cancelling…" : "正在取消…" } : current); void desktop.cancelCppLoad().catch((cause) => setCppProgress({ stage: "failed", error: String(cause) })); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
+            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{cppProgress.stage === "failed" ? (en ? "Language project load failed" : "语言工程加载失败") : (en ? "Preparing language project" : "正在准备语言工程")}</h2><p>{cppProgress.detail ?? cppProgress.stage}</p></div><button aria-label={cppProgress.stage === "failed" ? (en ? "Close" : "关闭") : (en ? "Cancel language project load" : "取消加载语言工程")} className="cpp-progress-close" disabled={cppProgress.stage === "cancelling"} onClick={() => { if (cppProgress.stage === "failed") { setCppProgress(undefined); return; } setCppProgress((current) => current ? { ...current, stage: "cancelling", detail: en ? "Cancelling…" : "正在取消…" } : current); if (cppProgress.languageServerId) void desktop.languageServerCall(cppProgress.languageServerId, "cancel").catch((cause) => setCppProgress({ stage: "failed", error: String(cause) })); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
             {cppProgress.total ? <progress className="cpp-toolchain-progress" max={cppProgress.total} value={Math.min(cppProgress.bytes ?? 0, cppProgress.total)} /> : <p>{en ? "Working…" : "处理中…"}</p>}
             {cppProgress.bytes !== undefined ? <small>{formatMegabytes(cppProgress.bytes)}{cppProgress.total ? ` / ${formatMegabytes(cppProgress.total)} · ${(Math.min(cppProgress.bytes, cppProgress.total) / cppProgress.total * 100).toFixed(2)}%` : ""}{cppProgress.rate !== undefined ? ` · ${formatMegabytes(cppProgress.rate)}/s` : ""}</small> : null}
             {cppProgress.error ? <p>{cppProgress.error}</p> : null}
@@ -2341,8 +2387,8 @@ export function InspectorPanel({
       {cppProjectsDialogOpen ? (
         <div className="inspector-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCppProjectsDialogOpen(false); }}>
           <section aria-modal="true" className="inspector-dialog" role="dialog">
-            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{en ? "Active C++ projects" : "已加载的 C++ 工程"}</h2><p>{cppProjects.length ? (en ? `${cppProjects.length} projects` : `${cppProjects.length} 个工程`) : (en ? "No projects loaded" : "当前没有已加载工程")}</p></div><button aria-label={en ? "Close" : "关闭"} className="inspector-dialog-close" onClick={() => setCppProjectsDialogOpen(false)} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
-            {cppProjects.map((project) => <div className="cpp-project-row" key={project.root}><div className="cpp-project-row-heading"><strong>{project.name}</strong><div className="cpp-project-row-actions"><button aria-label={en ? "Restart C++ project" : "重启 C++ 工程"} onClick={() => void desktop.restartCppProject(project.root)} title={en ? "Restart" : "重启"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-rotate-right" /></button><button aria-label={en ? "Unload C++ project" : "卸载 C++ 工程"} onClick={() => void desktop.unloadCppProject(project.root)} title={en ? "Unload" : "卸载"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-right-from-bracket" /></button></div></div><small>{project.root}</small><span className={`is-${project.status}`}>{project.status}{project.error ? ` · ${project.error}` : ""}</span></div>)}
+            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{en ? "Active language projects" : "已加载的语言工程"}</h2><p>{languageProjects.length ? (en ? `${languageProjects.length} projects` : `${languageProjects.length} 个工程`) : (en ? "No projects loaded" : "当前没有已加载工程")}</p></div><button aria-label={en ? "Close" : "关闭"} className="inspector-dialog-close" onClick={() => setCppProjectsDialogOpen(false)} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
+            {languageProjects.map((project) => <div className="cpp-project-row" key={`${project.languageServerId}:${project.root}`}><div className="cpp-project-row-heading"><strong>{project.name}</strong><div className="cpp-project-row-actions"><button aria-label={en ? "Restart language project" : "重启语言工程"} onClick={() => void desktop.languageServerCall(project.languageServerId, "restart", project.root)} title={en ? "Restart" : "重启"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-rotate-right" /></button><button aria-label={en ? "Unload language project" : "卸载语言工程"} onClick={() => void desktop.languageServerCall(project.languageServerId, "unload", project.root)} title={en ? "Unload" : "卸载"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-right-from-bracket" /></button></div></div><small>{project.languageServerName} · {project.root}</small><span className={`is-${project.status}`}>{project.status}{project.error ? ` · ${project.error}` : ""}</span></div>)}
           </section>
         </div>
       ) : null}
