@@ -80,6 +80,18 @@ body {
   position: fixed;
   z-index: 200;
 }
+.settings-backdrop,
+.advanced-search-backdrop,
+.directory-picker-backdrop,
+.inspector-dialog-backdrop,
+.session-dialog-backdrop,
+.permission-dialog-backdrop,
+.command-picker-backdrop,
+.extension-dialog-backdrop {
+  contain: layout paint;
+  isolation: isolate;
+  will-change: opacity;
+}
 .settings-dialog {
   background: var(--surface-panel);
   border: 1px solid var(--border-color);
@@ -2684,7 +2696,6 @@ body.is-resizing-panels .composer {
 }
 .inspector-dialog-backdrop {
   align-items: flex-start;
-  backdrop-filter: blur(2px);
   background: rgb(36 32 28 / 16%);
   display: flex;
   inset: 0;
@@ -4199,7 +4210,6 @@ body.is-tree-dragging * {
    text, choices and keyed status/widget state. */
 .extension-dialog-backdrop {
   align-items: center;
-  backdrop-filter: blur(1.5px);
   background: rgb(20 19 18 / 24%);
   display: flex;
   inset: 0;

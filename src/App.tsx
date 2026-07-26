@@ -19,6 +19,38 @@ import { useExtensionUi } from "./features/extensions/ExtensionUiContext";
 
 const DRAFT_SESSION_PATH = "__new__";
 
+function SettingsOverlay({
+  activeRef,
+  onClose,
+}: {
+  activeRef: { current: SessionSummary | undefined };
+  onClose(changes: PiResourceChange[], editorSettingsChanged: boolean): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [page, setPage] = useState<SettingsPage>("models");
+  useEffect(() => {
+    const show = (event: Event) => {
+      const requestedPage = (event as CustomEvent<{ page?: SettingsPage }>).detail?.page;
+      setPage(requestedPage ?? "models");
+      setOpen(true);
+    };
+    window.addEventListener("agent-k-open-settings", show);
+    return () => window.removeEventListener("agent-k-open-settings", show);
+  }, []);
+  const active = activeRef.current;
+  return <SettingsDialog
+    cwd={active?.cwd}
+    initialPage={page}
+    onClose={(changes, editorSettingsChanged) => {
+      setOpen(false);
+      onClose(changes, editorSettingsChanged);
+    }}
+    open={open}
+    runtimeId={active?.runtimeId}
+    sessionId={active?.path === DRAFT_SESSION_PATH ? undefined : active?.id}
+  />;
+}
+
 export function App() {
   const { settings, update: updateSettings } = useSettings();
   const { cancelPending, clearSessionUi, setActiveRuntimeId } = useExtensionUi();
@@ -53,14 +85,7 @@ export function App() {
   } | undefined>(undefined);
   const [error, setError] = useState<string>();
   const [reviewCalls, setReviewCalls] = useState<ReviewCall[]>();
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsPage, setSettingsPage] = useState<SettingsPage>("models");
   useEffect(() => {
-    const openSettings = (event: Event) => {
-      const page = (event as CustomEvent<{ page?: SettingsPage }>).detail?.page;
-      setSettingsPage(page ?? "models");
-      setSettingsOpen(true);
-    };
     const updateSessionName = (event: Event) => {
       const rawName = (event as CustomEvent<{ name?: string }>).detail?.name;
       const name = typeof rawName === "string"
@@ -81,10 +106,8 @@ export function App() {
         sessions: project.sessions.map((session) => session.path === current.path ? renamed : session),
       })));
     };
-    window.addEventListener("agent-k-open-settings", openSettings);
     window.addEventListener("agent-k-session-name", updateSessionName);
     return () => {
-      window.removeEventListener("agent-k-open-settings", openSettings);
       window.removeEventListener("agent-k-session-name", updateSessionName);
     };
   }, []);
@@ -152,7 +175,6 @@ export function App() {
     changes: PiResourceChange[],
     editorSettingsChanged: boolean,
   ) => {
-    setSettingsOpen(false);
     if (changes.length === 0 && !editorSettingsChanged) return;
     const cwd = activeRef.current?.cwd;
     if (!cwd) {
@@ -890,8 +912,7 @@ export function App() {
               touchWorkspace(cwd);
             }}
             onSettings={() => {
-              setSettingsPage("models");
-              setSettingsOpen(true);
+              window.dispatchEvent(new Event("agent-k-open-settings"));
             }}
             onTogglePin={toggleWorkspacePin}
             projects={projects.map((project) => ({
@@ -932,14 +953,7 @@ export function App() {
           </div>
         </div>
       )}
-      <SettingsDialog
-        cwd={active?.cwd}
-        initialPage={settingsPage}
-        onClose={closeSettings}
-        open={settingsOpen}
-        runtimeId={active?.runtimeId}
-        sessionId={active?.path === DRAFT_SESSION_PATH ? undefined : active?.id}
-      />
+      <SettingsOverlay activeRef={activeRef} onClose={closeSettings} />
     </>
   );
 }

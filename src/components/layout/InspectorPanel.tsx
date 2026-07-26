@@ -1,5 +1,6 @@
 import { createPortal } from "react-dom";
 import {
+  useCallback,
   useEffect,
   memo,
   useRef,
@@ -435,7 +436,7 @@ function isWebProjectDirectory(entry: FileEntry): boolean {
     || names.has("package.json") && names.has("index.html");
 }
 
-function Tree({
+const Tree = memo(function Tree({
   entry,
   loadDirectory,
   open,
@@ -560,7 +561,7 @@ function Tree({
       <span>{entry.name}</span>
     </button>
   );
-}
+});
 export function InspectorPanel({
   root,
   onError,
@@ -1183,9 +1184,9 @@ export function InspectorPanel({
   const closeTab = (tab: Tab) => {
     const closingIndex = tabs.findIndex((item) => item.path === tab.path);
     const remainingTabs = tabs.filter((item) => item.path !== tab.path);
-    const closedRuntimeKey = `\0${tab.path}\0`;
-    setEditorRuntimeKeys((keys) => keys.filter((key) => !key.includes(closedRuntimeKey)));
-    editorRuntimeRecency.current = editorRuntimeRecency.current.filter((key) => !key.includes(closedRuntimeKey));
+    // Keep the recently used plugin runtime alive until the bounded LRU cache
+    // evicts it. Destroying an iframe here synchronously tears down Monaco and
+    // its workers on the click path, which makes closing a code tab hitch.
     setTabs(remainingTabs);
     if (active === tab.path) {
       const nextActive = remainingTabs[
@@ -1635,6 +1636,21 @@ export function InspectorPanel({
     window.addEventListener("pointerup", handleEnd, true);
     window.addEventListener("pointercancel", handleEnd, true);
   };
+  // A dialog toggle must not redraw a large, expanded file tree. The actual
+  // handlers stay current through this ref while the props passed to Tree keep
+  // stable identities for React.memo.
+  const treeActionRefs = useRef({
+    loadDirectory,
+    open,
+    showContextMenu,
+    startPointerDrag,
+  });
+  treeActionRefs.current = { loadDirectory, open, showContextMenu, startPointerDrag };
+  const treeLoadDirectory = useCallback((path: string) => treeActionRefs.current.loadDirectory(path), []);
+  const treeOpen = useCallback((path: string) => treeActionRefs.current.open(path), []);
+  const treeShowContextMenu = useCallback((entry: FileEntry, event: ReactMouseEvent) => treeActionRefs.current.showContextMenu(entry, event), []);
+  const treeStartPointerDrag = useCallback((event: ReactPointerEvent, entry: FileEntry) => treeActionRefs.current.startPointerDrag(event, entry), []);
+  const shouldSuppressTreeClick = useCallback(() => Date.now() < suppressTreeClickUntil.current, []);
   useEffect(() => {
     if (!root) return;
     const directoryAt = (position: { x: number; y: number }) => {
@@ -1817,16 +1833,14 @@ export function InspectorPanel({
             {!query.trim() && tree ? (
               <Tree
                 entry={tree}
-                loadDirectory={(path) => void loadDirectory(path)}
-                open={(path) => void open(path)}
+                loadDirectory={treeLoadDirectory}
+                open={treeOpen}
                 dropTarget={dropTarget}
                 selectedPath={selectedEntry?.path}
                 select={setSelectedEntry}
-                shouldSuppressClick={() =>
-                  Date.now() < suppressTreeClickUntil.current
-                }
-                showContextMenu={showContextMenu}
-                startPointerDrag={startPointerDrag}
+                shouldSuppressClick={shouldSuppressTreeClick}
+                showContextMenu={treeShowContextMenu}
+                startPointerDrag={treeStartPointerDrag}
               />
             ) : !query.trim() && loading ? (
               (en ? "Reading project…" : "正在读取项目…")
