@@ -223,6 +223,14 @@ export function SettingsDialog({
       setBusy(false);
     }
   };
+  const installLanguageServerPlugin = async () => {
+    const sourceDirectory = await platform.openDialog({ directory: true, title: "安装语言扩展" });
+    if (typeof sourceDirectory !== "string") return;
+    setBusy(true); setError(undefined);
+    try { const installed = await desktop.installLanguageServerPlugin(sourceDirectory); setLanguageServerPlugins(await desktop.listLanguageServerPlugins()); setNotice(`已安装 ${installed.displayName}`); }
+    catch (cause) { setError(String(cause)); }
+    finally { setBusy(false); }
+  };
   const viewEditorSkill = async (plugin: Pick<FileFormatPluginResource, "id" | "name">) => {
     if (!cwd) return;
     setBusy(true); setError(undefined);
@@ -866,7 +874,7 @@ export function SettingsDialog({
                   <h2>{t("editors")}</h2>
                   <div className="settings-title-actions"><button disabled={busy || resourcesLocked} onClick={() => void installEditorPlugin()} type="button">
                     <i className="fa-solid fa-box-open" /> 安装扩展
-                  </button><button
+                  </button><button disabled={busy || resourcesLocked} onClick={() => void installLanguageServerPlugin()} type="button"><i className="fa-solid fa-code" /> 安装语言扩展</button><button
                     disabled={busy || !runtimeId || resourcesLocked}
                     onClick={() => {
                       if (!runtimeId || !cwd) return;

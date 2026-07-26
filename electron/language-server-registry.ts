@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { LanguageServerHost, type LanguageServerPluginManifest } from "./language-server-host.js";
@@ -68,8 +68,10 @@ function projectMenu(value: unknown): LanguageServerPluginManifest["projectMenu"
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object") return undefined;
   const input = value as Record<string, unknown>;
-  return typeof input.loadLabel === "string" && typeof input.unloadLabel === "string" && input.loadLabel.trim() && input.unloadLabel.trim()
-    ? { loadLabel: input.loadLabel.trim(), unloadLabel: input.unloadLabel.trim() } : undefined;
+  if (!(typeof input.loadLabel === "string" && typeof input.unloadLabel === "string" && input.loadLabel.trim() && input.unloadLabel.trim())) return undefined;
+  const rawActions = input.actions;
+  const actions = rawActions === undefined ? undefined : Array.isArray(rawActions) ? rawActions.flatMap((item) => item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" && typeof (item as { label?: unknown }).label === "string" && typeof (item as { method?: unknown }).method === "string" ? [{ id: (item as { id: string }).id, label: (item as { label: string }).label, method: (item as { method: string }).method }] : []) : undefined;
+  return rawActions !== undefined && (!actions || !Array.isArray(rawActions) || actions.length !== rawActions.length) ? undefined : { loadLabel: input.loadLabel.trim(), unloadLabel: input.unloadLabel.trim(), ...(actions ? { actions } : {}) };
 }
 
 /**
@@ -105,15 +107,23 @@ export class LanguageServerRegistry {
   private readonly disabled = new Set<string>();
 
   constructor(
-    private readonly builtins: readonly LanguageServerPluginManifest[],
+    private readonly firstPartyPluginDirectory: string,
     private readonly pluginDirectory: string,
     private readonly cachePath: string,
     private readonly emit: (event: Record<string, unknown>) => void,
   ) {}
 
   async initialize(): Promise<void> {
-    const installed = await discoverLanguageServerPlugins(this.pluginDirectory);
-    for (const manifest of [...this.builtins, ...installed]) {
+    // First-party packages and locally installed packages are intentionally
+    // discovered through the exact same manifest path. The host must never
+    // import a language implementation or manufacture its manifest.
+    const [firstParty, installed] = await Promise.all([
+      discoverLanguageServerPlugins(this.firstPartyPluginDirectory),
+      discoverLanguageServerPlugins(this.pluginDirectory),
+    ]);
+    // A manually installed package may replace a bundled package only when
+    // its version passed the install-time check.
+    for (const manifest of [...installed, ...firstParty]) {
       if (this.hosts.has(manifest.id)) {
         this.emit({ type: "language_server_plugin_error", id: manifest.id, error: "Duplicate language-server plugin id" });
         continue;
@@ -127,6 +137,27 @@ export class LanguageServerRegistry {
   async reload(): Promise<void> {
     this.shutdown();
     await this.initialize();
+  }
+
+  async install(sourceDirectory: string): Promise<Omit<LanguageServerPluginManifest, "worker"> & { enabled: boolean }> {
+    const sourceManifest = join(resolve(sourceDirectory), MANIFEST_FILE);
+    const input = JSON.parse(await readFile(sourceManifest, "utf8")) as DiskManifest;
+    if (typeof input.id !== "string") throw new Error("Language extension manifest has no id");
+    const firstParty = await discoverLanguageServerPlugins(this.firstPartyPluginDirectory);
+    const candidate = (await discoverLanguageServerPlugins(dirname(sourceManifest))).find((item) => item.id === input.id);
+    if (!candidate) throw new Error("Language extension package is invalid");
+    const bundled = firstParty.find((item) => item.id === candidate.id);
+    const version = candidate.editorContribution?.version ?? "0.0.0";
+    const bundledVersion = bundled?.editorContribution?.version ?? "0.0.0";
+    if (bundled && bundledVersion >= version) throw new Error(`Built-in language extension ${candidate.id} v${bundledVersion} is newer or equal`);
+    const destination = join(this.pluginDirectory, candidate.id);
+    await mkdir(this.pluginDirectory, { recursive: true });
+    await rm(destination, { recursive: true, force: true });
+    await cp(resolve(sourceDirectory), destination, { recursive: true });
+    await this.reload();
+    const installed = this.list().find((item) => item.id === candidate.id);
+    if (!installed) throw new Error("Installed language extension was not discovered");
+    return installed;
   }
 
   list(): Array<Omit<LanguageServerPluginManifest, "worker"> & { enabled: boolean }> {

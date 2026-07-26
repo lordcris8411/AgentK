@@ -14,17 +14,19 @@
     "clean": "shx rm -rf dist .electron-dist",
     "dev": "npm run prepare:native && node script/electron-dev.mjs",
     "dev:web": "vite",
-    "build": "npm run build:desktop && npm run build:web",
+    "build": "npm run build:language-servers && npm run build:desktop && npm run build:web",
     "build:web": "tsc -b && npm run build:editors && vite build",
     "build:editors": "node script/build-editor-extensions.mjs",
     "build:desktop": "tsc -p tsconfig.electron.json",
+    "build:language-servers": "node script/build-language-server-plugins.mjs",
     "dist": "npm run build && electron-builder",
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:windows": "npm run build && electron-builder --win",
-    "check": "npm run check:web && npm run check:desktop && npm run check:editors && npm run check:k-plan",
+    "check": "npm run check:web && npm run check:desktop && npm run check:language-servers && npm run check:editors && npm run check:k-plan",
     "check:web": "tsc -b",
     "check:k-plan": "tsc -p extensions/k-plan/tsconfig.json",
     "check:desktop": "tsc -p tsconfig.electron.json --noEmit",
+    "check:language-servers": "node script/build-language-server-plugins.mjs --check",
     "check:editors": "tsc -p editor/tsconfig.json",
     "prepare:native": "node script/prepare-native.mjs",
     "test": "npm run build:desktop && node --test extensions/k-plan/index.test.ts electron/file-formats.test.mjs electron/language-server-registry.test.mjs electron/skill-hub.test.mjs test/messageContent.test.ts test/projectActivity.test.ts",
@@ -93,6 +95,10 @@
       {
         "from": "editor",
         "to": "editor"
+      },
+      {
+        "from": "language-servers",
+        "to": "language-servers"
       },
       {
         "from": ".pi-runtime",

@@ -141,6 +141,14 @@ function firstPartyEditorExtensionsPath(): string {
     : projectPath("editor", "extensions");
 }
 
+/** Native language workers are extension packages too. The desktop host sees
+ * only this package root; manifests select and describe every worker. */
+function firstPartyLanguageServerPluginsPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, "language-servers")
+    : projectPath("language-servers");
+}
+
 function createWindows(): void {
   const preload = projectPath("electron", "preload.cjs");
   mainWindow = new BrowserWindow({
@@ -585,6 +593,7 @@ async function start(): Promise<void> {
       ? join(process.resourcesPath, "extensions")
       : projectPath("extensions"),
     firstPartyEditorExtensionsSource: firstPartyEditorExtensionsPath(),
+    firstPartyLanguageServerPluginsSource: firstPartyLanguageServerPluginsPath(),
     bundledSkillsSource: app.isPackaged
       ? join(process.resourcesPath, "skills")
       : projectPath("skills"),

@@ -368,8 +368,8 @@ export class FileService {
 
   async projectTree(rootInput: string): Promise<FileEntry> {
     const root = await canonicalRoot(rootInput);
-    // Include one level inside top-level folders so project markers such as
-    // CMakeLists.txt can be identified before the user expands or opens a menu.
+    // Include one level inside top-level folders so extension-declared project
+    // markers can be identified before the user expands or opens a menu.
     return buildTree(root, root, 2);
   }
 
@@ -379,23 +379,6 @@ export class FileService {
     if (!(await stat(target)).isDirectory())
       throw new Error("Requested path is not a directory");
     return buildTree(root, target, 2);
-  }
-
-  async cmakeProjectDirectory(rootInput: string, path: string): Promise<string> {
-    const root = await canonicalRoot(rootInput);
-    const requested = path ? await workspacePath(root, path) : root;
-    const target = await realpath(requested);
-    if (target !== root && !isPathInside(root, target))
-      throw new Error("CMake project path is outside the active workspace");
-    if (!(await stat(target)).isDirectory())
-      throw new Error("CMake project path is not a directory");
-    try {
-      if (!(await stat(join(target, "CMakeLists.txt"))).isFile())
-        throw new Error("CMakeLists.txt is not a file");
-    } catch {
-      throw new Error("The selected directory is not a CMake project");
-    }
-    return target;
   }
 
   async workspaceDirectory(rootInput: string, path: string): Promise<string> {

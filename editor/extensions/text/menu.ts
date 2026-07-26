@@ -1,6 +1,6 @@
 import { defineContextMenu, type ContextMenuItem } from "../../sdk";
 
-defineContextMenu(({ directoryEntries, isDirectory, packageJson, viteConfig }) => {
+defineContextMenu(({ isDirectory, packageJson, viteConfig }) => {
   if (!isDirectory) return [];
   const items: ContextMenuItem[] = [];
   if (packageJson) {
@@ -16,7 +16,5 @@ defineContextMenu(({ directoryEntries, isDirectory, packageJson, viteConfig }) =
       // An invalid package manifest does not hide unrelated directory actions.
     }
   }
-  if (directoryEntries.includes("CMakeLists.txt"))
-    items.push({ id: "compile-cmake-project", label: "编译项目" });
   return items;
 });

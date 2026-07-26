@@ -12,7 +12,7 @@ export type LanguageServerPluginManifest = {
   id: string;
   languages: string[];
   projectMarkers: string[];
-  projectMenu?: { loadLabel: string; unloadLabel: string };
+  projectMenu?: { loadLabel: string; unloadLabel: string; actions?: Array<{ id: string; label: string; method: string }> };
   editorContribution?: { description: string; editorPluginId: string; id: string; name: string; version: string };
   skill?: { markdown: string; name: string };
   commands?: Array<{ id: string; title: string; kind: "project-manager" }>;

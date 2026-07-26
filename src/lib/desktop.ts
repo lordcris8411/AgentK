@@ -37,7 +37,7 @@ export type LanguageServerPlugin = {
   id: string;
   languages: string[];
   projectMarkers: string[];
-  projectMenu?: { loadLabel: string; unloadLabel: string };
+  projectMenu?: { loadLabel: string; unloadLabel: string; actions?: Array<{ id: string; label: string; method: string }> };
   editorContribution?: { description: string; editorPluginId: string; id: string; name: string; version: string };
   skill?: { markdown: string; name: string };
   commands?: Array<{ id: string; title: string; kind: "project-manager" }>;
@@ -307,9 +307,8 @@ export const desktop = {
     invoke<string>("start_workspace_preview", { root, path, content }),
   startWebProject: (root: string, path: string) =>
     invoke<{ id: string; url: string }>("start_web_project", { root, path }),
-  compileCmakeProject: (root: string, path: string, terminalId: string) =>
-    invoke<void>("compile_cmake_project", { root, path, terminalId }),
   listLanguageServerPlugins: () => invoke<LanguageServerPlugin[]>("list_language_server_plugins"),
+  installLanguageServerPlugin: (sourceDirectory: string) => invoke<LanguageServerPlugin>("install_language_server_plugin", { sourceDirectory }),
   listLanguageServerProjects: () => invoke<LanguageServerProject[]>("list_language_server_projects"),
   languageServerCall: (id: string, method: string, ...args: unknown[]) => invoke<unknown>("language_server_call", { args, id, method }),
   languageServerRequest: (language: string, file: string, method: string, params: unknown) => invoke<unknown>("language_server_request", { language, file, method, params }),

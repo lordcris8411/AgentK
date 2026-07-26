@@ -643,11 +643,11 @@ export function InspectorPanel({
       const rawDetail = typeof value.detail === "string" ? value.detail : undefined;
       setCppProgress((previous) => ({
         stage, ...(typeof value.languageServerId === "string" ? { languageServerId: value.languageServerId } : {}),
-        ...(rawDetail ? { detail: stage === "cmake" ? (en ? "Configuring CMake…" : "正在配置 CMake…") : rawDetail } : {}),
+        ...(rawDetail ? { detail: stage === "configuring" ? (en ? "Configuring project…" : "正在配置工程…") : rawDetail } : {}),
         ...(typeof value.bytes === "number" ? { bytes: value.bytes } : {}),
         ...(typeof value.total === "number" ? { total: value.total } : {}),
         ...(typeof value.rate === "number" ? { rate: value.rate } : {}),
-        ...(stage === "cmake" && rawDetail ? { log: `${previous?.log ?? ""}${rawDetail}`.slice(-16_000) } : {}),
+        ...(stage === "configuring" && rawDetail ? { log: `${previous?.log ?? ""}${rawDetail}`.slice(-16_000) } : {}),
       }));
       if (value.stage === "ready") window.setTimeout(() => setCppProgress(undefined), 900);
     }).then((unlisten) => { stop = unlisten; });
@@ -2163,6 +2163,22 @@ export function InspectorPanel({
               {contextLanguagePlugin.projectMenu?.loadLabel ?? (en ? `Load ${contextLanguagePlugin.displayName} project` : `加载 ${contextLanguagePlugin.displayName} 工程`)}
             </button>
           ) : null)}
+          {contextLanguagePlugin?.projectMenu?.actions?.map((action) => (
+            <button
+              key={`${contextLanguagePlugin.id}:${action.id}`}
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("agent-k-file-format-action", {
+                  detail: { action: `language-server:${contextLanguagePlugin.id}:${action.method}`, path: contextMenu.entry.path },
+                }));
+                setContextMenu(undefined);
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <i className="fa-solid fa-hammer" />
+              {action.label}
+            </button>
+          ))}
           {pluginMenuActions.map((action) => (
             <button
               key={`${action.pluginId}:${action.id}`}
@@ -2380,7 +2396,7 @@ export function InspectorPanel({
             {cppProgress.total ? <progress className="cpp-toolchain-progress" max={cppProgress.total} value={Math.min(cppProgress.bytes ?? 0, cppProgress.total)} /> : <p>{en ? "Working…" : "处理中…"}</p>}
             {cppProgress.bytes !== undefined ? <small>{formatMegabytes(cppProgress.bytes)}{cppProgress.total ? ` / ${formatMegabytes(cppProgress.total)} · ${(Math.min(cppProgress.bytes, cppProgress.total) / cppProgress.total * 100).toFixed(2)}%` : ""}{cppProgress.rate !== undefined ? ` · ${formatMegabytes(cppProgress.rate)}/s` : ""}</small> : null}
             {cppProgress.error ? <p>{cppProgress.error}</p> : null}
-            {cppProgress.log ? <details><summary>{en ? "CMake output" : "CMake 输出"}</summary><pre className="cpp-progress-log">{cppProgress.log}</pre></details> : null}
+            {cppProgress.log ? <details><summary>{en ? "Configuration output" : "工程配置输出"}</summary><pre className="cpp-progress-log">{cppProgress.log}</pre></details> : null}
           </section>
         </div>
       ) : null}

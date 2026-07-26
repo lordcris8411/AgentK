@@ -239,12 +239,10 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   }, []);
 
   useEffect(() => {
-    const compileCmakeProject = (event: Event) => {
+    const runLanguageProjectAction = (event: Event) => {
       const detail = (event as CustomEvent<{ action?: string; path?: string }>).detail;
-      if (
-        detail?.action !== "compile-cmake-project" ||
-        typeof detail.path !== "string"
-      ) return;
+      const match = /^language-server:([a-z0-9.-]+):([a-z0-9.-]+)$/i.exec(detail?.action ?? "");
+      if (!match || typeof detail?.path !== "string") return;
       const activeRoot = rootRef.current;
       const terminalId = terminalIdRef.current;
       if (!activeRoot || !terminalId) {
@@ -256,17 +254,21 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
         return;
       }
       setCollapsed(false);
-      void desktop.compileCmakeProject(activeRoot, detail.path, terminalId)
+      void desktop.languageServerCall(match[1], match[2], activeRoot, detail.path)
+        .then((command) => {
+          if (typeof command !== "string") throw new Error("Language extension did not return terminal input");
+          return desktop.writeProjectConsole(terminalId, command);
+        })
         .then(() => terminalRef.current?.focus())
         .catch((cause) =>
           onErrorRef.current(
-            `${enRef.current ? "Unable to compile CMake project" : "无法编译 CMake 项目"}：${String(cause)}`,
+            `${enRef.current ? "Project action failed" : "工程操作失败"}：${String(cause)}`,
           ),
         );
     };
-    window.addEventListener("agent-k-file-format-action", compileCmakeProject);
+    window.addEventListener("agent-k-file-format-action", runLanguageProjectAction);
     return () =>
-      window.removeEventListener("agent-k-file-format-action", compileCmakeProject);
+      window.removeEventListener("agent-k-file-format-action", runLanguageProjectAction);
   }, []);
 
   useEffect(() => {

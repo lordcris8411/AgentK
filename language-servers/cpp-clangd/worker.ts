@@ -54,6 +54,22 @@ export class CppService {
   async restart(root: string) { await this.unload(root); return this.load(root); }
   shutdown() { for (const entry of this.projects.values()) this.stop(entry); this.projects.clear(); }
   cancel(): void { this.cancellationRequested = true; this.provisionAbort?.abort(); this.activeCommand?.kill(); }
+  /** Declarative project action consumed by the generic terminal bridge. */
+  async terminalCommand(rootInput: string, relativePath: string): Promise<string> {
+    const root = await realpath(rootInput);
+    const source = resolve(root, relativePath);
+    if (source !== root && !source.startsWith(`${root}${process.platform === "win32" ? "\\" : "/"}`))
+      throw new Error("Project action path is outside the workspace");
+    if (!existsSync(join(source, "CMakeLists.txt")))
+      throw new Error("The selected directory is not a CMake project");
+    const build = join(source, "build");
+    const quote = process.platform === "win32"
+      ? (value: string) => `'${value.replaceAll("'", "''")}'`
+      : (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    return process.platform === "win32"
+      ? `cmake -S ${quote(source)} -B ${quote(build)}; if ($LASTEXITCODE -eq 0) { cmake --build ${quote(build)} }\r`
+      : `cmake -S ${quote(source)} -B ${quote(build)} && cmake --build ${quote(build)}\r`;
+  }
   async lsp(file: string, method: string, params: unknown): Promise<unknown> {
     const canonical = resolve(file); const project = this.projectFor(canonical);
     // Opening an ordinary C++ file must remain useful without first loading a
@@ -193,7 +209,7 @@ export class CppService {
     }
     if (changed) await writeFile(commandsPath, `${JSON.stringify(commands, undefined, 2)}\n`, "utf8");
   }
-  private run(command: string, args: string[], cwd: string, bin: string) { return new Promise<void>((resolveRun, reject) => { const child = spawn(command, args, { cwd, windowsHide: true, env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` } }); this.activeCommand = child; let log = ""; child.stdout.on("data", b => { log += b; this.emit({ type: "language_server_progress", stage: "cmake", detail: String(b) }); }); child.stderr.on("data", b => { log += b; this.emit({ type: "language_server_progress", stage: "cmake", detail: String(b) }); }); child.once("error", reject); child.once("close", code => { if (this.activeCommand === child) this.activeCommand = undefined; code === 0 ? resolveRun() : reject(new Error(log || `CMake exited with ${code}`)); }); }); }
+  private run(command: string, args: string[], cwd: string, bin: string) { return new Promise<void>((resolveRun, reject) => { const child = spawn(command, args, { cwd, windowsHide: true, env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` } }); this.activeCommand = child; let log = ""; child.stdout.on("data", b => { log += b; this.emit({ type: "language_server_progress", stage: "configuring", detail: String(b) }); }); child.stderr.on("data", b => { log += b; this.emit({ type: "language_server_progress", stage: "configuring", detail: String(b) }); }); child.once("error", reject); child.once("close", code => { if (this.activeCommand === child) this.activeCommand = undefined; code === 0 ? resolveRun() : reject(new Error(log || `CMake exited with ${code}`)); }); }); }
   private async start(entry: Entry, clangd: string, commandsDir: string, bin: string) {
     if (!existsSync(clangd)) throw new Error("Managed clangd is unavailable");
     entry.status = "starting"; this.publish(entry);
@@ -297,6 +313,7 @@ if (typeof process.send === "function") {
           case "unload": result = await service.unload(String(args[0] ?? "")); break;
           case "restart": result = await service.restart(String(args[0] ?? "")); break;
           case "cancel": service.cancel(); break;
+          case "terminalCommand": result = await service.terminalCommand(String(args[0] ?? ""), String(args[1] ?? "")); break;
           case "lsp": result = await service.lsp(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
           case "notify": result = await service.notify(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
           case "shutdown": service.shutdown(); break;

@@ -42,7 +42,6 @@ import {
   loadFirstPartyFileFormatPlugins,
 } from "./file-formats.js";
 import { installSkillHub, previewSkillHub } from "./skill-hub.js";
-import { cppClangdLanguagePlugin } from "./language-server-plugins.js";
 import { LanguageServerRegistry } from "./language-server-registry.js";
 import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
 
@@ -50,6 +49,7 @@ export interface DesktopBackendOptions {
   appDataPath: string;
   bundledExtensionsSource: string;
   firstPartyEditorExtensionsSource: string;
+  firstPartyLanguageServerPluginsSource: string;
   bundledSkillsSource: string;
   bundledPiCli: string;
   cachePath: string;
@@ -84,7 +84,7 @@ export class DesktopBackend {
     this.options = options;
     this.files = new FileService(options.appDataPath, options.cachePath);
     this.languageServers = new LanguageServerRegistry(
-      [cppClangdLanguagePlugin],
+      options.firstPartyLanguageServerPluginsSource,
       join(options.appDataPath, "language-server-plugins"),
       options.cachePath,
       (event) => this.options.emit(event),
@@ -305,14 +305,10 @@ export class DesktopBackend {
         );
       case "start_web_project":
         return this.startWebProject(requiredString(args.root, "root"), requiredString(args.path, "path"));
-      case "compile_cmake_project":
-        return this.compileCmakeProject(
-          requiredString(args.root, "root"),
-          requiredString(args.path, "path"),
-          requiredString(args.terminalId, "terminalId"),
-        );
       case "list_language_server_plugins":
         return this.languageServers.list();
+      case "install_language_server_plugin":
+        return this.languageServers.install(requiredString(args.sourceDirectory, "sourceDirectory"));
       case "list_language_server_projects":
         return this.languageServers.listProjects();
       case "language_server_call":
@@ -408,35 +404,6 @@ export class DesktopBackend {
     } catch (cause) {
       this.options.emit({ type: "workspace_watch_error", root, error: String(cause) });
     }
-  }
-
-  private async compileCmakeProject(
-    root: string,
-    path: string,
-    terminalId: string,
-  ): Promise<void> {
-    const projectDirectory = await this.files.cmakeProjectDirectory(root, path);
-    const consoleProcess = this.projectConsoles.get(terminalId);
-    if (!consoleProcess) throw new Error("Project console is not running");
-    const requestedRoot = resolve(root);
-    const consoleRoot = resolve(consoleProcess.root);
-    const sameRoot = process.platform === "win32"
-      ? requestedRoot.toLocaleLowerCase("en-US") === consoleRoot.toLocaleLowerCase("en-US")
-      : requestedRoot === consoleRoot;
-    if (!sameRoot)
-      throw new Error("Project console belongs to a different workspace");
-    const buildDirectory = join(projectDirectory, "build");
-    if (/[\r\n]/.test(projectDirectory) || /[\r\n]/.test(buildDirectory))
-      throw new Error("CMake project paths cannot contain line breaks");
-    const quote = process.platform === "win32"
-      ? (value: string) => `'${value.replaceAll("'", "''")}'`
-      : (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-    const source = quote(projectDirectory);
-    const build = quote(buildDirectory);
-    const command = process.platform === "win32"
-      ? `cmake -S ${source} -B ${build}; if ($LASTEXITCODE -eq 0) { cmake --build ${build} }\r`
-      : `cmake -S ${source} -B ${build} && cmake --build ${build}\r`;
-    consoleProcess.terminal.write(command);
   }
 
   private async startWebProject(root: string, path: string): Promise<{ id: string; url: string }> {
