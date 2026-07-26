@@ -25,6 +25,7 @@ export type EditorInstance = {
   executeAction?(action: string, parameters: Record<string, unknown>): void;
   focus?(): void;
   getContent(): string;
+  getSelection?(): string;
   markSaved?(content: string): void;
   navigate?(line: number, column: number): void;
   setContent(content: string): void;
@@ -38,10 +39,12 @@ export type EditorHost = {
   reportDirty(dirty: boolean): void;
   reportError(message: string): void;
   requestSave(content: string): void;
+  reportSelection(text: string): void;
   referenceLine(line: number, column?: number): void;
   updateContent(content: string): void;
   languageRequest(method: string, params: unknown): Promise<unknown>;
   openFile(path: string, line?: number, column?: number): void;
+  command(name: string, value?: unknown): void;
 };
 
 export type EditorFactory = (
@@ -81,7 +84,7 @@ type HostMessage = {
   channel: typeof EDITOR_CHANNEL;
   nonce: string;
   requestId?: string;
-  type: "action" | "focus" | "initialize" | "language-response" | "mark-saved" | "navigate" | "read-content" | "set-content" | "set-layout-suspended" | "set-theme" | "set-word-wrap";
+  type: "action" | "focus" | "initialize" | "language-response" | "mark-saved" | "navigate" | "read-content" | "read-selection" | "set-content" | "set-layout-suspended" | "set-theme" | "set-word-wrap";
   value?: unknown;
 };
 
@@ -125,6 +128,9 @@ export function defineEditor(factory: EditorFactory): void {
     requestSave(content) {
       if (nonce) post(nonce, "request-save", content);
     },
+    reportSelection(text) {
+      if (nonce) post(nonce, "selection", text);
+    },
     referenceLine(line, column = 1) {
       if (nonce) post(nonce, "reference-line", { column, line });
     },
@@ -146,6 +152,7 @@ export function defineEditor(factory: EditorFactory): void {
     openFile(path, line, column) {
       if (nonce) post(nonce, "open-file", { column, line, path });
     },
+    command(name, value) { if (nonce) post(nonce, "command", value === undefined ? name : { name, value }); },
   };
 
   window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
@@ -215,6 +222,9 @@ export function defineEditor(factory: EditorFactory): void {
         break;
       case "read-content":
         post(nonce, "content", instance.getContent(), message.requestId);
+        break;
+      case "read-selection":
+        post(nonce, "selection", instance.getSelection?.() ?? "", message.requestId);
         break;
       case "set-content":
         if (typeof message.value === "string") instance.setContent(message.value);

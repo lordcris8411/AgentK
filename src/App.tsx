@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { AppShell } from "./components/layout/AppShell";
+import { DirectoryPickerDialog } from "./components/DirectoryPickerDialog";
 import { InspectorPanel } from "./components/layout/InspectorPanel";
 import { ConversationWorkspace } from "./features/conversation/ConversationWorkspace";
 import { displayUserContent } from "./features/conversation/messageContent";
@@ -15,7 +16,6 @@ import {
 import { SettingsDialog, type SettingsPage } from "./features/settings/SettingsDialog";
 import { useSettings } from "./features/settings/SettingsContext";
 import { useExtensionUi } from "./features/extensions/ExtensionUiContext";
-import { platform } from "./lib/platform";
 
 const DRAFT_SESSION_PATH = "__new__";
 
@@ -26,6 +26,7 @@ export function App() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [workspaceCwd, setWorkspaceCwd] = useState<string>();
   const [booting, setBooting] = useState(true);
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [bootMessage, setBootMessage] = useState<string>();
   const [busyMessage, setBusyMessage] = useState<string>();
   const busyVersion = useRef(0);
@@ -573,14 +574,11 @@ export function App() {
   }, [settings.pinnedWorkspaces, updateSettings]);
   const addWorkspace = async () => {
     setError(undefined);
+    setWorkspacePickerOpen(true);
+  };
+  const selectWorkspace = async (selected: string) => {
+    setWorkspacePickerOpen(false);
     try {
-      const selected = await platform.openDialog({
-        directory: true,
-        multiple: false,
-        title: en ? "Select Agent K workspace" : "选择 Agent K 工作区",
-      });
-      if (!selected) return;
-      if (Array.isArray(selected)) return;
       const finishBusy = beginBusy(en ? "Adding and preloading workspace…" : "正在添加并预加载工作区…");
       try {
         const cwd = await desktop.addWorkspace(selected);
@@ -868,14 +866,15 @@ export function App() {
   return (
     <>
       <AppShell
-        inspector={
+        inspector={<>
           <InspectorPanel
             onCloseReview={() => setReviewCalls(undefined)}
             onError={setError}
             review={reviewCalls}
             root={active?.cwd}
           />
-        }
+          {workspacePickerOpen ? (<DirectoryPickerDialog onCancel={() => setWorkspacePickerOpen(false)} onSelect={(path) => void selectWorkspace(path)} title={en ? "Select Agent K workspace" : "选择 Agent K 工作区"} />) : null}
+        </>}
         sidebar={
           <SessionSidebar
             activePath={active?.path}

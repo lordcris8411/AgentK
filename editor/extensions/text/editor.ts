@@ -434,6 +434,9 @@ defineEditor((host, initial) => {
     contextMenu.style.left = `${left}px`; contextMenu.style.top = `${top}px`;
   });
   const contextBlur = editor.onDidBlurEditorText(() => window.setTimeout(hideContextMenu, 0));
+  const selectionChange = editor.onDidChangeCursorSelection(({ selection }) => {
+    host.reportSelection(selection.isEmpty() ? "" : model.getValueInRange(selection));
+  });
   const contextOutside = (event: PointerEvent) => {
     if (!contextMenu.contains(event.target as Node)) hideContextMenu();
   };
@@ -441,6 +444,13 @@ defineEditor((host, initial) => {
   const keydown = editor.onKeyDown((event) => {
     if (event.keyCode === monaco.KeyCode.Escape && !referencePanel.hidden) {
       event.preventDefault(); event.stopPropagation(); hideReferences(); return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.keyCode === monaco.KeyCode.KeyF) {
+      event.preventDefault(); event.stopPropagation();
+      const selection = editor.getSelection();
+      const selectedText = selection?.isEmpty() ? "" : model.getValueInRange(selection ?? new monaco.Range(1, 1, 1, 1));
+      host.command("advanced-search", selectedText);
+      return;
     }
     if (!(event.ctrlKey || event.metaKey) || event.keyCode !== monaco.KeyCode.KeyS) return;
     event.preventDefault();
@@ -471,7 +481,7 @@ defineEditor((host, initial) => {
       observer.disconnect();
       keydown.dispose();
       context.dispose();
-      contextBlur.dispose(); contextMenu.remove();
+      contextBlur.dispose(); selectionChange.dispose(); contextMenu.remove();
       globalThis.document.removeEventListener("pointerdown", contextOutside, true);
       changes.dispose();
       definitionHover.dispose(); definitionClick.dispose(); definitionLink.clear();
@@ -496,6 +506,10 @@ defineEditor((host, initial) => {
     },
     getContent() {
       return model.getValue();
+    },
+    getSelection() {
+      const selection = editor.getSelection();
+      return selection?.isEmpty() ? "" : model.getValueInRange(selection ?? new monaco.Range(1, 1, 1, 1));
     },
     markSaved(content) {
       saved = content;

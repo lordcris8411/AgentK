@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { homedir } from "node:os";
 import { createServer } from "node:net";
-import { existsSync, watch, type FSWatcher } from "node:fs";
+import { existsSync, readdirSync, watch, type FSWatcher } from "node:fs";
 import { cp, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import * as pty from "node-pty";
@@ -291,6 +292,12 @@ export class DesktopBackend {
         return this.files.projectContext(requiredString(args.root, "root"));
       case "directory_tree":
         return this.files.directoryTree(requiredString(args.root, "root"), requiredString(args.path, "path"));
+      case "browse_directories": {
+        const path = optionalString(args.path) ?? homedir();
+        const entries = readdirSync(path, { withFileTypes: true });
+        const drives = process.platform === "win32" ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => `${letter}:\\`).filter(existsSync) : [];
+        return { path, parent: dirname(path), directories: entries.filter((entry) => entry.isDirectory() && entry.name !== "node_modules").map((entry) => entry.name).sort((a, b) => a.localeCompare(b)), drives };
+      }
       case "read_text_file":
         return this.files.readText(requiredString(args.root, "root"), requiredString(args.path, "path"));
       case "read_binary_file":
@@ -358,6 +365,8 @@ export class DesktopBackend {
         return this.files.openInFileManager(requiredString(args.root, "root"), requiredString(args.path, "path"));
       case "search_files":
         return this.files.search(requiredString(args.root, "root"), requiredString(args.query, "query"));
+      case "advanced_search_files":
+        { const root = requiredString(args.root, "root"); return this.files.advancedSearch(root, { caseSensitive: args.caseSensitive === true, directory: optionalString(args.directory), filePattern: optionalString(args.filePattern), query: requiredString(args.query, "query"), wholeWord: args.wholeWord === true }, (path, scanned, total) => this.options.emit({ type: "advanced_search_progress", root, path, scanned, total })); }
       case "watch_workspace":
         return this.watchWorkspace(optionalString(args.root));
       case "file_url":

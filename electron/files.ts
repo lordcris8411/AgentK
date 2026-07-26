@@ -554,6 +554,30 @@ export class FileService {
       .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
   }
 
+  async advancedSearch(rootInput: string, options: { caseSensitive?: boolean; directory?: string; filePattern?: string; query: string; wholeWord?: boolean }, progress?: (path: string, scanned: number, total: number) => void): Promise<Array<{ path: string, line: number; preview: string }>> {
+    const root = await canonicalRoot(rootInput);
+    const query = options.query.trim(); if (!query) return [];
+    const glob = (pattern: string) => new RegExp(`^${pattern.replaceAll("\\", "/").replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("**", "::DOUBLESTAR::").replaceAll("*", "[^/]*").replaceAll("::DOUBLESTAR::", ".*")}$`, "i");
+    const directory = glob((options.directory?.trim() || "**").replace(/\/$/, "") + "/**");
+    const filePatterns = (options.filePattern?.trim() || "*.c;*.cc;*.cpp;*.cxx;*.h;*.hpp;*.js;*.jsx;*.ts;*.tsx;*.json;*.md;*.txt;*.py;*.java;*.cs;*.go;*.rs;*.html;*.css;*.xml;*.yaml;*.yml;*.toml;*.cmake").split(";").map((pattern) => glob(pattern.trim())).filter(Boolean);
+    const index = await buildFileIndex(root); const results: Array<{ path: string; line: number; preview: string }> = [];
+    for (const [offset, path] of index.entries()) {
+      if (results.length >= 500) return results;
+      progress?.(path, offset + 1, index.length);
+      const normalized = path.replaceAll("\\", "/");
+      if (!directory.test(`${normalized}/`) || !filePatterns.some((pattern) => pattern.test(basename(normalized)))) continue;
+      const absolute = join(root, path);
+      let content: string; try { content = await readFile(absolute, "utf8"); } catch { continue; }
+      if (content.includes("\0")) continue;
+      const matcher = new RegExp(`${options.wholeWord ? "\\b" : ""}${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${options.wholeWord ? "\\b" : ""}`, options.caseSensitive ? "" : "i");
+      for (const [offset, line] of content.split(/\r?\n/).entries()) {
+        if (matcher.test(line)) results.push({ path, line: offset + 1, preview: line.trim().slice(0, 300) });
+        if (results.length >= 500) return results;
+      }
+    }
+    return results;
+  }
+
   fileUrl(path: string): string {
     return `agentk-file://local/?path=${encodeURIComponent(path)}`;
   }

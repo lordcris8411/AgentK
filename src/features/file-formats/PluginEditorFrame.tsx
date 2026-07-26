@@ -14,7 +14,6 @@ import {
 
 const EDITOR_API_VERSION = 1;
 const EDITOR_CHANNEL = "agent-k-editor";
-const runtimeCache = new Map<string, Promise<EditorPluginRuntime>>();
 const dependencyCache = new Map<string, Promise<EditorPluginDependency>>();
 
 type PluginMessage = {
@@ -32,6 +31,7 @@ export type PluginEditorHandle = {
   markSaved(content: string): void;
   navigate(line: number, column?: number): void;
   readContent(): Promise<string>;
+  readSelection(): Promise<string>;
   setContent(content: string): void;
 };
 
@@ -77,15 +77,7 @@ function runtimeFor(
   root: string,
   plugin: Pick<FileFormatPluginResource, "id"> & { scope?: FileFormatPluginResource["scope"] },
 ): Promise<EditorPluginRuntime> {
-  const key = plugin.scope === "builtin" ? `builtin\0${plugin.id}` : `${root}\0${plugin.id}`;
-  const cached = runtimeCache.get(key);
-  if (cached) return cached;
-  const pending = desktop.editorPluginRuntime(root, plugin.id).catch((cause) => {
-    runtimeCache.delete(key);
-    throw cause;
-  });
-  runtimeCache.set(key, pending);
-  return pending;
+  return desktop.editorPluginRuntime(root, plugin.id);
 }
 
 function dependencyFor(dependencyId: string): Promise<EditorPluginDependency> {
@@ -144,6 +136,7 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
     const initializedDocumentRef = useRef<string | undefined>(undefined);
     const nonceRef = useRef(crypto.randomUUID());
     const pendingReads = useRef(new Map<string, (content: string) => void>());
+    const pendingSelections = useRef(new Map<string, (selection: string) => void>());
     const pendingNavigation = useRef<{ column: number; line: number } | undefined>(undefined);
     const [frameUrl, setFrameUrl] = useState<string>();
     const [ready, setReady] = useState(false);
@@ -356,6 +349,18 @@ void (async () => {
           case "request-save":
             if (typeof message.value === "string") onSaveRequest(message.value);
             break;
+          case "selection":
+            if (typeof message.requestId === "string") {
+              const resolve = pendingSelections.current.get(message.requestId);
+              pendingSelections.current.delete(message.requestId);
+              resolve?.(typeof message.value === "string" ? message.value : "");
+            } else window.dispatchEvent(new CustomEvent("agent-k-editor-selection", { detail: typeof message.value === "string" ? message.value : "" }));
+            break;
+          case "command":
+            if (message.value === "advanced-search") window.dispatchEvent(new CustomEvent("agent-k-advanced-search"));
+            else if (typeof message.value === "object" && message.value && (message.value as { name?: unknown }).name === "advanced-search")
+              window.dispatchEvent(new CustomEvent("agent-k-advanced-search", { detail: (message.value as { value?: unknown }).value }));
+            break;
           default:
             break;
         }
@@ -451,6 +456,20 @@ void (async () => {
             resolve(value);
           });
           send("read-content", undefined, requestId);
+        });
+      },
+      readSelection() {
+        const requestId = crypto.randomUUID();
+        return new Promise<string>((resolve, reject) => {
+          const timeout = window.setTimeout(() => {
+            pendingSelections.current.delete(requestId);
+            reject(new Error("Editor plugin did not return its selection"));
+          }, 1_000);
+          pendingSelections.current.set(requestId, (selection) => {
+            window.clearTimeout(timeout);
+            resolve(selection);
+          });
+          send("read-selection", undefined, requestId);
         });
       },
       setContent(nextContent) {

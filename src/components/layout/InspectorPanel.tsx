@@ -1,6 +1,7 @@
 import { createPortal } from "react-dom";
 import {
   useEffect,
+  memo,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
@@ -10,6 +11,7 @@ import {
 import { desktop, type FileEntry, type LanguageServerPlugin, type LanguageServerProject } from "../../lib/desktop";
 import { desktopWindow, platform } from "../../lib/platform";
 import { ProjectConsole } from "./ProjectConsole";
+import { DirectoryPickerDialog } from "../DirectoryPickerDialog";
 import {
   ReviewPanel,
   type ReviewCall,
@@ -50,6 +52,16 @@ type WorkspaceEditorState = {
 type PluginEditorProps = ComponentPropsWithoutRef<typeof PluginEditorFrame>;
 const EDITOR_RUNTIME_CACHE_LIMIT = 40;
 type PluginMenuAction = { id: string; label: string; pluginId: string };
+const ADVANCED_SEARCH_RESULT_HEIGHT = 48;
+const ADVANCED_SEARCH_RESULT_OVERSCAN = 5;
+const AdvancedSearchResults = memo(function AdvancedSearchResults({ items, onOpen, searched, searching }: { items: Array<{ path: string; line: number; preview: string }>; onOpen(path: string): void; searched: boolean; searching: boolean }) {
+  const [scrollTop, setScrollTop] = useState(0);
+  useEffect(() => setScrollTop(0), [items]);
+  const first = Math.max(0, Math.floor(scrollTop / ADVANCED_SEARCH_RESULT_HEIGHT) - ADVANCED_SEARCH_RESULT_OVERSCAN);
+  const visible = Math.ceil(270 / ADVANCED_SEARCH_RESULT_HEIGHT) + ADVANCED_SEARCH_RESULT_OVERSCAN * 2;
+  const last = Math.min(items.length, first + visible);
+  return <div className="advanced-search-results" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>{searched && !searching && !items.length ? <p>没有找到匹配内容</p> : null}<div className="advanced-search-results-viewport" style={{ height: items.length * ADVANCED_SEARCH_RESULT_HEIGHT }}>{items.slice(first, last).map((item, offset) => { const index = first + offset; return <button className="advanced-search-result" key={`${item.path}:${item.line}`} onClick={() => onOpen(item.path)} style={{ transform: `translateY(${index * ADVANCED_SEARCH_RESULT_HEIGHT}px)` }} type="button"><strong>{item.path}:{item.line}</strong><span>{item.preview}</span></button>; })}</div></div>;
+}, (previous, next) => previous.items === next.items && previous.searched === next.searched && previous.searching === next.searching);
 
 function formatMegabytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
@@ -577,6 +589,24 @@ export function InspectorPanel({
   }>();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<string[]>([]);
+  const [advancedSearchOpen, setAdvancedSearchOpen] = useState(false);
+  const [advancedDirectory, setAdvancedDirectory] = useState("**");
+  const [advancedFilePattern, setAdvancedFilePattern] = useState("*.c;*.cc;*.cpp;*.cxx;*.h;*.hpp;*.js;*.jsx;*.ts;*.tsx;*.json;*.md;*.txt;*.py;*.java;*.cs;*.go;*.rs;*.html;*.css;*.xml;*.yaml;*.yml;*.toml;*.cmake");
+  const [advancedResults, setAdvancedResults] = useState<Array<{ path: string; line: number; preview: string }>>([]);
+  const [advancedSearching, setAdvancedSearching] = useState(false);
+  const [advancedSearched, setAdvancedSearched] = useState(false);
+  const [advancedSearchSeed, setAdvancedSearchSeed] = useState("");
+  const [advancedSearchHistory, setAdvancedSearchHistory] = useState<string[]>([]);
+  const [advancedHistoryOpen, setAdvancedHistoryOpen] = useState(false);
+  const [advancedWholeWord, setAdvancedWholeWord] = useState(false);
+  const [advancedCaseSensitive, setAdvancedCaseSensitive] = useState(false);
+  const [advancedProgress, setAdvancedProgress] = useState("");
+  const [advancedDirectoryPickerOpen, setAdvancedDirectoryPickerOpen] = useState(false);
+  const advancedDialogRef = useRef<HTMLFormElement>(null);
+  const advancedDialogOffset = useRef({ x: 0, y: 0 });
+  const advancedDialogDrag = useRef<{ x: number; y: number } | undefined>(undefined);
+  const advancedQueryRef = useRef<HTMLInputElement>(null);
+  const latestEditorSelection = useRef("");
   const [filtering, setFiltering] = useState(false);
   const [explorerWidth, setExplorerWidth] = useState(190);
   const [newFileDialogOpen, setNewFileDialogOpen] = useState(false);
@@ -829,6 +859,10 @@ export function InspectorPanel({
     let stop: (() => void) | undefined;
     const normalize = (path: string) => path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
     void desktop.onEvent((event) => {
+      if (event.type === "advanced_search_progress" && event.root === root && typeof event.path === "string") {
+        setAdvancedProgress(String(event.path));
+        return;
+      }
       if (event.type !== "workspace_file_changed" || event.root !== root || typeof event.path !== "string" || !root) return;
       const path = event.path;
       const tab = tabsRef.current.find((candidate) => normalize(candidate.path) === normalize(path));
@@ -903,6 +937,37 @@ export function InspectorPanel({
       window.clearTimeout(timeout);
     };
   }, [query, root]);
+  useEffect(() => {
+    const openAdvancedSearch = (event?: Event) => {
+      const detail = (event as CustomEvent<unknown> | undefined)?.detail;
+      const selectedText = (typeof detail === "string" ? detail : latestEditorSelection.current).trim();
+      setAdvancedSearchSeed(selectedText);
+      setAdvancedSearchOpen(true);
+      setAdvancedHistoryOpen(false);
+    };
+    const updateEditorSelection = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      latestEditorSelection.current = typeof detail === "string" ? detail : "";
+    };
+    const shortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== "f") return;
+      event.preventDefault();
+      openAdvancedSearch();
+    };
+    window.addEventListener("keydown", shortcut);
+    window.addEventListener("agent-k-advanced-search", openAdvancedSearch);
+    window.addEventListener("agent-k-editor-selection", updateEditorSelection);
+    return () => { window.removeEventListener("keydown", shortcut); window.removeEventListener("agent-k-advanced-search", openAdvancedSearch); window.removeEventListener("agent-k-editor-selection", updateEditorSelection); };
+  }, []);
+  useEffect(() => {
+    if (!advancedSearchOpen || !advancedQueryRef.current) return;
+    advancedQueryRef.current.value = advancedSearchSeed;
+    setAdvancedResults([]);
+    setAdvancedSearched(false);
+    setAdvancedProgress("");
+    advancedQueryRef.current.focus();
+    if (advancedSearchSeed) advancedQueryRef.current.select();
+  }, [advancedSearchOpen, advancedSearchSeed]);
   const loadDirectory = async (path: string) => {
     if (!root) return;
     try {
@@ -1118,6 +1183,9 @@ export function InspectorPanel({
   const closeTab = (tab: Tab) => {
     const closingIndex = tabs.findIndex((item) => item.path === tab.path);
     const remainingTabs = tabs.filter((item) => item.path !== tab.path);
+    const closedRuntimeKey = `\0${tab.path}\0`;
+    setEditorRuntimeKeys((keys) => keys.filter((key) => !key.includes(closedRuntimeKey)));
+    editorRuntimeRecency.current = editorRuntimeRecency.current.filter((key) => !key.includes(closedRuntimeKey));
     setTabs(remainingTabs);
     if (active === tab.path) {
       const nextActive = remainingTabs[
@@ -1728,7 +1796,17 @@ export function InspectorPanel({
             <span aria-hidden="true" className="inspector-search-icon">
               <i aria-hidden="true" className="fa-solid fa-magnifying-glass" />
             </span>
+            <button aria-label="高级查找" className="inspector-advanced-search" onClick={() => { void pluginEditorRef.current?.readSelection().then((selection) => window.dispatchEvent(new CustomEvent("agent-k-advanced-search", { detail: selection }))).catch(() => window.dispatchEvent(new CustomEvent("agent-k-advanced-search", { detail: latestEditorSelection.current }))); if (!pluginEditorRef.current) window.dispatchEvent(new CustomEvent("agent-k-advanced-search", { detail: latestEditorSelection.current })); }} type="button"><i className="fa-solid fa-sliders" /></button>
           </form>
+          {advancedSearchOpen ? createPortal(<div className="advanced-search-backdrop"><form ref={advancedDialogRef} className="advanced-project-search" onSubmit={(event) => { event.preventDefault(); const query = advancedQueryRef.current?.value.trim() ?? ""; if (!root || !query || advancedSearching) return; setAdvancedSearchHistory((history) => [query, ...history.filter((item) => item !== query)].slice(0, 12)); setAdvancedHistoryOpen(false); setAdvancedSearching(true); setAdvancedSearched(true); setAdvancedResults([]); setAdvancedProgress(""); void desktop.advancedSearch(root, { caseSensitive: advancedCaseSensitive, directory: advancedDirectory, filePattern: advancedFilePattern, query, wholeWord: advancedWholeWord }).then(setAdvancedResults).catch((cause) => onError(`高级查找失败：${String(cause)}`)).finally(() => setAdvancedSearching(false)); }}>
+            <header onPointerDown={(event) => { if ((event.target as Element).closest("button")) return; advancedDialogDrag.current = { x: event.clientX - advancedDialogOffset.current.x, y: event.clientY - advancedDialogOffset.current.y }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!advancedDialogDrag.current) return; const offset = { x: event.clientX - advancedDialogDrag.current.x, y: event.clientY - advancedDialogDrag.current.y }; advancedDialogOffset.current = offset; if (advancedDialogRef.current) advancedDialogRef.current.style.transform = `translate(${offset.x}px, ${offset.y}px)`; }} onPointerUp={() => { advancedDialogDrag.current = undefined; }}><strong>在项目中查找</strong><button aria-label="关闭高级查找" onClick={() => setAdvancedSearchOpen(false)} type="button"><i className="fa-solid fa-xmark" /></button></header>
+            <label>查找内容<span className="advanced-query-input"><input ref={advancedQueryRef} onInput={() => { if (advancedResults.length || advancedSearched) { setAdvancedResults([]); setAdvancedSearched(false); setAdvancedProgress(""); } }} placeholder="输入要查找的文本" required /><button aria-expanded={advancedHistoryOpen} aria-label="显示查找历史" onClick={() => setAdvancedHistoryOpen((open) => !open)} type="button"><i className="fa-solid fa-chevron-down" /></button>{advancedHistoryOpen ? <span className="advanced-search-history">{advancedSearchHistory.length ? advancedSearchHistory.map((item) => <button key={item} onClick={() => { if (advancedQueryRef.current) advancedQueryRef.current.value = item; if (advancedResults.length || advancedSearched) { setAdvancedResults([]); setAdvancedSearched(false); setAdvancedProgress(""); } setAdvancedHistoryOpen(false); advancedQueryRef.current?.focus(); }} type="button">{item}</button>) : <small>暂无查找历史</small>}</span> : null}</span></label>
+            <div className="advanced-search-options"><label><input checked={advancedWholeWord} onChange={(event) => setAdvancedWholeWord(event.target.checked)} type="checkbox" /> 全字匹配</label><label><input checked={advancedCaseSensitive} onChange={(event) => setAdvancedCaseSensitive(event.target.checked)} type="checkbox" /> 区分大小写</label></div>
+            <div className="advanced-search-filters"><label>目录（glob）<span className="advanced-directory-input"><input onChange={(event) => setAdvancedDirectory(event.target.value)} placeholder="例如 Editor/**" value={advancedDirectory} /><button onClick={() => setAdvancedDirectoryPickerOpen(true)} type="button"><i className="fa-regular fa-folder-open" /></button></span></label><label>文件类型（glob）<input onChange={(event) => setAdvancedFilePattern(event.target.value)} placeholder="例如 *.cpp;*.h" value={advancedFilePattern} /></label></div>
+            <footer><span title={advancedProgress}>{advancedSearching ? `正在搜索：${advancedProgress || "准备中…"}` : advancedResults.length ? `${advancedResults.length} 个结果` : "最多显示 500 个结果"}</span><button disabled={advancedSearching} type="submit">{advancedSearching ? "查找中…" : "查找"}</button></footer>
+            <AdvancedSearchResults items={advancedResults} onOpen={(path) => { void open(path); setAdvancedSearchOpen(false); }} searched={advancedSearched} searching={advancedSearching} />
+          </form></div>, document.body) : null}
+          {advancedDirectoryPickerOpen && root ? <DirectoryPickerDialog initialPath={root} onCancel={() => setAdvancedDirectoryPickerOpen(false)} onSelect={(path) => { const normalizedRoot = root.replaceAll("\\", "/").replace(/\/$/, "").toLowerCase(); const normalizedPath = path.replaceAll("\\", "/").replace(/\/$/, ""); const candidate = normalizedPath.toLowerCase(); if (candidate !== normalizedRoot && !candidate.startsWith(`${normalizedRoot}/`)) { onError("选择的目录不在当前项目中"); return; } const relative = normalizedPath.slice(normalizedRoot.length).replace(/^\//, ""); setAdvancedDirectory(relative ? `${relative}/**` : "**"); setAdvancedDirectoryPickerOpen(false); }} placement="inspector" restrictedRoot={root} title="选择搜索目录" /> : null}
           <div
             className="file-tree-scroll"
             onContextMenu={(event) => {

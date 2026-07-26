@@ -297,6 +297,7 @@ export const desktop = {
   projectContext: (root: string) => invoke<string>("project_context", { root }),
   directory: (root: string, path: string) =>
     invoke<FileEntry>("directory_tree", { root, path }),
+  browseDirectories: (path?: string) => invoke<{ path: string; parent: string; directories: string[]; drives: string[] }>("browse_directories", { path }),
   read: (root: string, path: string) =>
     invoke<string>("read_text_file", { root, path }),
   readBinary: (root: string, path: string) =>
@@ -343,6 +344,8 @@ export const desktop = {
     invoke<void>("open_in_file_manager", { root, path }),
   search: (root: string, query: string) =>
     invoke<string[]>("search_files", { root, query }),
+  advancedSearch: (root: string, options: { caseSensitive?: boolean; directory?: string; filePattern?: string; query: string; wholeWord?: boolean }) =>
+    invoke<Array<{ path: string; line: number; preview: string }>>("advanced_search_files", { root, ...options }),
   watchWorkspace: (root?: string) => invoke<void>("watch_workspace", { root }),
   onEvent: (listener: (event: Record<string, unknown>) => void) =>
     Promise.resolve(window.agentK.onPiEvent(listener)),

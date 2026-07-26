@@ -28,6 +28,16 @@ function npmPackageName(source: string | undefined): string | undefined {
   return match?.[1];
 }
 
+function npmPackageNameFromPath(path: string): string | undefined {
+  const parts = path.replaceAll("\\", "/").split("/");
+  const nodeModules = parts.lastIndexOf("node_modules");
+  const first = nodeModules >= 0 ? parts[nodeModules + 1] : undefined;
+  if (!first) return undefined;
+  return first.startsWith("@") && parts[nodeModules + 2]
+    ? `${first}/${parts[nodeModules + 2]}`
+    : first;
+}
+
 function extensionDirectoryName(path: string): string | undefined {
   let directory = dirname(path);
   for (let depth = 0; depth < 4; depth += 1) {
@@ -56,7 +66,7 @@ function resourceName(
     kind === "extension" &&
     ["index", "main"].includes(entryName.toLocaleLowerCase("en-US"))
   ) {
-    return npmPackageName(source) ?? extensionDirectoryName(path) ?? entryName;
+    return npmPackageName(source) ?? npmPackageNameFromPath(path) ?? extensionDirectoryName(path) ?? entryName;
   }
   return entryName || kind;
 }
