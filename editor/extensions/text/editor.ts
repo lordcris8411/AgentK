@@ -35,6 +35,79 @@ function hoverMarkdown(contents: unknown): Array<{ value: string }> {
   });
 }
 
+type LspCompletionPosition = { character?: unknown; line?: unknown };
+type LspCompletionRange = { end?: LspCompletionPosition; start?: LspCompletionPosition };
+type LspCompletionTextEdit = {
+  insert?: LspCompletionRange;
+  newText?: unknown;
+  range?: LspCompletionRange;
+  replace?: LspCompletionRange;
+};
+type LspCompletionItem = {
+  additionalTextEdits?: Array<{ newText?: unknown; range?: LspCompletionRange }>;
+  commitCharacters?: unknown;
+  deprecated?: unknown;
+  detail?: unknown;
+  documentation?: unknown;
+  filterText?: unknown;
+  insertText?: unknown;
+  insertTextFormat?: unknown;
+  kind?: unknown;
+  label?: unknown;
+  preselect?: unknown;
+  sortText?: unknown;
+  tags?: unknown;
+  textEdit?: LspCompletionTextEdit;
+};
+
+function completionKind(kind: unknown): Monaco.languages.CompletionItemKind {
+  const kinds: Monaco.languages.CompletionItemKind[] = [
+    monaco.languages.CompletionItemKind.Text,
+    monaco.languages.CompletionItemKind.Method,
+    monaco.languages.CompletionItemKind.Function,
+    monaco.languages.CompletionItemKind.Constructor,
+    monaco.languages.CompletionItemKind.Field,
+    monaco.languages.CompletionItemKind.Variable,
+    monaco.languages.CompletionItemKind.Class,
+    monaco.languages.CompletionItemKind.Interface,
+    monaco.languages.CompletionItemKind.Module,
+    monaco.languages.CompletionItemKind.Property,
+    monaco.languages.CompletionItemKind.Unit,
+    monaco.languages.CompletionItemKind.Value,
+    monaco.languages.CompletionItemKind.Enum,
+    monaco.languages.CompletionItemKind.Keyword,
+    monaco.languages.CompletionItemKind.Snippet,
+    monaco.languages.CompletionItemKind.Color,
+    monaco.languages.CompletionItemKind.File,
+    monaco.languages.CompletionItemKind.Reference,
+    monaco.languages.CompletionItemKind.Folder,
+    monaco.languages.CompletionItemKind.EnumMember,
+    monaco.languages.CompletionItemKind.Constant,
+    monaco.languages.CompletionItemKind.Struct,
+    monaco.languages.CompletionItemKind.Event,
+    monaco.languages.CompletionItemKind.Operator,
+    monaco.languages.CompletionItemKind.TypeParameter,
+  ];
+  return typeof kind === "number" && Number.isInteger(kind) && kind >= 1
+    ? kinds[kind - 1] ?? monaco.languages.CompletionItemKind.Text
+    : monaco.languages.CompletionItemKind.Text;
+}
+
+function completionRange(range: LspCompletionRange | undefined): Monaco.IRange | undefined {
+  const start = range?.start; const end = range?.end;
+  if (typeof start?.line !== "number" || typeof start.character !== "number" ||
+      typeof end?.line !== "number" || typeof end.character !== "number" ||
+      start.line !== end.line || start.line < 0 || start.character < 0 || end.character < start.character)
+    return undefined;
+  return new monaco.Range(start.line + 1, start.character + 1, end.line + 1, end.character + 1);
+}
+
+function completionDocumentation(value: unknown): string | Monaco.IMarkdownString | undefined {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object" || typeof (value as { value?: unknown }).value !== "string") return undefined;
+  return { value: (value as { value: string }).value };
+}
+
 function pathFromFileUri(uri: string): string | undefined {
   try {
     const parsed = new URL(uri); if (parsed.protocol !== "file:") return undefined;
@@ -153,21 +226,28 @@ defineEditor((host, initial) => {
   let cppDocumentOpened = false;
   const openDocument = () => {
     if (!cpp) return languageSync;
+    const openingDocument = document();
     showLanguageStatus();
-    languageSync = languageSync.catch(() => undefined).then(() => host.languageRequest("textDocument/didOpen", { textDocument: document() })
+    languageSync = languageSync.catch(() => undefined).then(() => host.languageRequest("textDocument/didOpen", { textDocument: openingDocument })
       .then((accepted) => { cppDocumentOpened = accepted === true; if (!cppDocumentOpened) hideLanguageStatus(); })
       .catch(() => { cppDocumentOpened = false; hideLanguageStatus(); }));
     return languageSync;
   };
   const syncDocument = () => {
     if (!cpp) return languageSync;
+    // Capture the exact edit snapshot now. Reading Monaco only when this
+    // queued operation eventually runs makes rapid edits send the same latest
+    // version repeatedly, so clangd and completion positions can diverge.
+    const uri = model.uri.toString();
+    const version = model.getVersionId();
+    const text = model.getValue();
     languageSync = languageSync.catch(() => undefined).then(() => {
       // A tab may predate project loading, or survive an unload/reload. clangd
       // ignores didChange for such a document until a fresh didOpen succeeds.
       if (!cppDocumentOpened) return undefined;
       return host.languageRequest("textDocument/didChange", {
-        textDocument: { uri: model.uri.toString(), version: model.getVersionId() },
-        contentChanges: [{ text: model.getValue() }],
+        textDocument: { uri, version },
+        contentChanges: [{ text }],
       }).then(() => undefined).catch(() => { cppDocumentOpened = false; });
     });
     return languageSync;
@@ -245,10 +325,50 @@ defineEditor((host, initial) => {
               triggerCharacter: context.triggerCharacter,
               triggerKind: context.triggerKind === monaco.languages.CompletionTriggerKind.TriggerCharacter ? 2 : 1,
             },
-          }) as { items?: Array<{ label?: string; detail?: string; documentation?: string; insertText?: string; kind?: number }> } | Array<{ label?: string; detail?: string; documentation?: string; insertText?: string; kind?: number }> | undefined;
+          }) as { isIncomplete?: unknown; items?: LspCompletionItem[] } | LspCompletionItem[] | undefined;
           if (token?.isCancellationRequested || requestedVersion !== model.getVersionId()) return { suggestions: [] };
           const items = Array.isArray(response) ? response : response?.items ?? [];
-          return { suggestions: items.filter((item) => typeof item.label === "string").map((item) => ({ label: item.label!, detail: item.detail, documentation: item.documentation, insertText: item.insertText ?? item.label!, kind: item.kind ?? monaco.languages.CompletionItemKind.Text, range: new monaco.Range(at.lineNumber, at.column, at.lineNumber, at.column) })) };
+          const currentWord = requestedModel.getWordUntilPosition(at);
+          const fallbackRange = new monaco.Range(at.lineNumber, currentWord.startColumn, at.lineNumber, at.column);
+          const suggestions = items.flatMap((item): Monaco.languages.CompletionItem[] => {
+            if (typeof item.label !== "string") return [];
+            const textEdit = item.textEdit;
+            const editRange = completionRange(textEdit?.range);
+            const insertRange = completionRange(textEdit?.insert);
+            const replaceRange = completionRange(textEdit?.replace);
+            const range = insertRange && replaceRange
+              ? { insert: insertRange, replace: replaceRange }
+              : editRange ?? replaceRange ?? insertRange ?? fallbackRange;
+            const label = item.label.trimStart() || item.label;
+            const insertText = typeof textEdit?.newText === "string"
+              ? textEdit.newText
+              : typeof item.insertText === "string"
+                ? item.insertText
+                : label;
+            const additionalTextEdits = Array.isArray(item.additionalTextEdits)
+              ? item.additionalTextEdits.flatMap((edit) => {
+                  const range = completionRange(edit.range);
+                  return range && typeof edit.newText === "string" ? [{ range, text: edit.newText }] : [];
+                })
+              : undefined;
+            const deprecated = item.deprecated === true || (Array.isArray(item.tags) && item.tags.includes(1));
+            return [{
+              label,
+              kind: completionKind(item.kind),
+              range,
+              insertText,
+              ...(typeof item.detail === "string" ? { detail: item.detail } : {}),
+              ...(completionDocumentation(item.documentation) ? { documentation: completionDocumentation(item.documentation) } : {}),
+              ...(typeof item.filterText === "string" ? { filterText: item.filterText } : {}),
+              ...(typeof item.sortText === "string" ? { sortText: item.sortText } : {}),
+              ...(item.preselect === true ? { preselect: true } : {}),
+              ...(item.insertTextFormat === 2 ? { insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet } : {}),
+              ...(Array.isArray(item.commitCharacters) ? { commitCharacters: item.commitCharacters.filter((value): value is string => typeof value === "string" && value.length === 1) } : {}),
+              ...(additionalTextEdits?.length ? { additionalTextEdits } : {}),
+              ...(deprecated ? { tags: [monaco.languages.CompletionItemTag.Deprecated] } : {}),
+            }];
+          });
+          return { suggestions, incomplete: !Array.isArray(response) && response?.isIncomplete === true };
         } catch {
           // Provider promises are invoked outside editor initialization. Never
           // let a timed-out IPC request tear down the whole iframe runtime.

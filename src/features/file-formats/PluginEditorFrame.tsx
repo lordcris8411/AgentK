@@ -138,6 +138,7 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
     const pendingReads = useRef(new Map<string, (content: string) => void>());
     const pendingSelections = useRef(new Map<string, (selection: string) => void>());
     const pendingNavigation = useRef<{ column: number; line: number } | undefined>(undefined);
+    const activeLanguageProjectRef = useRef<string | undefined>(undefined);
     const [frameUrl, setFrameUrl] = useState<string>();
     const [ready, setReady] = useState(false);
     const readyRef = useRef(ready);
@@ -392,12 +393,26 @@ void (async () => {
 
     useEffect(() => {
       const stop = desktop.onEvent((event) => {
+        if (event.type === "language_server_project_removed" && typeof event.root === "string") {
+          const removed = event.root.replaceAll("\\", "/").toLowerCase();
+          const file = absolutePath.replaceAll("\\", "/").toLowerCase();
+          if (file === removed || file.startsWith(`${removed}/`)) activeLanguageProjectRef.current = undefined;
+          return;
+        }
         if (event.type !== "language_server_project") return;
         const project = event.project as { root?: unknown; status?: unknown } | undefined;
-        if (project?.status !== "ready" || typeof project.root !== "string") return;
+        if (typeof project?.root !== "string") return;
         const file = absolutePath.replaceAll("\\", "/").toLowerCase();
         const root = project.root.replaceAll("\\", "/").toLowerCase();
-        if (file === root || file.startsWith(`${root}/`)) send("action", { id: "language-server-project-ready", parameters: { root: project.root, languageServerId: event.languageServerId } });
+        if (file !== root && !file.startsWith(`${root}/`)) return;
+        const identity = `${typeof event.languageServerId === "string" ? event.languageServerId : ""}\0${root}`;
+        if (project.status !== "ready" && project.status !== "indexing") {
+          if (activeLanguageProjectRef.current === identity) activeLanguageProjectRef.current = undefined;
+          return;
+        }
+        if (activeLanguageProjectRef.current === identity) return;
+        activeLanguageProjectRef.current = identity;
+        send("action", { id: "language-server-project-ready", parameters: { root: project.root, languageServerId: event.languageServerId } });
       });
       return stop;
     }, [absolutePath]);

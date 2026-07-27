@@ -3426,6 +3426,15 @@ body.is-tree-dragging * {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.tree-entry-label { align-items: baseline; display: inline-flex; gap: 4px; min-width: 0; }
+.tree-entry-label > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tree-language-project-status { color: var(--text-muted); flex: 0 0 auto; font-size: 10px; text-transform: capitalize; }
+.tree-language-project-status.is-indexing,
+.tree-language-project-status.is-configuring,
+.tree-language-project-status.is-starting,
+.tree-language-project-status.is-preparing { color: var(--warning); }
+.tree-language-project-status.is-ready { color: var(--success); }
+.tree-language-project-status.is-failed { color: var(--danger); }
 .file-node {
   align-items: center;
   background: transparent;
@@ -3504,6 +3513,7 @@ body.is-tree-dragging * {
 .cpp-inline-status { align-items: center; color: var(--text-secondary); display: inline-flex; font-size: 12px; gap: 5px; margin-right: auto; min-width: 0; text-transform: capitalize; }
 .cpp-inline-status.is-ready { color: var(--success); }
 .cpp-inline-status.is-failed { color: var(--danger); }
+.cpp-inline-status-spinner { animation: splash-spin 0.8s linear infinite; border: 1.5px solid color-mix(in srgb, currentColor 32%, transparent); border-radius: 50%; border-top-color: currentColor; box-sizing: border-box; flex: 0 0 auto; height: 10px; width: 10px; }
 .cpp-toolchain-progress { appearance: none; display: block; height: 8px; margin: 0; width: 100%; }
 .cpp-toolchain-progress::-webkit-progress-bar { background: var(--surface-active); border: 1px solid var(--border-strong); border-radius: 4px; }
 .cpp-toolchain-progress::-webkit-progress-value { background: color-mix(in srgb, var(--accent) 60%, #65b8ee); border-radius: 3px; }

@@ -19,6 +19,26 @@ import {
   toolchainArchiveFormat,
 } from "./toolchain.ts";
 import { selectWorkspaceSymbols } from "./skill-symbols.ts";
+import { languageSkillStatusState, languageSkillUsable } from "./skill-status.ts";
+
+test("allows C++ Language Skill queries during indexing and marks results partial", () => {
+  assert.equal(languageSkillUsable("indexing", true), true);
+  assert.equal(languageSkillUsable("ready", true), true);
+  assert.equal(languageSkillUsable("starting", true), false);
+  assert.equal(languageSkillUsable("indexing", false), false);
+
+  const partial = languageSkillStatusState("indexing");
+  assert.equal(partial.status, "indexing");
+  assert.equal(partial.indexReady, false);
+  assert.equal(partial.partial, true);
+  assert.match(String(partial.warning), /empty result is not authoritative/);
+
+  const complete = languageSkillStatusState("ready");
+  assert.equal(complete.status, "ready");
+  assert.equal(complete.indexReady, true);
+  assert.equal(complete.partial, false);
+  assert.equal("warning" in complete, false);
+});
 
 test("selects only exact clangd workspace symbols for semantic skill actions", () => {
   const range = { start: { line: 2, character: 4 }, end: { line: 2, character: 9 } };

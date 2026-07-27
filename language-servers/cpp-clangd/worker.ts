@@ -18,12 +18,13 @@ import {
 } from "./cmake-cache.js";
 import { DEFAULT_VSWHERE_PATH, managedToolchainArchives, managedToolchainMarker, parseWindowsEnvironment, toolchainArchiveFormat } from "./toolchain.js";
 import { selectWorkspaceSymbols, symbolLocation, type SkillLocation as LspLocation, type SkillRange as Range, type SkillSymbol as LspSymbol } from "./skill-symbols.js";
+import { languageSkillStatusState, languageSkillUsable } from "./skill-status.js";
 
 export type CppProjectStatus = "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped";
-export type CppProject = { root: string; name: string; status: CppProjectStatus; error?: string; cmake: boolean; compileCommands: boolean };
+export type CppProject = { root: string; name: string; status: CppProjectStatus; error?: string; indexProgress?: string; cmake: boolean; compileCommands: boolean };
 export type CppLspTrace = { elapsedMs?: number; error?: string; file?: string; method: string; phase: "rejected" | "request" | "response" | "sent" | "timeout" | "write-error"; timestamp: number; version?: number };
 type PendingRequest = { file?: string; method: string; reject(reason: Error): void; resolve(value: unknown): void; startedAt: number; timeout: ReturnType<typeof setTimeout>; version?: number };
-type Entry = CppProject & { child?: ChildProcessWithoutNullStreams; diagnostics: Map<string, unknown[]>; indexReject?: (reason: Error) => void; nextId: number; openDocuments: Set<string>; pending: Map<number, PendingRequest>; stderrTail: string; writeQueue: Promise<void> };
+type Entry = CppProject & { child?: ChildProcessWithoutNullStreams; diagnostics: Map<string, unknown[]>; lastIndexProgressAt: number; nextId: number; openDocuments: Set<string>; pending: Map<number, PendingRequest>; stderrTail: string; writeQueue: Promise<void> };
 type WorkspaceFileChange = { path: string; type: 1 | 2 | 3 };
 export type CppSkillRequest = {
   action?: unknown;
@@ -102,7 +103,7 @@ export class CppService {
   private readonly reconfigureTimers = new Map<string, ReturnType<typeof setTimeout>>();
   constructor(private readonly cachePath: string, private readonly emit: (event: Record<string, unknown>) => void) {}
   private publish(entry: Entry) { this.emit({ type: "language_server_project", project: this.public(entry) }); }
-  private public(entry: Entry): CppProject { const { root, name, status, error, cmake, compileCommands } = entry; return { root, name, status, ...(error ? { error } : {}), cmake, compileCommands }; }
+  private public(entry: Entry): CppProject { const { root, name, status, error, indexProgress, cmake, compileCommands } = entry; return { root, name, status, ...(error ? { error } : {}), ...(indexProgress ? { indexProgress } : {}), cmake, compileCommands }; }
   list(): CppProject[] { return [...this.projects.values()].map((entry) => this.public(entry)); }
   trace(): CppLspTrace[] { return [...this.traces]; }
   private record(trace: CppLspTrace) { this.traces.push(trace); if (this.traces.length > 200) this.traces.splice(0, this.traces.length - 200); }
@@ -119,7 +120,7 @@ export class CppService {
   async load(rootInput: string): Promise<CppProject> {
     const root = await realpath(rootInput); this.cancellationRequested = false; const existing = this.projects.get(root); if (existing) return this.public(existing);
     const cmake = existsSync(join(root, "CMakeLists.txt"));
-    const entry: Entry = { root, name: basename(root), status: "preparing", cmake, compileCommands: false, diagnostics: new Map(), nextId: 1, openDocuments: new Set(), pending: new Map(), stderrTail: "", writeQueue: Promise.resolve() };
+    const entry: Entry = { root, name: basename(root), status: "preparing", cmake, compileCommands: false, diagnostics: new Map(), lastIndexProgressAt: 0, nextId: 1, openDocuments: new Set(), pending: new Map(), stderrTail: "", writeQueue: Promise.resolve() };
     this.projects.set(root, entry); this.publish(entry);
     try {
       const bin = await this.managedBin();
@@ -132,7 +133,7 @@ export class CppService {
       }
       await this.start(entry, join(bin, process.platform === "win32" ? "clangd.exe" : "clangd"), commandsDir, bin, buildEnvironment);
       return this.public(entry);
-    } catch (cause) { await rm(`${join(this.cachePath, "cpp-toolchain", process.platform, process.arch)}.partial`, { recursive: true, force: true }); if (this.cancellationRequested) { this.projects.delete(root); this.emit({ type: "language_server_project_removed", root }); return { ...this.public(entry), status: "stopped" }; } entry.status = "failed"; entry.error = cause instanceof Error ? cause.message : String(cause); this.publish(entry); return this.public(entry); }
+    } catch (cause) { await rm(`${join(this.cachePath, "cpp-toolchain", process.platform, process.arch)}.partial`, { recursive: true, force: true }); if (this.cancellationRequested) { this.projects.delete(root); this.emit({ type: "language_server_project_removed", root }); return { ...this.public(entry), status: "stopped" }; } entry.status = "failed"; entry.error = cause instanceof Error ? cause.message : String(cause); this.publish(entry); this.emit({ type: "language_server_progress", stage: "failed", error: entry.error, detail: entry.error }); return this.public(entry); }
   }
   async unload(root: string) { const entry = this.projects.get(await realpath(root)); if (!entry) return; const timer = this.reconfigureTimers.get(entry.root); if (timer) clearTimeout(timer); this.reconfigureTimers.delete(entry.root); this.stop(entry); this.projects.delete(entry.root); this.emit({ type: "language_server_project_removed", root: entry.root }); }
   async restart(root: string) { await this.unload(root); return this.load(root); }
@@ -155,7 +156,7 @@ export class CppService {
       : `cmake -S ${quote(source)} -B ${quote(build)} && cmake --build ${quote(build)}\r`;
   }
   /** High-level, read-oriented clangd operations exposed to Pi by Agent K's
-   * C++ Language Skill. Every semantic action is tied to a named, ready CMake
+   * C++ Language Skill. Every semantic action is tied to a named, usable CMake
    * workspace; this never starts an implicit language service. */
   async skill(input: CppSkillRequest): Promise<Record<string, unknown>> {
     const action = requiredText(input.action, "action");
@@ -172,29 +173,30 @@ export class CppService {
         workspace,
         loaded: Boolean(existing),
         ready: existing?.status === "ready",
+        ...languageSkillStatusState(existing?.status ?? "unloaded"),
         ...(existing ? { project: this.public(existing) } : {}),
       };
     }
     if (action === "load") {
-      if (existing) return { ok: true, action, workspace, changed: false, loaded: true, project: this.public(existing), message: "The C++ workspace was already loaded; it was not loaded again." };
+      if (existing) return { ok: true, action, workspace, changed: false, loaded: true, project: this.public(existing), message: "The C++ workspace was already loaded; it was not loaded again.", ...languageSkillStatusState(existing.status) };
       const project = await this.load(root);
-      return { ok: project.status === "ready", action, workspace, changed: true, loaded: true, project };
+      return { ok: project.status === "ready" || project.status === "indexing", action, workspace, changed: true, loaded: true, project, ...languageSkillStatusState(project.status) };
     }
     if (action === "unload") {
-      if (!existing) return { ok: true, action, workspace, changed: false, loaded: false, message: "The C++ workspace was already unloaded." };
+      if (!existing) return { ok: true, action, workspace, changed: false, loaded: false, message: "The C++ workspace was already unloaded.", ...languageSkillStatusState("unloaded") };
       this.stop(existing);
       this.projects.delete(root);
       this.emit({ type: "language_server_project_removed", root });
-      return { ok: true, action, workspace, changed: true, loaded: false, project: this.public(existing) };
+      return { ok: true, action, workspace, changed: true, loaded: false, project: this.public(existing), ...languageSkillStatusState("unloaded") };
     }
 
-    const entry = this.requireReadyWorkspace(root, workspace);
+    const entry = this.requireUsableWorkspace(root, workspace);
     const file = optionalText(input.file);
     if (action === "symbols") {
       const query = requiredText(input.query ?? input.symbol, "query");
       const raw = await this.request(entry, "workspace/symbol", { query });
       const symbols = Array.isArray(raw) ? raw.filter((item): item is LspSymbol => Boolean(item && typeof item === "object" && symbolLocation(item as LspSymbol))) : [];
-      return this.skillResult(action, workspace, query, symbols.map((symbol) => presentLocation(symbolLocation(symbol)!, symbol)));
+      return this.skillResult(entry, action, workspace, query, symbols.map((symbol) => presentLocation(symbolLocation(symbol)!, symbol)));
     }
     if (action === "document-symbols" || action === "diagnostics") {
       const target = await this.workspaceFile(root, requiredText(file, "file"));
@@ -202,16 +204,27 @@ export class CppService {
       const result = action === "diagnostics"
         ? entry.diagnostics.get(target) ?? []
         : await this.withSkillDocument(entry, uri, () => this.request(entry, "textDocument/documentSymbol", { textDocument: { uri } }));
-      return { ok: true, action, workspace, file: target, result };
+      return { ok: true, action, workspace, file: target, result, ...this.skillIndexState(entry) };
     }
 
     const symbol = requiredText(input.symbol ?? input.query, "symbol");
     const targets = await this.symbolTargets(entry, symbol, file, action === "type-declaration");
-    if (!targets.length) return { ok: true, action, workspace, query: symbol, count: 0, results: [], message: `No exact symbol named '${symbol}' was found in the loaded C++ workspace.` };
+    if (!targets.length) return {
+      ok: true,
+      action,
+      workspace,
+      query: symbol,
+      count: 0,
+      results: [],
+      message: entry.status === "indexing"
+        ? `No exact symbol named '${symbol}' is available in the partial index yet.`
+        : `No exact symbol named '${symbol}' was found in the loaded C++ workspace.`,
+      ...this.skillIndexState(entry),
+    };
 
     if (action === "type-declaration") {
       const declared = targets.map(({ location, symbol: target }) => presentLocation(location, target));
-      return this.skillResult(action, workspace, symbol, declared);
+      return this.skillResult(entry, action, workspace, symbol, declared);
     }
     const positions = targets.map(({ location }) => ({
       position: location.range.start,
@@ -229,12 +242,12 @@ export class CppService {
         const params = action === "references" ? { ...position, context: { includeDeclaration: true } } : position;
         found.push(...locationsFrom(await this.withSkillDocument(entry, position.textDocument.uri, () => this.request(entry, method, params))));
       }
-      return this.skillResult(action, workspace, symbol, deduplicateLocations(found).map((location) => presentLocation(location)));
+      return this.skillResult(entry, action, workspace, symbol, deduplicateLocations(found).map((location) => presentLocation(location)));
     }
     if (action === "hover") {
       const position = positions[0]!;
       const result = await this.withSkillDocument(entry, position.textDocument.uri, () => this.request(entry, "textDocument/hover", position));
-      return { ok: true, action, workspace, query: symbol, result };
+      return { ok: true, action, workspace, query: symbol, result, ...this.skillIndexState(entry) };
     }
     if (["incoming-calls", "outgoing-calls"].includes(action)) {
       const position = positions[0]!;
@@ -242,7 +255,7 @@ export class CppService {
       const items = Array.isArray(prepared) ? prepared : [];
       const method = action === "incoming-calls" ? "callHierarchy/incomingCalls" : "callHierarchy/outgoingCalls";
       const results = (await Promise.all(items.map((item) => this.request(entry, method, { item })))).flatMap((value) => Array.isArray(value) ? value : []);
-      return this.skillResult(action, workspace, symbol, results);
+      return this.skillResult(entry, action, workspace, symbol, results);
     }
     if (["supertypes", "subtypes"].includes(action)) {
       const position = positions[0]!;
@@ -250,7 +263,7 @@ export class CppService {
       const items = Array.isArray(prepared) ? prepared : [];
       const method = action === "supertypes" ? "typeHierarchy/supertypes" : "typeHierarchy/subtypes";
       const results = (await Promise.all(items.map((item) => this.request(entry, method, { item })))).flatMap((value) => Array.isArray(value) ? value : []);
-      return this.skillResult(action, workspace, symbol, results);
+      return this.skillResult(entry, action, workspace, symbol, results);
     }
     throw new Error(`C++ Language Skill action was not routed: ${action}`);
   }
@@ -290,10 +303,11 @@ export class CppService {
     if (unique.length > 1) throw new Error(`C++ workspace name '${workspace}' is ambiguous; ${unique.length} CMake folders use that name under ${cwd}`);
     return unique[0]!;
   }
-  private requireReadyWorkspace(root: string, workspace: string): Entry {
+  private requireUsableWorkspace(root: string, workspace: string): Entry {
     const entry = this.projects.get(root);
     if (!entry) throw new Error(`C++ workspace '${workspace}' is not loaded. Check status and load it once before using clangd operations.`);
-    if (entry.status !== "ready" || !entry.child) throw new Error(`C++ workspace '${workspace}' is loaded but clangd is not ready (status: ${entry.status}).`);
+    if (!languageSkillUsable(entry.status, Boolean(entry.child)))
+      throw new Error(`C++ workspace '${workspace}' is loaded but clangd is not usable (status: ${entry.status}).`);
     return entry;
   }
   private async workspaceFile(root: string, file: string): Promise<string> {
@@ -339,7 +353,10 @@ export class CppService {
       await this.enqueueNotification(entry, "textDocument/didClose", { textDocument: { uri } });
     }
   }
-  private skillResult(action: string, workspace: string, query: string, values: unknown[]): Record<string, unknown> {
+  private skillIndexState(entry: Entry): Record<string, unknown> {
+    return languageSkillStatusState(entry.status);
+  }
+  private skillResult(entry: Entry, action: string, workspace: string, query: string, values: unknown[]): Record<string, unknown> {
     return {
       ok: true,
       action,
@@ -348,6 +365,7 @@ export class CppService {
       count: values.length,
       truncated: values.length > RESULT_LIMIT,
       results: values.slice(0, RESULT_LIMIT),
+      ...this.skillIndexState(entry),
     };
   }
   async lsp(file: string, method: string, params: unknown): Promise<unknown> {
@@ -356,7 +374,7 @@ export class CppService {
     // project. Treat its optional language-service calls as unavailable rather
     // than surfacing an IPC exception in Electron's console.
     if (!project) { this.record({ method, phase: "rejected", timestamp: Date.now(), ...this.traceMetadata(params), error: "file is outside loaded C++ projects" }); return undefined; }
-    const entry = this.projects.get(project.root); if (!entry?.child || entry.status !== "ready") { this.record({ method, phase: "rejected", timestamp: Date.now(), ...this.traceMetadata(params), error: `clangd status is ${entry?.status ?? "unavailable"}` }); return undefined; }
+    const entry = this.projects.get(project.root); if (!entry?.child || (entry.status !== "ready" && entry.status !== "indexing")) { this.record({ method, phase: "rejected", timestamp: Date.now(), ...this.traceMetadata(params), error: `clangd status is ${entry?.status ?? "unavailable"}` }); return undefined; }
     await entry.writeQueue;
     try { return await this.request(entry, method, params); }
     catch (cause) {
@@ -437,8 +455,6 @@ export class CppService {
   }
   private stop(entry: Entry) {
     entry.status = "stopped";
-    entry.indexReject?.(new Error("clangd indexing stopped"));
-    entry.indexReject = undefined;
     for (const pending of entry.pending.values()) { clearTimeout(pending.timeout); pending.reject(new Error("clangd stopped")); }
     entry.pending.clear();
     entry.child?.stdin.destroy();
@@ -515,7 +531,13 @@ export class CppService {
   }
   private async capture(command: string, args: string[], cwd: string, environment: NodeJS.ProcessEnv): Promise<string> {
     return new Promise<string>((resolveCapture, reject) => {
-      const child = spawn(command, args, { cwd, windowsHide: true, env: environment });
+      // Node normally escapes quotes while constructing a Windows command
+      // line. cmd.exe then receives \"path with spaces\" literally for /c
+      // commands and cannot execute VsDevCmd.bat. Let cmd.exe parse the raw
+      // command tail itself; direct executable launches keep Node's escaping.
+      const windowsVerbatimArguments = process.platform === "win32"
+        && basename(command).toLocaleLowerCase("en-US") === "cmd.exe";
+      const child = spawn(command, args, { cwd, windowsHide: true, windowsVerbatimArguments, env: environment });
       this.activeCommand = child; let stdout = ""; let stderr = "";
       child.stdout.on("data", (data) => { stdout += String(data); });
       child.stderr.on("data", (data) => { stderr += String(data); });
@@ -541,7 +563,7 @@ export class CppService {
     if (!installation) throw new Error("Visual Studio Build Tools is installed without the Desktop development with C++ workload.");
     const developerCommand = join(installation.split(/\r?\n/u).at(-1) ?? installation, "Common7", "Tools", "VsDevCmd.bat");
     if (!existsSync(developerCommand)) throw new Error("Visual Studio C++ developer environment is incomplete: VsDevCmd.bat was not found.");
-    const output = await this.capture("cmd.exe", ["/d", "/s", "/c", `call "${developerCommand}" -no_logo -arch=x64 -host_arch=x64 >nul && set`], bin, base);
+    const output = await this.capture("cmd.exe", ["/d", "/s", "/c", `chcp 65001 >nul && call "${developerCommand}" -no_logo -arch=x64 -host_arch=x64 >nul && set`], bin, base);
     const environment = this.mergeWindowsEnvironment(base, parseWindowsEnvironment(output));
     if (!this.executableInPath(["cl.exe"], this.environmentPath(environment))) throw new Error("Visual Studio C++ developer environment did not provide cl.exe.");
     this.emit({ type: "language_server_progress", stage: "configuring", detail: "Using Visual Studio C++ build environment" });
@@ -637,20 +659,10 @@ export class CppService {
     // long-lived language-service process.
     const child = spawn(clangd, ["--background-index", "--background-index-priority=background", "--pch-storage=disk", "-j", "2", `--compile-commands-dir=${commandsDir}`], { cwd: entry.root, windowsHide: true, stdio: "pipe", env: { ...environment, PATH: `${bin}${delimiter}${this.environmentPath(environment)}` } });
     entry.child = child; entry.status = "indexing"; this.publish(entry);
-    let resolveIndex!: () => void;
-    let rejectIndex!: (reason: Error) => void;
-    const indexComplete = new Promise<void>((resolveProgress, rejectProgress) => {
-      resolveIndex = resolveProgress;
-      rejectIndex = rejectProgress;
-    });
-    void indexComplete.catch(() => undefined);
-    entry.indexReject = rejectIndex;
     let buffer = Buffer.alloc(0);
     const fail = (cause: unknown) => {
       const error = cause instanceof Error ? cause : new Error(String(cause));
       entry.status = "failed"; entry.error = error.message; this.publish(entry);
-      entry.indexReject?.(error);
-      entry.indexReject = undefined;
       for (const pending of entry.pending.values()) { clearTimeout(pending.timeout); pending.reject(error); }
       entry.pending.clear(); child.kill();
     };
@@ -677,13 +689,19 @@ export class CppService {
           }
           if (message.method === "$/progress" && message.params?.token === "backgroundIndexProgress") {
             const progress = message.params.value;
-            if (progress?.kind === "begin" || progress?.kind === "report") {
-              const detail = typeof progress.message === "string"
-                ? `Indexing C++ project… ${progress.message}`
-                : "Indexing C++ project…";
-              this.emit({ type: "language_server_progress", stage: "indexing", detail });
+            if (progress?.kind === "report" && entry.status === "indexing" && typeof progress.message === "string") {
+              entry.indexProgress = progress.message;
+              const now = Date.now();
+              if (now - entry.lastIndexProgressAt >= 250) {
+                entry.lastIndexProgressAt = now;
+                this.publish(entry);
+              }
             }
-            if (progress?.kind === "end") resolveIndex();
+            if (progress?.kind === "end" && entry.status === "indexing") {
+              entry.indexProgress = undefined;
+              entry.status = "ready";
+              this.publish(entry);
+            }
             continue;
           }
           if (message.method === "textDocument/publishDiagnostics" && typeof message.params?.uri === "string" && Array.isArray(message.params.diagnostics)) {
@@ -703,9 +721,6 @@ export class CppService {
     child.once("error", fail);
     child.once("close", () => {
       if (entry.status === "stopped" || entry.status === "failed") return;
-      const error = new Error("clangd exited while indexing");
-      entry.indexReject?.(error);
-      entry.indexReject = undefined;
       entry.status = "stopped";
       this.publish(entry);
     });
@@ -732,16 +747,16 @@ export class CppService {
     });
     const initialized = JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }); child.stdin.write(`Content-Length: ${Buffer.byteLength(initialized)}\r\n\r\n${initialized}`);
     const bootstrapUri = await this.openIndexBootstrapDocument(entry, commandsDir);
-    if (bootstrapUri) {
-      await indexComplete;
-      await this.enqueueNotification(entry, "textDocument/didClose", { textDocument: { uri: bootstrapUri } });
-    }
-    entry.indexReject = undefined;
-    entry.status = "ready"; this.publish(entry);
+    if (bootstrapUri) await this.enqueueNotification(entry, "textDocument/didClose", { textDocument: { uri: bootstrapUri } });
+    // Background indexing is not an editor- or Skill-readiness barrier:
+    // clangd can already serve opened translation units and provisional
+    // workspace queries. Keep the authoritative project status at "indexing"
+    // so every Skill result can identify itself as partial.
+    if (!bootstrapUri && entry.status === "indexing") { entry.status = "ready"; this.publish(entry); }
     // The progress dialog must track the authoritative service lifecycle, not
     // merely the load RPC's return. This also covers a renderer IPC response
     // arriving after CMake/clangd have already completed successfully.
-    this.emit({ type: "language_server_progress", stage: "ready", detail: "C++ language service is ready" });
+    this.emit({ type: "language_server_progress", stage: "ready", detail: bootstrapUri ? "C++ language service is ready; project indexing continues in the background" : "C++ language service is ready" });
   }
   private async openIndexBootstrapDocument(entry: Entry, commandsDir: string): Promise<string | undefined> {
     type CompileCommand = { directory?: unknown; file?: unknown };

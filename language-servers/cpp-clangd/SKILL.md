@@ -12,13 +12,23 @@ nested folder below it.
 
 Use `agent_k_cpp_language_server` for semantic C/C++ questions. At the start of
 a C++ language-service workflow, call `status` with the workspace name. All
-semantic actions require the named workspace to be loaded and clangd to be
-ready. Never imply that merely opening a C/C++ file loaded its workspace.
+semantic actions require the named workspace to be loaded with clangd in either
+`indexing` or `ready` state. Never imply that merely opening a C/C++ file loaded
+its workspace.
+
+A newly loaded workspace may temporarily report `indexing`. The editor can
+already use clangd and this Skill may issue semantic actions, but each response
+will report `status`, `indexReady`, and `partial`. When `partial` is `true`, tell
+the user that indexing is still in progress, treat all results as provisional,
+and never interpret an empty result as "not found" or claim that a result set is
+complete. Repeat the query after a later `status` reports `ready` when a complete
+answer matters. Do not unload or reload the workspace just to wait for indexing.
 
 ## Tool priority
 
-When the workspace is loaded and ready, use this Skill **before** shell commands
-or textual search for any question whose answer depends on C++ meaning:
+When the workspace is loaded and clangd is usable, use this Skill **before**
+shell commands or textual search for any question whose answer depends on C++
+meaning:
 
 - which declaration or definition an identifier resolves to;
 - references to a symbol, including overloaded or scoped names;
@@ -39,7 +49,8 @@ investigation, never present it as an equivalent semantic result.
 
 Available actions:
 
-- `status`: report whether the named C++ workspace is loaded and ready.
+- `status`: report whether the named C++ workspace is loaded, whether its index
+  is ready, and whether semantic results are currently partial.
 - `references`: find all indexed references to an exact `symbol`.
 - `definition`: find definitions of a variable, function, enum, type, method,
   macro, or other exact `symbol`.

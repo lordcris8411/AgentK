@@ -1,6 +1,6 @@
 {
   "apiVersion": 1,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "id": "agent-k.text",
   "name": "Text editor",
   "description": "Monaco-based editor for text and source files.",

@@ -4,6 +4,7 @@ import {
   useEffect,
   useLayoutEffect,
   memo,
+  useMemo,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
@@ -460,6 +461,7 @@ function isWebProjectDirectory(entry: FileEntry): boolean {
 
 const Tree = memo(function Tree({
   entry,
+  languageProjectsByPath,
   loadDirectory,
   open,
   dropTarget,
@@ -469,6 +471,7 @@ const Tree = memo(function Tree({
   startPointerDrag,
 }: {
   entry: FileEntry;
+  languageProjectsByPath: ReadonlyMap<string, Pick<LanguageServerProject, "indexProgress" | "status">>;
   loadDirectory(path: string): void;
   open(path: string): void;
   dropTarget: string | null;
@@ -480,6 +483,7 @@ const Tree = memo(function Tree({
   const [expanded, setExpanded] = useState(entry.path === "");
   const cmakeSolution = isCMakeSolutionDirectory(entry);
   const webProject = !cmakeSolution && isWebProjectDirectory(entry);
+  const languageProject = languageProjectsByPath.get(entry.path.replaceAll("\\", "/").toLocaleLowerCase("en-US"));
   return entry.isDir ? (
     <details
       className={entry.path === dropTarget ? "drop-target" : undefined}
@@ -548,12 +552,13 @@ const Tree = memo(function Tree({
             </>}
           </span>
         </span>
-        <span>{entry.name}</span>
+        <span className="tree-entry-label"><span>{entry.name}</span>{languageProject ? <span className={`tree-language-project-status is-${languageProject.status}`}>({languageProject.status}{languageProject.status === "indexing" && languageProject.indexProgress ? ` ${languageProject.indexProgress}` : ""})</span> : null}</span>
       </summary>
       {entry.children.map((child) => (
         <Tree
           entry={child}
           key={child.path}
+          languageProjectsByPath={languageProjectsByPath}
           loadDirectory={loadDirectory}
           open={open}
           dropTarget={dropTarget}
@@ -600,6 +605,7 @@ export function InspectorPanel({
   const [loading, setLoading] = useState(false);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [editorRuntimeKeys, setEditorRuntimeKeys] = useState<string[]>([]);
+  const [editorRuntimeRevision, setEditorRuntimeRevision] = useState(0);
   const editorRuntimeRecency = useRef<string[]>([]);
   const [active, setActive] = useState<string>();
   const [lineNavigation, setLineNavigation] = useState<{
@@ -659,6 +665,17 @@ export function InspectorPanel({
   const [cppProgress, setCppProgress] = useState<{ languageServerId?: string; detail?: string; error?: string; log?: string; rate?: number; stage: string; bytes?: number; total?: number }>();
   const [cppDiagnostics, setCppDiagnostics] = useState<Record<string, Array<Record<string, unknown>>>>({});
   const [languageProjects, setLanguageProjects] = useState<LanguageServerProject[]>([]);
+  const languageProjectsByTreePath = useMemo(() => {
+    const projects = new Map<string, Pick<LanguageServerProject, "indexProgress" | "status">>();
+    if (!root) return projects;
+    const rootKey = root.replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase("en-US");
+    for (const project of languageProjects) {
+      const projectKey = project.root.replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase("en-US");
+      const path = projectKey === rootKey ? "" : relativeWorkspacePath(root, project.root);
+      if (path !== undefined) projects.set(path.replaceAll("\\", "/").toLocaleLowerCase("en-US"), project);
+    }
+    return projects;
+  }, [languageProjects, root]);
   const [languagePlugins, setLanguagePlugins] = useState<LanguageServerPlugin[]>([]);
   const [cppProjectsDialogOpen, setCppProjectsDialogOpen] = useState(false);
   const [cppTraceDialogText, setCppTraceDialogText] = useState<string>();
@@ -688,7 +705,7 @@ export function InspectorPanel({
   useEffect(() => {
     const stop = desktop.onEvent((event) => {
       if (event.type !== "language_server_progress") return;
-      const value = event as { bytes?: unknown; detail?: unknown; languageServerId?: unknown; rate?: unknown; stage?: unknown; total?: unknown };
+      const value = event as { bytes?: unknown; detail?: unknown; error?: unknown; languageServerId?: unknown; rate?: unknown; stage?: unknown; total?: unknown };
       if (typeof value.stage !== "string") return;
       const stage = value.stage;
       const rawDetail = typeof value.detail === "string" ? value.detail : undefined;
@@ -698,6 +715,7 @@ export function InspectorPanel({
         ...(typeof value.bytes === "number" ? { bytes: value.bytes } : {}),
         ...(typeof value.total === "number" ? { total: value.total } : {}),
         ...(typeof value.rate === "number" ? { rate: value.rate } : {}),
+        ...(typeof value.error === "string" ? { error: value.error } : {}),
         ...(stage === "configuring" && rawDetail ? { log: `${previous?.log ?? ""}${rawDetail}`.slice(-16_000) } : {}),
       }));
       if (value.stage === "ready") window.setTimeout(() => setCppProgress(undefined), 900);
@@ -955,9 +973,30 @@ export function InspectorPanel({
           onError(`Editor 插件校验失败：${String(cause)}`);
         });
     };
+    const reloadFileFormats = () => {
+      void (async () => {
+        const activePath = activePathRef.current;
+        const activeTab = tabsRef.current.find((tab) => tab.path === activePath);
+        if (activeTab?.format?.editor === "plugin" && pluginEditorRef.current) {
+          try {
+            const content = await pluginEditorRef.current.readContent();
+            setTabs((currentTabs) => currentTabs.map((tab) =>
+              tab.path === activePath ? { ...tab, content } : tab,
+            ));
+          } catch {
+            // Keep the last host-side content if the old iframe has already
+            // stopped while resources are being reloaded.
+          }
+        }
+        editorRuntimeRecency.current = [];
+        setEditorRuntimeKeys([]);
+        setEditorRuntimeRevision((revision) => revision + 1);
+        refreshFileFormats();
+      })();
+    };
     refreshFileFormats();
-    window.addEventListener("agent-k-resources-changed", refreshFileFormats);
-    return () => window.removeEventListener("agent-k-resources-changed", refreshFileFormats);
+    window.addEventListener("agent-k-resources-changed", reloadFileFormats);
+    return () => window.removeEventListener("agent-k-resources-changed", reloadFileFormats);
   }, [root]);
   useEffect(() => {
     const searchQuery = query.trim();
@@ -1364,11 +1403,12 @@ export function InspectorPanel({
   }, [current, en]);
   const activeEditorRuntimeKey =
     root && current?.format?.editor === "plugin"
-      // A C++ editor created before clangd becomes ready has already completed
-      // its didOpen attempt. Include the ready service identity in its cached
-      // runtime key so that it is recreated and sends didOpen again when the
-      // containing project finishes loading.
-      ? `${root}\0${current.format.id}\0${current.path}\0${currentLanguageProject?.status === "ready" ? currentLanguageProject.root : "no-language-service"}`
+      // A C++ editor created before clangd becomes available has already
+      // completed its didOpen attempt. Background indexing does not prevent
+      // clangd from serving an opened translation unit, so both indexing and
+      // ready identify an available editor service. Keeping the same identity
+      // across that transition also avoids recreating Monaco at index finish.
+      ? `${root}\0${current.format.id}\0${current.path}\0${currentLanguageProject && (currentLanguageProject.status === "ready" || currentLanguageProject.status === "indexing") ? currentLanguageProject.root : "no-language-service"}\0runtime-${editorRuntimeRevision}`
       : undefined;
   const displayedEditorRuntimeKeys = activeEditorRuntimeKey
     ? insertCachedEditorRuntime(
@@ -1923,6 +1963,7 @@ export function InspectorPanel({
             {!query.trim() && tree ? (
               <Tree
                 entry={tree}
+                languageProjectsByPath={languageProjectsByTreePath}
                 loadDirectory={treeLoadDirectory}
                 open={treeOpen}
                 dropTarget={dropTarget}
@@ -2035,7 +2076,8 @@ export function InspectorPanel({
             <div className="editor-floating-actions">
               <>
                   {currentLanguageProject ? <span className={`cpp-inline-status is-${currentLanguageProject.status}`} title={currentLanguageProject.error ?? `${currentLanguageProject.languageServerName} · ${currentLanguageProject.name} · ${currentLanguageProject.status}`}>
-                    <i aria-hidden="true" className="fa-solid fa-code" /><span>{currentLanguageProject.languageServerName} · {currentLanguageProject.name} · {currentLanguageProject.status}</span>
+                    <i aria-hidden="true" className="fa-solid fa-code" /><span>{currentLanguageProject.languageServerName} · {currentLanguageProject.name} · {currentLanguageProject.status}{currentLanguageProject.status === "indexing" && currentLanguageProject.indexProgress ? ` ${currentLanguageProject.indexProgress}` : ""}</span>
+                    {currentLanguageProject.status === "indexing" ? <span aria-hidden="true" className="cpp-inline-status-spinner" /> : null}
                   </span> : null}
                   {["agent-k.html", "agent-k.markdown"].includes(current.format.id) ? (
                     <button

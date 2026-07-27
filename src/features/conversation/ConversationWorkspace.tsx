@@ -43,15 +43,17 @@ function projectBelongsToWorkspace(project: LanguageServerProject, cwd: string):
 function languageServiceContext(projects: LanguageServerProject[], cwd: string): string {
   const cpp = projects.filter((project) =>
     project.languageServerId === "cpp-clangd" &&
-    project.status === "ready" &&
+    (project.status === "ready" || project.status === "indexing") &&
     projectBelongsToWorkspace(project, cwd),
   );
   if (!cpp.length) return "";
   return `<agent_k_language_services>
 Authoritative Agent K language-service state for this request:
-${cpp.map((project) => `- C++ CMake workspace ${JSON.stringify(project.name)} is loaded and clangd is ready.`).join("\n")}
+${cpp.map((project) => project.status === "ready"
+    ? `- C++ CMake workspace ${JSON.stringify(project.name)} is loaded and clangd is ready.`
+    : `- C++ CMake workspace ${JSON.stringify(project.name)} is loaded and clangd is indexing${project.indexProgress ? ` (${project.indexProgress})` : ""}; Language Skill results are partial until ready.`).join("\n")}
 
-For a semantic C++ question about a symbol's references, definition, declaration, type, implementation, hover information, diagnostics, call hierarchy, type hierarchy, or indexed symbols, you MUST use agent_k_cpp_language_server before any bash, grep, rg, findstr, compiler-output scraping, or custom Clang command. First call action "status" with the workspace name, then call the appropriate semantic action. Do not replace a clangd query with text search. Shell remains appropriate for builds, tests, execution, Git operations, and explicitly textual or regular-expression searches.
+For a semantic C++ question about a symbol's references, definition, declaration, type, implementation, hover information, diagnostics, call hierarchy, type hierarchy, or indexed symbols, you MUST use agent_k_cpp_language_server before any bash, grep, rg, findstr, compiler-output scraping, or custom Clang command. First call action "status" with the workspace name, then call the appropriate semantic action. The Skill is usable while indexing, but if a response has partial=true or indexReady=false, explicitly report that indexing is incomplete, do not treat an empty result as "not found", and do not claim the result set is complete. Do not replace a clangd query with text search. Shell remains appropriate for builds, tests, execution, Git operations, and explicitly textual or regular-expression searches.
 </agent_k_language_services>`;
 }
 
@@ -2750,7 +2752,8 @@ export function ConversationWorkspace({
       await desktop.reloadPiRuntimes();
       setCommandRevision((revision) => revision + 1);
       window.dispatchEvent(new Event("agent-k-model-changed"));
-      pushNotification(en ? "Pi resources and configuration reloaded" : "Pi 资源和配置已重新加载");
+      window.dispatchEvent(new Event("agent-k-resources-changed"));
+      pushNotification(en ? "Pi resources, Editor extensions, and configuration reloaded" : "Pi 资源、Editor 扩展和配置已重新加载");
       return true;
     }
     if (name === "fork" || name === "tree") {

@@ -26,7 +26,7 @@ export type FileEntry = {
   loaded: boolean;
   children: FileEntry[];
 };
-export type LanguageServerProject = { languageServerId: string; languageServerName: string; root: string; name: string; status: "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped"; error?: string; [key: string]: unknown };
+export type LanguageServerProject = { languageServerId: string; languageServerName: string; root: string; name: string; status: "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped"; error?: string; indexProgress?: string; [key: string]: unknown };
 export type LanguageServerTrace = { elapsedMs?: number; error?: string; file?: string; method: string; phase: "rejected" | "request" | "response" | "sent" | "timeout" | "write-error"; timestamp: number; version?: number };
 export type LanguageServerPlugin = {
   apiVersion: 1;
