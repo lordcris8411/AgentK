@@ -1,6 +1,6 @@
 ---
 name: gdb-debug
-description: Debug C/C++ programs using GDB (GNU Debugger). Use when debugging segfaults, infinite loops, logic errors, memory corruption, or when stepping through native code. Supports breakpoints, watches, backtrace, register inspection, and core dump analysis.
+description: Debug C/C++ programs with the installed GDB command line. Use for segfaults, hangs, logic errors, memory corruption, breakpoints, watches, backtraces, registers, threads, or core dumps. This is a shell workflow, separate from Agent K's managed clangd language service and future DAP UI.
 ---
 
 # GDB Debug Skill
@@ -10,26 +10,31 @@ Debug C/C++ programs with GDB. This skill provides structured workflows for comm
 ## Prerequisites
 
 - `gdb` installed (`sudo apt install gdb` on Debian/Ubuntu)
+- `nm` installed (normally provided by GNU binutils)
 - Binary compiled with `-g -O0` flags for debug symbols
+
+Use the absolute directory supplied for this Skill as `<skill-dir>`. The helper
+scripts live there, not in the project being debugged. Pass absolute binary/core
+paths or change to the project only inside a subshell.
 
 ## Quick Start
 
 ### Launch and run to crash
 
 ```bash
-cd <project-dir> && ./scripts/gdb-run.sh <binary> [args...]
+<skill-dir>/scripts/gdb-run.sh /absolute/path/to/binary [args...]
 ```
 
 ### Analyze a core dump
 
 ```bash
-cd <project-dir> && ./scripts/gdb-core.sh <binary> <core-file>
+<skill-dir>/scripts/gdb-core.sh /absolute/path/to/binary /absolute/path/to/core
 ```
 
 ### Common debugging with a helper script
 
 ```bash
-cd <project-dir> && ./scripts/gdb-debug.sh <action> <binary> [args...]
+<skill-dir>/scripts/gdb-debug.sh <action> /absolute/path/to/binary [args...]
 ```
 
 ## Debug Workflows
@@ -156,3 +161,7 @@ gdb -x debug.gdb ./binary
 - Use `delete` to remove breakpoints by number
 - Use `set print pretty on` for formatted output
 - Use `layout src` for TUI mode (source + console split)
+- The helper scripts invoke GDB and execute the target program. Obtain the
+  user's approval when the current permission policy requires shell execution.
+- Do not confuse this Skill with Agent K's C++ language extension: clangd
+  provides editing semantics, while this Skill runs the debugger explicitly.

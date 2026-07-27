@@ -13,7 +13,13 @@ read, edit, and write tools only for file contents or modifications after openin
 when needed. Apart from the built-in `open` action, call `agent_k_file_editor` only
 with a supplied supported action.
 
-When the user asks to run or preview a web project with an npm `dev` script in Agent K, call
-`agent_k_file_editor` with `action: "run-web-project"` and the project directory
-path. Agent K validates the project, starts its dev server, and opens the preview
-in the right-side panel. Do not run the dev command yourself or open a browser.
+When the user asks to run or preview a web project with an npm `dev` script in
+Agent K, call `agent_k_file_editor` with `action: "run-web-project"` and the
+project directory path. Agent K validates the project, starts its dev server in
+the project terminal, and opens the preview in the right-side panel. Do not run
+the dev command yourself or open a browser. Use `get-preview-console` to inspect
+recent browser console entries and `capture-preview` to save the visible preview.
+
+Language diagnostics, completion, navigation, references, and project search are
+Agent K UI services. Continue to use Pi's ordinary file tools for source changes;
+do not attempt to call the Editor's internal language bridge as a Pi tool.

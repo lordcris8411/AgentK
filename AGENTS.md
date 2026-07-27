@@ -6,13 +6,16 @@
 - Pi is an external runtime accessed through its public RPC protocol.
 - Never edit, vendor, or commit Pi source. `.reference/pi/` is ignored reference material only.
 - Keep protocol-specific behavior inside `electron/agent/` and keep the React renderer process-free.
+- Keep privileged language tooling inside trusted packages under `language-servers/`; Editor packages remain sandboxed browser code under `editor/extensions/`.
 
 ## Commands
 
 - Install dependencies with `npm ci --ignore-scripts`.
 - After TypeScript changes, run `npm run check`.
 - After Electron main-process changes, run `npm run check:desktop`.
-- Run focused tests for changed functionality; `npm test` covers the bundled K Plan extension.
+- After Editor changes, run `npm run check:editors` and `npm run build:editors`.
+- After native language-extension changes, run `npm run check:language-servers` and `npm run build:language-servers`.
+- Run focused tests for changed functionality; `npm test` covers K Plan, resource discovery, Editor manifests, language extensions, conversation content, and project ordering.
 - Do not run lifecycle scripts from new dependencies without reviewing them.
 
 ## Code quality

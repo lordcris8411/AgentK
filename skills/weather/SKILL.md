@@ -1,26 +1,30 @@
 ---
 name: weather
-description: Get current weather and forecasts for any location worldwide. Uses Open-Meteo API (free, no API key required). Supports current conditions, hourly/daily forecasts, historical data. Use when asked about weather, temperature, or planning outdoor activities.
+description: Get current weather and forecasts for a city or coordinates through Open-Meteo. Use when asked about current conditions, temperature, hourly weather, a seven-day forecast, or outdoor planning. No API key is required.
 ---
 
 # Weather Skill
 
 Get weather data using the free Open-Meteo API.
 
+Use the absolute directory supplied for this Skill as `<skill-dir>`; the script
+is installed with Agent K and is not located in the user's project. It requires
+`bash`, `curl`, `jq`, and outbound HTTPS access.
+
 ## Quick Start
 
 ```bash
 # Current weather for a city
-./scripts/weather.sh current "Beijing"
+<skill-dir>/scripts/weather.sh current "Beijing"
 
 # 7-day forecast
-./scripts/weather.sh forecast "New York"
+<skill-dir>/scripts/weather.sh forecast "New York"
 
 # Weather at coordinates
-./scripts/weather.sh current 39.9,116.4
+<skill-dir>/scripts/weather.sh current 39.9,116.4
 
 # Hourly forecast (next 24h)
-./scripts/weather.sh hourly "Tokyo"
+<skill-dir>/scripts/weather.sh hourly "Tokyo"
 ```
 
 ## Commands
@@ -36,7 +40,7 @@ Get weather data using the free Open-Meteo API.
 
 - **Provider**: Open-Meteo
 - **API Key**: Not required
-- **Rate Limit**: None
+- **Usage policy**: Subject to Open-Meteo's current public API terms and availability
 - **Geocoding**: Built-in city search
 
 ## Output Format
@@ -48,10 +52,14 @@ Current weather includes:
 - Feels like temperature
 - Sunrise/sunset times
 
-Forecast includes:
+Forecast output includes:
 - Daily high/low temperatures
 - Precipitation probability
 - Weather conditions
+
+The script reports the first geocoding match for a city string. Include region
+or country when the name is ambiguous, and state that weather data is external
+and may be delayed rather than presenting it as a safety-critical observation.
 
 ## WMO Weather Codes
 

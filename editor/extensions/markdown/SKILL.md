@@ -10,4 +10,6 @@ To display a Markdown file in Agent K, use `agent_k_file_editor` with
 the rendered view. Do not launch an external viewer. Agent K may add an
 `<agent_k_file_format>` block containing the active Markdown path. Use Pi's
 normal read, edit, and write tools to inspect or change the source. The rendered
-preview is controlled by Agent K.
+preview, source/preview mode, and refresh are controlled by Agent K. Use
+`capture-preview` only when the current context advertises it; do not invent
+format actions from the file extension alone.

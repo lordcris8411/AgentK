@@ -13,4 +13,6 @@ or an external browser for that request. Agent K may also add an
 currently visible preview as an image, use `agent_k_file_editor` with
 `action: "capture-preview"`; Agent K saves a PNG in the project's `screenshot`
 directory and returns its path. Use Pi's normal read, edit, and write tools for
-source changes. Agent K owns the sandboxed preview and refresh controls.
+source changes, then keep the same Agent K tab open. Static HTML preview console
+messages are UI-only; `get-preview-console` is for a running web-project preview.
+Agent K owns the sandboxed preview, refresh controls, and filesystem writes.

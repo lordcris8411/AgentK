@@ -6,6 +6,8 @@ import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import extractZip from "extract-zip";
+import { DEFAULT_VSWHERE_PATH, managedToolchainArchives, managedToolchainMarker, parseWindowsEnvironment, toolchainArchiveFormat } from "./toolchain.js";
 
 export type CppProjectStatus = "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped";
 export type CppProject = { root: string; name: string; status: CppProjectStatus; error?: string; cmake: boolean; compileCommands: boolean };
@@ -45,8 +47,13 @@ export class CppService {
     try {
       const bin = await this.managedBin();
       let commandsDir = root;
-      if (cmake) { entry.status = "configuring"; this.publish(entry); commandsDir = await this.configure(root, bin); entry.compileCommands = true; }
-      await this.start(entry, join(bin, process.platform === "win32" ? "clangd.exe" : "clangd"), commandsDir, bin);
+      let buildEnvironment: NodeJS.ProcessEnv | undefined;
+      if (cmake) {
+        entry.status = "configuring"; this.publish(entry);
+        const configured = await this.configure(root, bin);
+        commandsDir = configured.commandsDir; buildEnvironment = configured.environment; entry.compileCommands = true;
+      }
+      await this.start(entry, join(bin, process.platform === "win32" ? "clangd.exe" : "clangd"), commandsDir, bin, buildEnvironment);
       return this.public(entry);
     } catch (cause) { await rm(`${join(this.cachePath, "cpp-toolchain", process.platform, process.arch)}.partial`, { recursive: true, force: true }); if (this.cancellationRequested) { this.projects.delete(root); this.emit({ type: "language_server_project_removed", root }); return { ...this.public(entry), status: "stopped" }; } entry.status = "failed"; entry.error = cause instanceof Error ? cause.message : String(cause); this.publish(entry); return this.public(entry); }
   }
@@ -115,9 +122,13 @@ export class CppService {
     if (entry.child && !entry.child.killed) entry.child.kill();
   }
   private async managedBin(): Promise<string> {
-    const bin = join(this.cachePath, "cpp-toolchain", process.platform, process.arch, "bin");
+    const root = join(this.cachePath, "cpp-toolchain", process.platform, process.arch);
+    const bin = join(root, "bin");
     const executable = process.platform === "win32" ? ".exe" : "";
-    if (["clangd", "clang", "clang++", "cmake", "ninja"].every((name) => existsSync(join(bin, `${name}${executable}`)))) { this.emit({ type: "language_server_progress", stage: "preparing", detail: "Reusing cached C++ toolchain" }); return bin; }
+    const candidates = ["clangd", "cmake", "ninja"];
+    const platform = process.platform === "win32" || process.platform === "linux" ? process.platform : undefined;
+    const marker = platform ? await readFile(join(root, ".agent-k-language-tools"), "utf8").catch(() => "") : "";
+    if (platform && marker === managedToolchainMarker(platform) && candidates.every((name) => existsSync(join(bin, `${name}${executable}`)))) { this.emit({ type: "language_server_progress", stage: "preparing", detail: "Reusing cached C++ language tools" }); return bin; }
     this.provisionAbort ??= new AbortController(); this.provisioning ??= this.provision(bin, this.provisionAbort.signal).finally(() => { this.provisioning = undefined; this.provisionAbort = undefined; });
     return this.provisioning;
   }
@@ -126,27 +137,30 @@ export class CppService {
     const root = join(this.cachePath, "cpp-toolchain", process.platform, process.arch); const staging = `${root}.partial`; const archiveCache = join(this.cachePath, "cpp-toolchain-downloads", process.platform, process.arch);
     await rm(staging, { recursive: true, force: true }); await Promise.all([mkdir(staging, { recursive: true }), mkdir(archiveCache, { recursive: true })]);
     const platform = process.platform === "win32" ? "windows" : "linux";
-    const cmake = process.platform === "win32" ? "cmake-3.31.6-windows-x86_64.zip" : "cmake-3.31.6-linux-x86_64.tar.gz";
-    const ninja = process.platform === "win32" ? "ninja-win.zip" : "ninja-linux.zip";
-    const llvm = process.platform === "win32" ? "clang+llvm-22.1.6-x86_64-pc-windows-msvc.tar.xz" : "LLVM-22.1.6-Linux-X64.tar.xz";
-    this.emit({ type: "language_server_progress", stage: "preparing", detail: `Preparing managed ${platform} toolchain` });
-    await this.downloadRelease("Kitware", "CMake", "v3.31.6", cmake, staging, archiveCache, "cmake", process.platform === "win32" ? "d163cd3ab4959b0a53fa8988f2ddbd2e6c501658201e6a154386bad9dbe4f836" : "5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf", signal);
-    await this.downloadRelease("ninja-build", "ninja", "v1.12.1", ninja, staging, archiveCache, "ninja", process.platform === "win32" ? "f550fec705b6d6ff58f2db3c374c2277a37691678d6aba463adcbb129108467a" : "6f98805688d19672bd699fbbfa2c2cf0fc054ac3df1f0e6a47664d963d530255", signal);
-    await this.downloadRelease("llvm", "llvm-project", "llvmorg-22.1.6", llvm, staging, archiveCache, "llvm", process.platform === "win32" ? "657343edf361ca463bd642e39c74b251c6338b96cdbd55ff277555298b027696" : "c5ac8ef89ca39d30cb32e9b83772f995dd891c685ebc188d593c943a64d5f8b5", signal);
-    // Archives retain top-level directories. Preserve CMake's share tree and LLVM's lib tree next to
-    // the private bin directory: both tools resolve resources relative to their executable.
-    const executable = process.platform === "win32" ? ".exe" : ""; const candidates = ["clangd", "clang", "clang++", "cmake", "ninja"];
+    const archives = managedToolchainArchives(process.platform as "linux" | "win32");
+    this.emit({ type: "language_server_progress", stage: "preparing", detail: `Preparing managed ${platform} language tools` });
+    for (const [tool, archive] of Object.entries(archives))
+      await this.downloadRelease(archive.owner, archive.repository, archive.tag, archive.asset, staging, archiveCache, tool, archive.sha256, signal);
+    // Archives retain top-level directories. Preserve CMake's share tree and
+    // the language package's lib tree next to their private executable set.
+    const executable = process.platform === "win32" ? ".exe" : "";
+    const candidates = ["clangd", "cmake", "ninja"];
     await mkdir(join(staging, "bin"), { recursive: true });
     const cmakeSource = await this.findExecutable(staging, `cmake${executable}`);
-    const clangSource = await this.findExecutable(staging, `clang${executable}`);
-    if (!cmakeSource || !clangSource) throw new Error("Provisioned toolchain is incomplete");
-    const cmakeRoot = dirname(dirname(cmakeSource)); const llvmRoot = dirname(dirname(clangSource));
+    const clangdSource = await this.findExecutable(staging, `clangd${executable}`);
+    if (!cmakeSource || !clangdSource) throw new Error("Provisioned language tools are incomplete");
+    const cmakeRoot = dirname(dirname(cmakeSource));
     if (existsSync(join(cmakeRoot, "share"))) await rename(join(cmakeRoot, "share"), join(staging, "share"));
-    if (existsSync(join(llvmRoot, "lib"))) await rename(join(llvmRoot, "lib"), join(staging, "lib"));
+    const languageRoot = dirname(dirname(clangdSource));
+    const languageLib = join(languageRoot, "lib");
+    const targetLib = join(staging, "lib");
+    if (languageLib !== targetLib && existsSync(languageLib) && !existsSync(targetLib)) await rename(languageLib, targetLib);
     await this.moveDirectoryEntries(dirname(cmakeSource), join(staging, "bin"));
-    await this.moveDirectoryEntries(dirname(clangSource), join(staging, "bin"));
+    await this.moveDirectoryEntries(dirname(clangdSource), join(staging, "bin"));
     for (const name of candidates) { const found = await this.findExecutable(staging, `${name}${executable}`); if (!found) throw new Error(`Provisioned ${name} is missing`); const target = join(staging, "bin", `${name}${executable}`); if (found !== target) await rename(found, target); }
-    await rm(root, { recursive: true, force: true }); await rename(staging, root); this.emit({ type: "language_server_progress", stage: "ready", detail: "Managed C++ toolchain is ready" }); return bin;
+    await writeFile(join(staging, ".agent-k-language-tools"), managedToolchainMarker(process.platform as "linux" | "win32"), "utf8");
+    if (process.platform === "win32") await rm(join(archiveCache, "clang+llvm-22.1.6-x86_64-pc-windows-msvc.tar.xz"), { force: true });
+    await rm(root, { recursive: true, force: true }); await rename(staging, root); this.emit({ type: "language_server_progress", stage: "ready", detail: "Managed C++ language tools are ready" }); return bin;
   }
   private async findExecutable(directory: string, name: string): Promise<string | undefined> {
     const entries = await readdir(directory, { withFileTypes: true });
@@ -154,6 +168,61 @@ export class CppService {
   }
   private async moveDirectoryEntries(source: string, destination: string): Promise<void> {
     for (const entry of await readdir(source)) { const from = join(source, entry); const to = join(destination, entry); if (from !== to && !existsSync(to)) await rename(from, to); }
+  }
+  private environmentPath(environment: NodeJS.ProcessEnv): string {
+    return Object.entries(environment).find(([key]) => key.toLocaleUpperCase("en-US") === "PATH")?.[1] ?? "";
+  }
+  private executableInPath(names: readonly string[], pathValue: string): string | undefined {
+    for (const rawDirectory of pathValue.split(delimiter)) {
+      const directory = rawDirectory.replace(/^"|"$/gu, "");
+      if (!directory) continue;
+      for (const name of names) { const candidate = join(directory, name); if (existsSync(candidate)) return candidate; }
+    }
+    return undefined;
+  }
+  private mergeWindowsEnvironment(base: NodeJS.ProcessEnv, additions: Record<string, string>): NodeJS.ProcessEnv {
+    const merged = { ...base };
+    for (const [key, value] of Object.entries(additions)) {
+      const normalizedKey = key.toLocaleUpperCase("en-US") === "PATH" ? "PATH" : key;
+      for (const existing of Object.keys(merged))
+        if (existing !== normalizedKey && existing.toLocaleUpperCase("en-US") === normalizedKey.toLocaleUpperCase("en-US")) delete merged[existing];
+      merged[normalizedKey] = value;
+    }
+    return merged;
+  }
+  private async capture(command: string, args: string[], cwd: string, environment: NodeJS.ProcessEnv): Promise<string> {
+    return new Promise<string>((resolveCapture, reject) => {
+      const child = spawn(command, args, { cwd, windowsHide: true, env: environment });
+      this.activeCommand = child; let stdout = ""; let stderr = "";
+      child.stdout.on("data", (data) => { stdout += String(data); });
+      child.stderr.on("data", (data) => { stderr += String(data); });
+      child.once("error", reject);
+      child.once("close", (code) => {
+        if (this.activeCommand === child) this.activeCommand = undefined;
+        code === 0 ? resolveCapture(stdout) : reject(new Error(stderr || `${command} exited with ${code}`));
+      });
+    });
+  }
+  private async cmakeEnvironment(bin: string): Promise<NodeJS.ProcessEnv> {
+    const base: NodeJS.ProcessEnv = { ...process.env, PATH: `${bin}${delimiter}${this.environmentPath(process.env)}` };
+    if (process.platform !== "win32") return base;
+    if (base.CC || base.CXX || this.executableInPath(["cl.exe", "clang-cl.exe", "clang.exe", "gcc.exe", "g++.exe"], base.PATH ?? "")) return base;
+    const programDirectories = [base["ProgramFiles(x86)"], base.ProgramFiles].filter((value): value is string => Boolean(value));
+    const vswhere = this.executableInPath(["vswhere.exe"], base.PATH ?? "")
+      ?? [
+        ...programDirectories.map((directory) => join(directory, "Microsoft Visual Studio", "Installer", "vswhere.exe")),
+        DEFAULT_VSWHERE_PATH,
+      ].find((candidate) => existsSync(candidate));
+    if (!vswhere) throw new Error("No Windows C/C++ compiler was found. Install Visual Studio Build Tools with Desktop development with C++, Clang, or MinGW.");
+    const installation = (await this.capture(vswhere, ["-latest", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath", "-utf8"], bin, base)).trim();
+    if (!installation) throw new Error("Visual Studio Build Tools is installed without the Desktop development with C++ workload.");
+    const developerCommand = join(installation.split(/\r?\n/u).at(-1) ?? installation, "Common7", "Tools", "VsDevCmd.bat");
+    if (!existsSync(developerCommand)) throw new Error("Visual Studio C++ developer environment is incomplete: VsDevCmd.bat was not found.");
+    const output = await this.capture("cmd.exe", ["/d", "/s", "/c", `call "${developerCommand}" -no_logo -arch=x64 -host_arch=x64 >nul && set`], bin, base);
+    const environment = this.mergeWindowsEnvironment(base, parseWindowsEnvironment(output));
+    if (!this.executableInPath(["cl.exe"], this.environmentPath(environment))) throw new Error("Visual Studio C++ developer environment did not provide cl.exe.");
+    this.emit({ type: "language_server_progress", stage: "configuring", detail: "Using Visual Studio C++ build environment" });
+    return environment;
   }
   private async archiveMatches(path: string, expectedSha256: string): Promise<boolean> { if (!existsSync(path)) return false; try { const hash = createHash("sha256"); const { createReadStream } = await import("node:fs"); await pipeline(createReadStream(path), hash); return hash.digest("hex") === expectedSha256; } catch { return false; } }
   private async downloadRelease(owner: string, repo: string, tag: string, assetName: string, directory: string, archiveCache: string, tool: string, expectedSha256: string, signal: AbortSignal): Promise<void> {
@@ -170,12 +239,20 @@ export class CppService {
     if (!await this.archiveMatches(archive, expectedSha256)) throw new Error(`Checksum verification failed for ${tool}`); const cachedPartial = `${cachedArchive}.partial`; await rm(cachedPartial, { force: true }); await copyFile(archive, cachedPartial); await rename(cachedPartial, cachedArchive);
     this.emit({ type: "language_server_progress", stage: "extracting", tool, detail: assetName }); await this.extract(archive, directory); await rm(archive, { force: true });
   }
-  private async extract(archive: string, directory: string): Promise<void> { await this.run(process.platform === "win32" ? "tar.exe" : "tar", ["-xf", archive, "-C", directory], directory, ""); }
-  private async configure(root: string, bin: string): Promise<string> {
-    const key = createHash("sha256").update(root).digest("hex"); const build = join(this.cachePath, "cpp-build", key);
+  private async extract(archive: string, directory: string): Promise<void> {
+    if (toolchainArchiveFormat(archive) === "zip") {
+      await extractZip(archive, { dir: directory });
+      return;
+    }
+    await this.run(process.platform === "win32" ? "tar.exe" : "tar", ["-xf", archive, "-C", directory], directory, "");
+  }
+  private async configure(root: string, bin: string): Promise<{ commandsDir: string; environment: NodeJS.ProcessEnv }> {
+    const platform = process.platform as "linux" | "win32";
+    const key = createHash("sha256").update(root).update("\0").update(managedToolchainMarker(platform)).digest("hex"); const build = join(this.cachePath, "cpp-build", key);
     await mkdir(build, { recursive: true }); const cmake = join(bin, process.platform === "win32" ? "cmake.exe" : "cmake");
     if (!existsSync(cmake)) throw new Error("Managed CMake is unavailable");
-    await this.run(cmake, ["-S", root, "-B", build, "-G", "Ninja", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", `-DCMAKE_C_COMPILER=${join(bin, process.platform === "win32" ? "clang.exe" : "clang")}`, `-DCMAKE_CXX_COMPILER=${join(bin, process.platform === "win32" ? "clang++.exe" : "clang++")}`], root, bin);
+    const environment = await this.cmakeEnvironment(bin);
+    await this.run(cmake, ["-S", root, "-B", build, "-G", "Ninja", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"], root, bin, environment);
     const commands = join(build, "compile_commands.json");
     if (!existsSync(commands)) throw new Error("CMake did not generate compile_commands.json");
     // CMake writes -include-pch flags into its compilation database. This
@@ -183,7 +260,7 @@ export class CppService {
     // no PCH yet. Retain an existing PCH by reference (never copy it); remove
     // only missing PCH inputs while keeping CMake's wrapper header (-include).
     await this.stripMissingPrecompiledHeaders(commands);
-    return build;
+    return { commandsDir: build, environment };
   }
   private async stripMissingPrecompiledHeaders(commandsPath: string): Promise<void> {
     type Command = { arguments?: unknown; command?: unknown };
@@ -209,14 +286,14 @@ export class CppService {
     }
     if (changed) await writeFile(commandsPath, `${JSON.stringify(commands, undefined, 2)}\n`, "utf8");
   }
-  private run(command: string, args: string[], cwd: string, bin: string) { return new Promise<void>((resolveRun, reject) => { const child = spawn(command, args, { cwd, windowsHide: true, env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` } }); this.activeCommand = child; let log = ""; child.stdout.on("data", b => { log += b; this.emit({ type: "language_server_progress", stage: "configuring", detail: String(b) }); }); child.stderr.on("data", b => { log += b; this.emit({ type: "language_server_progress", stage: "configuring", detail: String(b) }); }); child.once("error", reject); child.once("close", code => { if (this.activeCommand === child) this.activeCommand = undefined; code === 0 ? resolveRun() : reject(new Error(log || `CMake exited with ${code}`)); }); }); }
-  private async start(entry: Entry, clangd: string, commandsDir: string, bin: string) {
+  private run(command: string, args: string[], cwd: string, bin: string, environment: NodeJS.ProcessEnv = process.env) { return new Promise<void>((resolveRun, reject) => { const child = spawn(command, args, { cwd, windowsHide: true, env: { ...environment, PATH: `${bin}${delimiter}${this.environmentPath(environment)}` } }); this.activeCommand = child; let log = ""; child.stdout.on("data", b => { log += b; this.emit({ type: "language_server_progress", stage: "configuring", detail: String(b) }); }); child.stderr.on("data", b => { log += b; this.emit({ type: "language_server_progress", stage: "configuring", detail: String(b) }); }); child.once("error", reject); child.once("close", code => { if (this.activeCommand === child) this.activeCommand = undefined; code === 0 ? resolveRun() : reject(new Error(log || `CMake exited with ${code}`)); }); }); }
+  private async start(entry: Entry, clangd: string, commandsDir: string, bin: string, environment: NodeJS.ProcessEnv = process.env) {
     if (!existsSync(clangd)) throw new Error("Managed clangd is unavailable");
     entry.status = "starting"; this.publish(entry);
     // Keep background indexing, but make interactive completion/diagnostics
     // win on large projects. PCHs stay on disk rather than inflating the
     // long-lived language-service process.
-    const child = spawn(clangd, ["--background-index", "--background-index-priority=background", "--pch-storage=disk", "-j", "2", `--compile-commands-dir=${commandsDir}`], { cwd: entry.root, windowsHide: true, stdio: "pipe", env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` } });
+    const child = spawn(clangd, ["--background-index", "--background-index-priority=background", "--pch-storage=disk", "-j", "2", `--compile-commands-dir=${commandsDir}`], { cwd: entry.root, windowsHide: true, stdio: "pipe", env: { ...environment, PATH: `${bin}${delimiter}${this.environmentPath(environment)}` } });
     entry.child = child; entry.status = "indexing"; this.publish(entry);
     let buffer = Buffer.alloc(0);
     const fail = (cause: unknown) => {

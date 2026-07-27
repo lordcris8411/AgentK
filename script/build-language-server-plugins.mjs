@@ -29,6 +29,7 @@ for (const entry of await readdir(packages, { withFileTypes: true })) {
     logLevel: "warn",
     publicDir: false,
     root,
+    ssr: { noExternal: ["extract-zip"] },
     build: {
       emptyOutDir: true,
       ssr: source,

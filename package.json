@@ -29,7 +29,7 @@
     "check:language-servers": "node script/build-language-server-plugins.mjs --check",
     "check:editors": "tsc -p editor/tsconfig.json",
     "prepare:native": "node script/prepare-native.mjs",
-    "test": "npm run build:desktop && node --test extensions/k-plan/index.test.ts electron/file-formats.test.mjs electron/language-server-registry.test.mjs electron/skill-hub.test.mjs test/messageContent.test.ts test/projectActivity.test.ts",
+    "test": "npm run build:desktop && node --test extensions/k-plan/index.test.ts electron/file-formats.test.mjs electron/language-server-registry.test.mjs electron/skill-hub.test.mjs language-servers/cpp-clangd/worker.test.ts test/messageContent.test.ts test/projectActivity.test.ts",
     "preview": "vite preview",
     "electron": "electron ."
   },
@@ -47,6 +47,7 @@
     "@xterm/xterm": "6.0.0",
     "electron": "43.1.1",
     "electron-builder": "26.15.3",
+    "extract-zip": "2.0.1",
     "katex": "0.18.0",
     "lucide-react": "1.25.0",
     "monaco-editor": "0.55.1",
