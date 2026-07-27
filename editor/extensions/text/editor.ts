@@ -447,7 +447,6 @@ defineEditor((host, initial) => {
     const top = Math.max(8, Math.min(rawTop, host.root.clientHeight - contextMenu.offsetHeight - 8));
     contextMenu.style.left = `${left}px`; contextMenu.style.top = `${top}px`;
   });
-  const contextBlur = editor.onDidBlurEditorText(() => window.setTimeout(hideContextMenu, 0));
   const selectionChange = editor.onDidChangeCursorSelection(({ selection }) => {
     host.reportSelection(selection.isEmpty() ? "" : model.getValueInRange(selection));
   });
@@ -455,7 +454,14 @@ defineEditor((host, initial) => {
     if (!contextMenu.contains(event.target as Node)) hideContextMenu();
   };
   globalThis.document.addEventListener("pointerdown", contextOutside, true);
+  // Monaco briefly blurs its hidden text input while dispatching a context
+  // menu on Linux. That is an implementation detail, not an indication that
+  // the user left the editor. Only close when the iframe itself loses focus.
+  globalThis.window.addEventListener("blur", hideContextMenu);
   const keydown = editor.onKeyDown((event) => {
+    if (event.keyCode === monaco.KeyCode.Escape && !contextMenu.hidden) {
+      event.preventDefault(); event.stopPropagation(); hideContextMenu(); return;
+    }
     if (event.keyCode === monaco.KeyCode.Escape && !referencePanel.hidden) {
       event.preventDefault(); event.stopPropagation(); hideReferences(); return;
     }
@@ -495,8 +501,9 @@ defineEditor((host, initial) => {
       observer.disconnect();
       keydown.dispose();
       context.dispose();
-      contextBlur.dispose(); selectionChange.dispose(); contextMenu.remove();
+      selectionChange.dispose(); contextMenu.remove();
       globalThis.document.removeEventListener("pointerdown", contextOutside, true);
+      globalThis.window.removeEventListener("blur", hideContextMenu);
       changes.dispose();
       definitionHover.dispose(); definitionClick.dispose(); definitionLink.clear();
       languageFocus.dispose(); referenceBlur.dispose();
