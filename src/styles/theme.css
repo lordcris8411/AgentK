@@ -1657,64 +1657,71 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   padding: 0;
 }
 .message-code-block {
-  --code-background: #f6f8fa;
-  --code-border: #d8dee4;
-  --code-header-background: #eef1f4;
-  --code-muted: #57606a;
-  --code-text: #24292f;
+  --code-background: #202020;
+  --code-muted: #f1f1f1;
+  --code-text: #f4f4f4;
   background: var(--code-background);
-  border: 1px solid var(--code-border);
-  border-radius: 9px;
-  margin: 10px 0;
+  border: 0;
+  border-radius: 22px;
+  margin: 12px 0;
   overflow: hidden;
   position: relative;
 }
 :root[data-theme="dark"] .message-code-block {
-  --code-background: #161b22;
-  --code-border: #30363d;
-  --code-header-background: #21262d;
-  --code-muted: #8b949e;
-  --code-text: #e6edf3;
+  --code-background: #202020;
+  --code-muted: #f1f1f1;
+  --code-text: #f4f4f4;
 }
 .message-code-header {
   align-items: center;
-  background: var(--code-header-background);
-  border-bottom: 1px solid var(--code-border);
+  background: var(--code-background);
+  border: 0;
   color: var(--code-muted);
   display: flex;
-  font-size: 10px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 600;
   justify-content: space-between;
-  letter-spacing: 0.03em;
-  min-height: 30px;
-  padding: 0 7px 0 11px;
+  letter-spacing: 0;
+  min-height: 52px;
+  padding: 0 17px 0 20px;
 }
-.message-code-header > span {
+.message-code-language {
+  align-items: center;
+  display: inline-flex;
+  gap: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.message-code-language > i { font-size: 12px; }
 .message-content .message-code-block pre {
   background: var(--code-background);
   border-radius: 0;
   color: var(--code-text);
   margin: 0;
-  padding: 11px;
+  overflow: hidden;
+  padding: 0 20px 17px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.message-content .message-code-block pre code,
+.message-content .message-code-block pre code * {
+  background: transparent !important;
+  white-space: inherit;
 }
 .message-code-header > button {
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 5px;
+  border-radius: 7px;
   color: var(--code-muted);
   cursor: pointer;
   display: inline-flex;
   font: inherit;
-  font-size: 10px;
-  gap: 5px;
-  height: 24px;
+  height: 30px;
   justify-content: center;
-  padding: 0 6px;
+  padding: 0;
+  width: 30px;
 }
 .message-code-header > button:focus-visible,
 .message-code-header > button:hover,

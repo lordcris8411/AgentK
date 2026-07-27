@@ -1312,9 +1312,7 @@ function markdownCodeDetails(children?: ReactNode) {
     className,
     code,
     language,
-    label: language
-      ? CODE_LANGUAGE_LABELS[language] ?? declaredLanguage ?? language
-      : undefined,
+    label: language ? CODE_LANGUAGE_LABELS[language] ?? "plaintext" : "plaintext",
   };
 }
 
@@ -1347,7 +1345,10 @@ function MarkdownCodeBlock({
   return (
     <div className="message-code-block">
       <header className="message-code-header">
-        <span>{code.label ?? (en ? "Code" : "代码")}</span>
+        <span className="message-code-language">
+          <i aria-hidden="true" className="fa-solid fa-code" />
+          <span>{code.label}</span>
+        </span>
         <button
           aria-label={en ? "Copy code" : "复制代码"}
           className={copied ? "is-copied" : undefined}
@@ -1366,7 +1367,6 @@ function MarkdownCodeBlock({
             aria-hidden="true"
             className={`fa-${copied ? "solid fa-check" : "regular fa-copy"}`}
           />
-          <span>{copied ? (en ? "Copied" : "已复制") : (en ? "Copy" : "复制")}</span>
         </button>
       </header>
       <pre className={className}>
