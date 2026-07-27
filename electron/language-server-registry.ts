@@ -2,7 +2,11 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { LanguageServerHost, type LanguageServerPluginManifest } from "./language-server-host.js";
+import {
+  LanguageServerHost,
+  type LanguageServerPluginManifest,
+  type WorkspaceFileChange,
+} from "./language-server-host.js";
 
 const MANIFEST_FILE = "agent-k.language-server.json";
 
@@ -195,6 +199,13 @@ export class LanguageServerRegistry {
     const match = [...this.hosts.values()].find((host) => !this.disabled.has(host.manifest.id) && host.manifest.languages.some((item) => item.toLowerCase() === normalized));
     if (!match) return Promise.reject(new Error(`No language-server plugin supports '${language}'`));
     return match.call<T>(method, ...args);
+  }
+
+  workspaceFilesChanged(changes: WorkspaceFileChange[]): void {
+    if (!changes.length) return;
+    for (const [id, host] of this.hosts) {
+      if (!this.disabled.has(id)) host.workspaceFilesChanged(changes);
+    }
   }
 
   setEnabled(id: string, enabled: boolean): void {

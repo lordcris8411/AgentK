@@ -9,9 +9,11 @@ type Settings = {
   autoCompactEnabled?: boolean;
   autoCompactThreshold?: number;
   autoCompactPrompt?: string;
+  disabledLanguageServerSkills?: string[];
 };
 
 const fileFormatActionPrefix = "agent-k-file-format-action:";
+const cppLanguageServerRequestPrefix = "agent-k-cpp-language-server:";
 
 function previewScreenshotPath(ctx: unknown): string {
   const cwd = typeof (ctx as { cwd?: unknown }).cwd === "string"
@@ -64,6 +66,38 @@ const fileFormatTool = defineTool({
       }],
       details: payload,
     };
+  },
+});
+
+const cppLanguageServerTool = defineTool({
+  name: "agent_k_cpp_language_server",
+  label: "Agent K C++ language service",
+  description: "Primary tool for semantic C++ queries in a named CMake workspace. Always call status first. When the workspace is loaded and ready, use this tool before shell text search for references, definitions, declarations, types, hover, implementations, symbols, diagnostics, call hierarchy, and type hierarchy. Shell remains appropriate for builds, tests, execution, Git, and explicitly textual searches. Loading and unloading are explicit lifecycle actions: keep a useful workspace loaded and never cycle it merely to run another query.",
+  parameters: Type.Object({
+    action: Type.String({ description: "One of: status, references, definition, declaration, type-declaration, implementation, hover, symbols, document-symbols, diagnostics, incoming-calls, outgoing-calls, supertypes, subtypes, load, unload." }),
+    workspace: Type.String({ description: "Unique C++ workspace folder name under the current Agent K workspace. The folder must contain CMakeLists.txt; do not pass a path." }),
+    symbol: Type.Optional(Type.String({ description: "Exact variable, function, enum, type, method, or other C++ symbol name. Qualified names such as Namespace::Type are supported." })),
+    query: Type.Optional(Type.String({ description: "Workspace-symbol search text. Used by the symbols action; symbol may be supplied instead." })),
+    file: Type.Optional(Type.String({ description: "Optional workspace-relative file used to disambiguate a symbol. Required by document-symbols and diagnostics." })),
+  }),
+  async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    if (!ctx.hasUI) return { content: [{ type: "text", text: "Agent K C++ language service UI bridge is unavailable." }] };
+    const cwd = typeof (ctx as { cwd?: unknown }).cwd === "string"
+      ? (ctx as { cwd: string }).cwd
+      : process.cwd();
+    const payload = {
+      action: params.action,
+      workspace: params.workspace,
+      ...(typeof params.symbol === "string" ? { symbol: params.symbol } : {}),
+      ...(typeof params.query === "string" ? { query: params.query } : {}),
+      ...(typeof params.file === "string" ? { file: params.file } : {}),
+      cwd,
+    };
+    const response = await ctx.ui.input(`${cppLanguageServerRequestPrefix}${JSON.stringify(payload)}`);
+    if (!response) return { content: [{ type: "text", text: "Agent K C++ language service request was cancelled." }], details: payload };
+    let details: unknown = response;
+    try { details = JSON.parse(response); } catch { /* Preserve a host error as text. */ }
+    return { content: [{ type: "text", text: response }], details };
   },
 });
 
@@ -178,6 +212,9 @@ export default function agentKPermissions(pi: ExtensionAPI) {
     });
   });
   pi.registerTool(fileFormatTool);
+  const startupSettings = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {});
+  if (!startupSettings.disabledLanguageServerSkills?.includes("cpp-clangd"))
+    pi.registerTool(cppLanguageServerTool);
   pi.registerCommand("agent-k-internal-navigate-tree", {
     description: "Agent K internal same-session tree navigation",
     handler: async (args, ctx) => {

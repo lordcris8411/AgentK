@@ -40,6 +40,18 @@ function isCMakeInput(name: string): boolean {
     || extname(normalized) === ".cmake";
 }
 
+export function isCMakeConfigurationPath(root: string, path: string): boolean {
+  const projectPath = relative(root, path);
+  if (
+    isAbsolute(projectPath) ||
+    projectPath === ".." ||
+    projectPath.startsWith(`..${sep}`)
+  ) return false;
+  const parts = projectPath.split(/[\\/]/);
+  const name = parts.pop();
+  return Boolean(name) && !parts.some(isIgnoredDirectory) && isCMakeInput(name!);
+}
+
 async function configurationInputs(root: string, directory = root): Promise<string[]> {
   const inputs: string[] = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {

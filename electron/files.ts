@@ -106,6 +106,7 @@ function userFacingSessionText(text: string): string {
   }
   const fileEditorContext = /\s*<agent_k_file_editor>[\s\S]*?<\/agent_k_file_editor>\s*$/u;
   const fileFormatContext = /\s*<agent_k_file_format>[\s\S]*?<\/agent_k_file_format>\s*$/u;
+  const languageServicesContext = /\s*<agent_k_language_services>[\s\S]*?<\/agent_k_language_services>\s*$/u;
   const attachedFilesContext = /\s*<attached_files>[\s\S]*?<\/attached_files>(?:\s*Use the available file tools to inspect these local files when needed\.)?\s*$/u;
   let visible = normalized;
   let previous: string;
@@ -114,6 +115,7 @@ function userFacingSessionText(text: string): string {
     visible = visible
       .replace(fileEditorContext, "")
       .replace(fileFormatContext, "")
+      .replace(languageServicesContext, "")
       .replace(attachedFilesContext, "");
   } while (visible !== previous);
   // Generated titles can be truncated in the middle of an internal tag.
@@ -373,12 +375,12 @@ export class FileService {
     return buildTree(root, root, 2);
   }
 
-  async directoryTree(rootInput: string, path: string): Promise<FileEntry> {
+  async directoryTree(rootInput: string, path: string, depth: 1 | 2): Promise<FileEntry> {
     const root = await canonicalRoot(rootInput);
     const target = path ? await workspacePath(root, path) : root;
     if (!(await stat(target)).isDirectory())
       throw new Error("Requested path is not a directory");
-    return buildTree(root, target, 2);
+    return buildTree(root, target, depth);
   }
 
   async workspaceDirectory(rootInput: string, path: string): Promise<string> {

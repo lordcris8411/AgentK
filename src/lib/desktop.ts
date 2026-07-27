@@ -298,8 +298,8 @@ export const desktop = {
   ) => invoke<void>("pi_extension_ui_response", { response, runtimeId }),
   tree: (root: string) => invoke<FileEntry>("project_tree", { root }),
   projectContext: (root: string) => invoke<string>("project_context", { root }),
-  directory: (root: string, path: string) =>
-    invoke<FileEntry>("directory_tree", { root, path }),
+  directory: (root: string, path: string, depth: 1 | 2 = 2) =>
+    invoke<FileEntry>("directory_tree", { root, path, depth }),
   browseDirectories: (path?: string) => invoke<{ path: string; parent: string; directories: string[]; drives: string[] }>("browse_directories", { path }),
   read: (root: string, path: string) =>
     invoke<string>("read_text_file", { root, path }),

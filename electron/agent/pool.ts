@@ -22,6 +22,7 @@ export interface RpcPoolOptions {
   bundledExtensionsDirectory: string;
   bundledSkillsDirectory: string;
   firstPartyEditorExtensions: Array<{ directory: string; id: string }>;
+  firstPartyLanguageServerSkills: Array<{ directory: string; id: string }>;
   launch: PiLaunch;
   minimum: number;
   permissionExtensionSource: string;

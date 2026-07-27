@@ -2,26 +2,94 @@ import { createHash } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import extractZip from "extract-zip";
 import {
   cachedCompilationDatabase,
   cmakeConfigurationSnapshot,
   describeCompilationDatabase,
   findProjectCompilationDatabase,
+  isCMakeConfigurationPath,
   prepareClangdCompilationDatabase,
   recordCompilationDatabase,
 } from "./cmake-cache.js";
 import { DEFAULT_VSWHERE_PATH, managedToolchainArchives, managedToolchainMarker, parseWindowsEnvironment, toolchainArchiveFormat } from "./toolchain.js";
+import { selectWorkspaceSymbols, symbolLocation, type SkillLocation as LspLocation, type SkillRange as Range, type SkillSymbol as LspSymbol } from "./skill-symbols.js";
 
 export type CppProjectStatus = "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped";
 export type CppProject = { root: string; name: string; status: CppProjectStatus; error?: string; cmake: boolean; compileCommands: boolean };
 export type CppLspTrace = { elapsedMs?: number; error?: string; file?: string; method: string; phase: "rejected" | "request" | "response" | "sent" | "timeout" | "write-error"; timestamp: number; version?: number };
 type PendingRequest = { file?: string; method: string; reject(reason: Error): void; resolve(value: unknown): void; startedAt: number; timeout: ReturnType<typeof setTimeout>; version?: number };
-type Entry = CppProject & { child?: ChildProcessWithoutNullStreams; nextId: number; pending: Map<number, PendingRequest>; stderrTail: string; writeQueue: Promise<void> };
+type Entry = CppProject & { child?: ChildProcessWithoutNullStreams; diagnostics: Map<string, unknown[]>; indexReject?: (reason: Error) => void; nextId: number; openDocuments: Set<string>; pending: Map<number, PendingRequest>; stderrTail: string; writeQueue: Promise<void> };
+type WorkspaceFileChange = { path: string; type: 1 | 2 | 3 };
+export type CppSkillRequest = {
+  action?: unknown;
+  cwd?: unknown;
+  file?: unknown;
+  query?: unknown;
+  symbol?: unknown;
+  workspace?: unknown;
+};
+
+const RESULT_LIMIT = 200;
+const SKILL_ACTIONS = new Set([
+  "declaration", "definition", "diagnostics", "document-symbols", "hover",
+  "implementation", "incoming-calls", "load", "outgoing-calls", "references",
+  "status", "subtypes", "supertypes", "symbols", "type-declaration", "unload",
+]);
+
+function requiredText(value: unknown, name: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${name} is required`);
+  return value.trim();
+}
+
+function optionalText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function isInside(root: string, candidate: string): boolean {
+  const path = relative(root, candidate);
+  return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`));
+}
+
+function presentLocation(location: LspLocation, symbol?: LspSymbol) {
+  let path = location.uri;
+  try { path = fileURLToPath(location.uri); } catch { /* Preserve non-file URIs. */ }
+  return {
+    ...(symbol?.name ? { name: symbol.name } : {}),
+    ...(symbol?.containerName ? { container: symbol.containerName } : {}),
+    ...(typeof symbol?.kind === "number" ? { kind: symbol.kind } : {}),
+    path,
+    line: location.range.start.line + 1,
+    character: location.range.start.character + 1,
+    endLine: location.range.end.line + 1,
+    endCharacter: location.range.end.character + 1,
+  };
+}
+
+function locationsFrom(value: unknown): LspLocation[] {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return values.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const candidate = item as { range?: Range; targetRange?: Range; targetSelectionRange?: Range; targetUri?: string; uri?: string };
+    const uri = candidate.targetUri ?? candidate.uri;
+    const range = candidate.targetSelectionRange ?? candidate.targetRange ?? candidate.range;
+    return typeof uri === "string" && range ? [{ range, uri }] : [];
+  });
+}
+
+function deduplicateLocations(locations: LspLocation[]): LspLocation[] {
+  const seen = new Set<string>();
+  return locations.filter((location) => {
+    const key = `${location.uri}:${location.range.start.line}:${location.range.start.character}:${location.range.end.line}:${location.range.end.character}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 /** Session-only clangd registry. Tool locations are deliberately private to app data. */
 export class CppService {
@@ -31,6 +99,7 @@ export class CppService {
   private activeCommand?: ReturnType<typeof spawn>;
   private cancellationRequested = false;
   private readonly traces: CppLspTrace[] = [];
+  private readonly reconfigureTimers = new Map<string, ReturnType<typeof setTimeout>>();
   constructor(private readonly cachePath: string, private readonly emit: (event: Record<string, unknown>) => void) {}
   private publish(entry: Entry) { this.emit({ type: "language_server_project", project: this.public(entry) }); }
   private public(entry: Entry): CppProject { const { root, name, status, error, cmake, compileCommands } = entry; return { root, name, status, ...(error ? { error } : {}), cmake, compileCommands }; }
@@ -50,7 +119,7 @@ export class CppService {
   async load(rootInput: string): Promise<CppProject> {
     const root = await realpath(rootInput); this.cancellationRequested = false; const existing = this.projects.get(root); if (existing) return this.public(existing);
     const cmake = existsSync(join(root, "CMakeLists.txt"));
-    const entry: Entry = { root, name: basename(root), status: "preparing", cmake, compileCommands: false, nextId: 1, pending: new Map(), stderrTail: "", writeQueue: Promise.resolve() };
+    const entry: Entry = { root, name: basename(root), status: "preparing", cmake, compileCommands: false, diagnostics: new Map(), nextId: 1, openDocuments: new Set(), pending: new Map(), stderrTail: "", writeQueue: Promise.resolve() };
     this.projects.set(root, entry); this.publish(entry);
     try {
       const bin = await this.managedBin();
@@ -65,9 +134,9 @@ export class CppService {
       return this.public(entry);
     } catch (cause) { await rm(`${join(this.cachePath, "cpp-toolchain", process.platform, process.arch)}.partial`, { recursive: true, force: true }); if (this.cancellationRequested) { this.projects.delete(root); this.emit({ type: "language_server_project_removed", root }); return { ...this.public(entry), status: "stopped" }; } entry.status = "failed"; entry.error = cause instanceof Error ? cause.message : String(cause); this.publish(entry); return this.public(entry); }
   }
-  async unload(root: string) { const entry = this.projects.get(await realpath(root)); if (!entry) return; this.stop(entry); this.projects.delete(entry.root); this.emit({ type: "language_server_project_removed", root: entry.root }); }
+  async unload(root: string) { const entry = this.projects.get(await realpath(root)); if (!entry) return; const timer = this.reconfigureTimers.get(entry.root); if (timer) clearTimeout(timer); this.reconfigureTimers.delete(entry.root); this.stop(entry); this.projects.delete(entry.root); this.emit({ type: "language_server_project_removed", root: entry.root }); }
   async restart(root: string) { await this.unload(root); return this.load(root); }
-  shutdown() { for (const entry of this.projects.values()) this.stop(entry); this.projects.clear(); }
+  shutdown() { for (const timer of this.reconfigureTimers.values()) clearTimeout(timer); this.reconfigureTimers.clear(); for (const entry of this.projects.values()) this.stop(entry); this.projects.clear(); }
   cancel(): void { this.cancellationRequested = true; this.provisionAbort?.abort(); this.activeCommand?.kill(); }
   /** Declarative project action consumed by the generic terminal bridge. */
   async terminalCommand(rootInput: string, relativePath: string): Promise<string> {
@@ -84,6 +153,202 @@ export class CppService {
     return process.platform === "win32"
       ? `cmake -S ${quote(source)} -B ${quote(build)}; if ($LASTEXITCODE -eq 0) { cmake --build ${quote(build)} }\r`
       : `cmake -S ${quote(source)} -B ${quote(build)} && cmake --build ${quote(build)}\r`;
+  }
+  /** High-level, read-oriented clangd operations exposed to Pi by Agent K's
+   * C++ Language Skill. Every semantic action is tied to a named, ready CMake
+   * workspace; this never starts an implicit language service. */
+  async skill(input: CppSkillRequest): Promise<Record<string, unknown>> {
+    const action = requiredText(input.action, "action");
+    if (!SKILL_ACTIONS.has(action)) throw new Error(`Unsupported C++ Language Skill action: ${action}`);
+    const workspace = requiredText(input.workspace, "workspace");
+    const cwd = requiredText(input.cwd, "cwd");
+    const root = await this.resolveCmakeWorkspace(cwd, workspace);
+    const existing = this.projects.get(root);
+
+    if (action === "status") {
+      return {
+        ok: true,
+        action,
+        workspace,
+        loaded: Boolean(existing),
+        ready: existing?.status === "ready",
+        ...(existing ? { project: this.public(existing) } : {}),
+      };
+    }
+    if (action === "load") {
+      if (existing) return { ok: true, action, workspace, changed: false, loaded: true, project: this.public(existing), message: "The C++ workspace was already loaded; it was not loaded again." };
+      const project = await this.load(root);
+      return { ok: project.status === "ready", action, workspace, changed: true, loaded: true, project };
+    }
+    if (action === "unload") {
+      if (!existing) return { ok: true, action, workspace, changed: false, loaded: false, message: "The C++ workspace was already unloaded." };
+      this.stop(existing);
+      this.projects.delete(root);
+      this.emit({ type: "language_server_project_removed", root });
+      return { ok: true, action, workspace, changed: true, loaded: false, project: this.public(existing) };
+    }
+
+    const entry = this.requireReadyWorkspace(root, workspace);
+    const file = optionalText(input.file);
+    if (action === "symbols") {
+      const query = requiredText(input.query ?? input.symbol, "query");
+      const raw = await this.request(entry, "workspace/symbol", { query });
+      const symbols = Array.isArray(raw) ? raw.filter((item): item is LspSymbol => Boolean(item && typeof item === "object" && symbolLocation(item as LspSymbol))) : [];
+      return this.skillResult(action, workspace, query, symbols.map((symbol) => presentLocation(symbolLocation(symbol)!, symbol)));
+    }
+    if (action === "document-symbols" || action === "diagnostics") {
+      const target = await this.workspaceFile(root, requiredText(file, "file"));
+      const uri = pathToFileURL(target).href;
+      const result = action === "diagnostics"
+        ? entry.diagnostics.get(target) ?? []
+        : await this.withSkillDocument(entry, uri, () => this.request(entry, "textDocument/documentSymbol", { textDocument: { uri } }));
+      return { ok: true, action, workspace, file: target, result };
+    }
+
+    const symbol = requiredText(input.symbol ?? input.query, "symbol");
+    const targets = await this.symbolTargets(entry, symbol, file, action === "type-declaration");
+    if (!targets.length) return { ok: true, action, workspace, query: symbol, count: 0, results: [], message: `No exact symbol named '${symbol}' was found in the loaded C++ workspace.` };
+
+    if (action === "type-declaration") {
+      const declared = targets.map(({ location, symbol: target }) => presentLocation(location, target));
+      return this.skillResult(action, workspace, symbol, declared);
+    }
+    const positions = targets.map(({ location }) => ({
+      position: location.range.start,
+      textDocument: { uri: location.uri },
+    }));
+    if (action === "references" || action === "definition" || action === "declaration" || action === "implementation") {
+      const method = {
+        declaration: "textDocument/declaration",
+        definition: "textDocument/definition",
+        implementation: "textDocument/implementation",
+        references: "textDocument/references",
+      }[action]!;
+      const found: LspLocation[] = [];
+      for (const position of positions) {
+        const params = action === "references" ? { ...position, context: { includeDeclaration: true } } : position;
+        found.push(...locationsFrom(await this.withSkillDocument(entry, position.textDocument.uri, () => this.request(entry, method, params))));
+      }
+      return this.skillResult(action, workspace, symbol, deduplicateLocations(found).map((location) => presentLocation(location)));
+    }
+    if (action === "hover") {
+      const position = positions[0]!;
+      const result = await this.withSkillDocument(entry, position.textDocument.uri, () => this.request(entry, "textDocument/hover", position));
+      return { ok: true, action, workspace, query: symbol, result };
+    }
+    if (["incoming-calls", "outgoing-calls"].includes(action)) {
+      const position = positions[0]!;
+      const prepared = await this.withSkillDocument(entry, position.textDocument.uri, () => this.request(entry, "textDocument/prepareCallHierarchy", position));
+      const items = Array.isArray(prepared) ? prepared : [];
+      const method = action === "incoming-calls" ? "callHierarchy/incomingCalls" : "callHierarchy/outgoingCalls";
+      const results = (await Promise.all(items.map((item) => this.request(entry, method, { item })))).flatMap((value) => Array.isArray(value) ? value : []);
+      return this.skillResult(action, workspace, symbol, results);
+    }
+    if (["supertypes", "subtypes"].includes(action)) {
+      const position = positions[0]!;
+      const prepared = await this.withSkillDocument(entry, position.textDocument.uri, () => this.request(entry, "textDocument/prepareTypeHierarchy", position));
+      const items = Array.isArray(prepared) ? prepared : [];
+      const method = action === "supertypes" ? "typeHierarchy/supertypes" : "typeHierarchy/subtypes";
+      const results = (await Promise.all(items.map((item) => this.request(entry, method, { item })))).flatMap((value) => Array.isArray(value) ? value : []);
+      return this.skillResult(action, workspace, symbol, results);
+    }
+    throw new Error(`C++ Language Skill action was not routed: ${action}`);
+  }
+  private async resolveCmakeWorkspace(cwdInput: string, workspace: string): Promise<string> {
+    if (workspace === "." || workspace === ".." || workspace.includes("/") || workspace.includes("\\"))
+      throw new Error("workspace must be a C++ workspace name, not a path");
+    const cwd = await realpath(cwdInput);
+    const normalized = workspace.toLocaleLowerCase("en-US");
+    const loaded = [...this.projects.keys()].filter((root) => isInside(cwd, root) && basename(root).toLocaleLowerCase("en-US") === normalized);
+    if (loaded.length > 1) throw new Error(`C++ workspace name '${workspace}' is ambiguous; ${loaded.length} loaded CMake folders use that name`);
+    if (loaded[0]) return loaded[0];
+
+    const direct = basename(cwd).toLocaleLowerCase("en-US") === normalized ? cwd : resolve(cwd, workspace);
+    const directRoot = await realpath(direct).catch(() => undefined);
+    if (directRoot && isInside(cwd, directRoot) && existsSync(join(directRoot, "CMakeLists.txt"))) return directRoot;
+
+    const matches: string[] = [];
+    const pending = [cwd];
+    let cursor = 0;
+    let visited = 0;
+    while (cursor < pending.length) {
+      const directory = pending[cursor++]!;
+      if (++visited > 20_000) throw new Error(`C++ workspace search under ${cwd} exceeded 20,000 folders; use a unique top-level workspace name`);
+      let entries;
+      try { entries = await readdir(directory, { withFileTypes: true }); }
+      catch { continue; }
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+        if (entry.name === ".git" || entry.name === "node_modules" || entry.name === "build" || entry.name === "out" || entry.name === ".cache" || entry.name.startsWith("cmake-build-")) continue;
+        const candidate = join(directory, entry.name);
+        if (entry.name.toLocaleLowerCase("en-US") === normalized && existsSync(join(candidate, "CMakeLists.txt"))) matches.push(await realpath(candidate));
+        pending.push(candidate);
+      }
+    }
+    const unique = [...new Set(matches)];
+    if (!unique.length) throw new Error(`'${workspace}' is not a C++ workspace under ${cwd}: no matching folder with CMakeLists.txt was found`);
+    if (unique.length > 1) throw new Error(`C++ workspace name '${workspace}' is ambiguous; ${unique.length} CMake folders use that name under ${cwd}`);
+    return unique[0]!;
+  }
+  private requireReadyWorkspace(root: string, workspace: string): Entry {
+    const entry = this.projects.get(root);
+    if (!entry) throw new Error(`C++ workspace '${workspace}' is not loaded. Check status and load it once before using clangd operations.`);
+    if (entry.status !== "ready" || !entry.child) throw new Error(`C++ workspace '${workspace}' is loaded but clangd is not ready (status: ${entry.status}).`);
+    return entry;
+  }
+  private async workspaceFile(root: string, file: string): Promise<string> {
+    const candidate = resolve(root, file);
+    if (!isInside(root, candidate))
+      throw new Error("file is outside the C++ workspace");
+    let canonical: string;
+    try { canonical = await realpath(candidate); }
+    catch { throw new Error(`File does not exist in the C++ workspace: ${file}`); }
+    if (!isInside(root, canonical)) throw new Error("file resolves outside the C++ workspace");
+    return canonical;
+  }
+  private async symbolTargets(entry: Entry, query: string, file: string | undefined, typesOnly: boolean): Promise<Array<{ location: LspLocation; symbol: LspSymbol }>> {
+    const result = await this.request(entry, "workspace/symbol", { query });
+    let symbols = selectWorkspaceSymbols(result, query, typesOnly);
+    if (file) {
+      const target = await this.workspaceFile(entry.root, file);
+      symbols = symbols.filter((symbol) => {
+        const location = symbolLocation(symbol);
+        if (!location) return false;
+        try { return fileURLToPath(location.uri) === target; } catch { return false; }
+      });
+    }
+    return symbols.flatMap((symbol) => {
+      const location = symbolLocation(symbol);
+      return location ? [{ location, symbol }] : [];
+    });
+  }
+  private async withSkillDocument<T>(entry: Entry, uri: string, operation: () => Promise<T>): Promise<T> {
+    if (entry.openDocuments.has(uri)) return operation();
+    let file: string;
+    try { file = await realpath(fileURLToPath(uri)); }
+    catch { throw new Error(`clangd returned a symbol outside a readable file: ${uri}`); }
+    if (!isInside(entry.root, file)) throw new Error("clangd returned a symbol outside the C++ workspace");
+    const text = await readFile(file, "utf8");
+    const opened = await this.enqueueNotification(entry, "textDocument/didOpen", {
+      textDocument: { uri, languageId: "cpp", version: 0, text },
+    });
+    if (!opened) throw new Error(`Unable to open ${file} in clangd`);
+    try {
+      return await operation();
+    } finally {
+      await this.enqueueNotification(entry, "textDocument/didClose", { textDocument: { uri } });
+    }
+  }
+  private skillResult(action: string, workspace: string, query: string, values: unknown[]): Record<string, unknown> {
+    return {
+      ok: true,
+      action,
+      workspace,
+      query,
+      count: values.length,
+      truncated: values.length > RESULT_LIMIT,
+      results: values.slice(0, RESULT_LIMIT),
+    };
   }
   async lsp(file: string, method: string, params: unknown): Promise<unknown> {
     const canonical = resolve(file); const project = this.projectFor(canonical);
@@ -113,17 +378,67 @@ export class CppService {
     if (!entry) { this.record({ method, phase: "rejected", timestamp: Date.now(), ...this.traceMetadata(params), error: "file is outside loaded C++ projects" }); return false; }
     return this.enqueueNotification(entry, method, params);
   }
+  workspaceFilesChanged(changes: WorkspaceFileChange[]): void {
+    for (const entry of this.projects.values()) {
+      const relevant = changes.filter((change) => isInside(entry.root, resolve(change.path)));
+      if (!relevant.length) continue;
+      if (entry.child && entry.status === "ready") {
+        void this.enqueueNotification(entry, "workspace/didChangeWatchedFiles", {
+          changes: relevant.map((change) => ({
+            uri: pathToFileURL(resolve(change.path)).href,
+            type: change.type,
+          })),
+        });
+      }
+      if (
+        entry.cmake &&
+        relevant.some((change) => isCMakeConfigurationPath(entry.root, resolve(change.path)))
+      ) this.scheduleReconfigure(entry.root);
+    }
+  }
+  private scheduleReconfigure(root: string): void {
+    const previous = this.reconfigureTimers.get(root);
+    if (previous) clearTimeout(previous);
+    const timer = setTimeout(() => {
+      this.reconfigureTimers.delete(root);
+      const entry = this.projects.get(root);
+      if (!entry) return;
+      if (["preparing", "configuring", "starting", "indexing"].includes(entry.status)) {
+        this.scheduleReconfigure(root);
+        return;
+      }
+      void this.restart(root).catch((cause) => {
+        this.emit({
+          type: "language_server_progress",
+          stage: "failed",
+          error: cause instanceof Error ? cause.message : String(cause),
+        });
+      });
+    }, 650);
+    timer.unref();
+    this.reconfigureTimers.set(root, timer);
+  }
   private enqueueNotification(entry: Entry, method: string, params: unknown): Promise<boolean> {
     const metadata = this.traceMetadata(params);
+    const document = params as { textDocument?: { uri?: unknown } } | undefined;
+    const uri = typeof document?.textDocument?.uri === "string" ? document.textDocument.uri : undefined;
     const write = entry.writeQueue.catch(() => undefined).then(() => new Promise<boolean>((resolveWrite) => {
-      if (!entry.child || entry.status !== "ready" || entry.child.killed || entry.child.stdin.destroyed || !entry.child.stdin.writable) { this.record({ method, phase: "rejected", timestamp: Date.now(), ...metadata, error: "clangd stdin is unavailable" }); resolveWrite(false); return; }
-      const payload = JSON.stringify({ jsonrpc: "2.0", method, params }); entry.child.stdin.write(`Content-Length: ${Buffer.byteLength(payload)}\r\n\r\n${payload}`, (cause) => { this.record({ method, phase: cause ? "write-error" : "sent", timestamp: Date.now(), ...metadata, ...(cause ? { error: String(cause) } : {}) }); resolveWrite(!cause); });
+      if (!entry.child || entry.status === "failed" || entry.status === "stopped" || entry.child.killed || entry.child.stdin.destroyed || !entry.child.stdin.writable) { this.record({ method, phase: "rejected", timestamp: Date.now(), ...metadata, error: "clangd stdin is unavailable" }); resolveWrite(false); return; }
+      const payload = JSON.stringify({ jsonrpc: "2.0", method, params }); entry.child.stdin.write(`Content-Length: ${Buffer.byteLength(payload)}\r\n\r\n${payload}`, (cause) => {
+        if (!cause && uri) {
+          if (method === "textDocument/didOpen") entry.openDocuments.add(uri);
+          if (method === "textDocument/didClose") entry.openDocuments.delete(uri);
+        }
+        this.record({ method, phase: cause ? "write-error" : "sent", timestamp: Date.now(), ...metadata, ...(cause ? { error: String(cause) } : {}) }); resolveWrite(!cause);
+      });
     }));
     entry.writeQueue = write.then(() => undefined);
     return write;
   }
   private stop(entry: Entry) {
     entry.status = "stopped";
+    entry.indexReject?.(new Error("clangd indexing stopped"));
+    entry.indexReject = undefined;
     for (const pending of entry.pending.values()) { clearTimeout(pending.timeout); pending.reject(new Error("clangd stopped")); }
     entry.pending.clear();
     entry.child?.stdin.destroy();
@@ -322,10 +637,20 @@ export class CppService {
     // long-lived language-service process.
     const child = spawn(clangd, ["--background-index", "--background-index-priority=background", "--pch-storage=disk", "-j", "2", `--compile-commands-dir=${commandsDir}`], { cwd: entry.root, windowsHide: true, stdio: "pipe", env: { ...environment, PATH: `${bin}${delimiter}${this.environmentPath(environment)}` } });
     entry.child = child; entry.status = "indexing"; this.publish(entry);
+    let resolveIndex!: () => void;
+    let rejectIndex!: (reason: Error) => void;
+    const indexComplete = new Promise<void>((resolveProgress, rejectProgress) => {
+      resolveIndex = resolveProgress;
+      rejectIndex = rejectProgress;
+    });
+    void indexComplete.catch(() => undefined);
+    entry.indexReject = rejectIndex;
     let buffer = Buffer.alloc(0);
     const fail = (cause: unknown) => {
       const error = cause instanceof Error ? cause : new Error(String(cause));
       entry.status = "failed"; entry.error = error.message; this.publish(entry);
+      entry.indexReject?.(error);
+      entry.indexReject = undefined;
       for (const pending of entry.pending.values()) { clearTimeout(pending.timeout); pending.reject(error); }
       entry.pending.clear(); child.kill();
     };
@@ -344,9 +669,29 @@ export class CppService {
         const bodyStart = headerEnd + 4; const bodyEnd = bodyStart + Number(length); if (buffer.length < bodyEnd) break;
         const payload = buffer.subarray(bodyStart, bodyEnd).toString("utf8"); buffer = buffer.subarray(bodyEnd);
         try {
-          const message = JSON.parse(payload) as { id?: number; method?: unknown; params?: { diagnostics?: unknown; uri?: unknown }; result?: unknown; error?: { message?: string } };
+          const message = JSON.parse(payload) as { id?: number; method?: unknown; params?: { diagnostics?: unknown; token?: unknown; uri?: unknown; value?: { kind?: unknown; message?: unknown; percentage?: unknown } }; result?: unknown; error?: { message?: string } };
+          if (message.method === "window/workDoneProgress/create" && typeof message.id === "number") {
+            const response = JSON.stringify({ jsonrpc: "2.0", id: message.id, result: null });
+            child.stdin.write(`Content-Length: ${Buffer.byteLength(response)}\r\n\r\n${response}`);
+            continue;
+          }
+          if (message.method === "$/progress" && message.params?.token === "backgroundIndexProgress") {
+            const progress = message.params.value;
+            if (progress?.kind === "begin" || progress?.kind === "report") {
+              const detail = typeof progress.message === "string"
+                ? `Indexing C++ project… ${progress.message}`
+                : "Indexing C++ project…";
+              this.emit({ type: "language_server_progress", stage: "indexing", detail });
+            }
+            if (progress?.kind === "end") resolveIndex();
+            continue;
+          }
           if (message.method === "textDocument/publishDiagnostics" && typeof message.params?.uri === "string" && Array.isArray(message.params.diagnostics)) {
-            try { this.emit({ type: "language_server_diagnostics", file: fileURLToPath(message.params.uri), diagnostics: message.params.diagnostics }); } catch { /* Ignore malformed server URIs. */ }
+            try {
+              const file = fileURLToPath(message.params.uri);
+              entry.diagnostics.set(file, message.params.diagnostics);
+              this.emit({ type: "language_server_diagnostics", file, diagnostics: message.params.diagnostics });
+            } catch { /* Ignore malformed server URIs. */ }
             continue;
           }
           if (typeof message.id !== "number") continue;
@@ -356,14 +701,72 @@ export class CppService {
       }
     });
     child.once("error", fail);
-    child.once("close", () => { if (entry.status !== "stopped" && entry.status !== "failed") { entry.status = "stopped"; this.publish(entry); } });
-    await this.request(entry, "initialize", { processId: process.pid, rootUri: `file://${entry.root.replaceAll("\\", "/")}`, capabilities: { textDocument: { publishDiagnostics: { relatedInformation: true }, semanticTokens: { formats: ["relative"], multilineTokenSupport: false, overlappingTokenSupport: false, requests: { full: true }, tokenModifiers: ["declaration", "definition", "readonly", "static", "deprecated", "abstract", "async", "modification", "documentation", "defaultLibrary"], tokenTypes: ["namespace", "type", "class", "enum", "interface", "struct", "typeParameter", "parameter", "variable", "property", "enumMember", "event", "function", "method", "macro", "keyword", "modifier", "comment", "string", "number", "regexp", "operator"] } } } });
+    child.once("close", () => {
+      if (entry.status === "stopped" || entry.status === "failed") return;
+      const error = new Error("clangd exited while indexing");
+      entry.indexReject?.(error);
+      entry.indexReject = undefined;
+      entry.status = "stopped";
+      this.publish(entry);
+    });
+    await this.request(entry, "initialize", {
+      processId: process.pid,
+      rootUri: pathToFileURL(entry.root).href,
+      capabilities: {
+        window: { workDoneProgress: true },
+        workspace: {
+          didChangeWatchedFiles: { dynamicRegistration: false },
+          symbol: { resolveSupport: { properties: ["location.range"] } },
+        },
+        textDocument: {
+          callHierarchy: {},
+          declaration: { linkSupport: true },
+          definition: { linkSupport: true },
+          implementation: { linkSupport: true },
+          publishDiagnostics: { relatedInformation: true },
+          typeDefinition: { linkSupport: true },
+          typeHierarchy: {},
+          semanticTokens: { formats: ["relative"], multilineTokenSupport: false, overlappingTokenSupport: false, requests: { full: true }, tokenModifiers: ["declaration", "definition", "readonly", "static", "deprecated", "abstract", "async", "modification", "documentation", "defaultLibrary"], tokenTypes: ["namespace", "type", "class", "enum", "interface", "struct", "typeParameter", "parameter", "variable", "property", "enumMember", "event", "function", "method", "macro", "keyword", "modifier", "comment", "string", "number", "regexp", "operator"] },
+        },
+      },
+    });
     const initialized = JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }); child.stdin.write(`Content-Length: ${Buffer.byteLength(initialized)}\r\n\r\n${initialized}`);
+    const bootstrapUri = await this.openIndexBootstrapDocument(entry, commandsDir);
+    if (bootstrapUri) {
+      await indexComplete;
+      await this.enqueueNotification(entry, "textDocument/didClose", { textDocument: { uri: bootstrapUri } });
+    }
+    entry.indexReject = undefined;
     entry.status = "ready"; this.publish(entry);
     // The progress dialog must track the authoritative service lifecycle, not
     // merely the load RPC's return. This also covers a renderer IPC response
     // arriving after CMake/clangd have already completed successfully.
     this.emit({ type: "language_server_progress", stage: "ready", detail: "C++ language service is ready" });
+  }
+  private async openIndexBootstrapDocument(entry: Entry, commandsDir: string): Promise<string | undefined> {
+    type CompileCommand = { directory?: unknown; file?: unknown };
+    let commands: CompileCommand[];
+    try {
+      const value = JSON.parse(await readFile(join(commandsDir, "compile_commands.json"), "utf8")) as unknown;
+      commands = Array.isArray(value) ? value as CompileCommand[] : [];
+    } catch { commands = []; }
+    if (!commands.length) return undefined;
+    for (const command of commands) {
+      if (typeof command.file !== "string") continue;
+      const file = isAbsolute(command.file)
+        ? command.file
+        : resolve(typeof command.directory === "string" ? command.directory : entry.root, command.file);
+      let canonical: string;
+      try { canonical = await realpath(file); }
+      catch { continue; }
+      if (!isInside(entry.root, canonical)) continue;
+      const uri = pathToFileURL(canonical).href;
+      const opened = await this.enqueueNotification(entry, "textDocument/didOpen", {
+        textDocument: { uri, languageId: "cpp", version: 0, text: await readFile(canonical, "utf8") },
+      });
+      if (opened) return uri;
+    }
+    throw new Error("The C++ compilation database contains no readable project translation unit");
   }
   request(entry: Entry, method: string, params: unknown): Promise<unknown> {
     if (!entry.child || entry.child.killed || entry.child.stdin.destroyed || !entry.child.stdin.writable) return Promise.reject(new Error("clangd is not running"));
@@ -390,13 +793,26 @@ export class CppService {
 // by LanguageServerHost. Keeping the protocol here makes the C++ lifecycle
 // independent of Electron's backend: the backend only forks this process and
 // forwards opaque method calls/events.
-type WorkerRequest = { args?: unknown[]; id: number; method?: unknown; type?: unknown };
+type WorkerRequest = { args?: unknown[]; changes?: unknown; id?: unknown; method?: unknown; type?: unknown };
 type WorkerResponse = { error?: string; id: number; result?: unknown; type: "response" };
 
 if (typeof process.send === "function") {
   let service: CppService | undefined;
   const reply = (response: WorkerResponse) => process.send?.(response);
   process.on("message", (message: WorkerRequest) => {
+    if (message.type === "workspace-files-changed") {
+      if (!service || !Array.isArray(message.changes)) return;
+      const changes = message.changes.flatMap((change): WorkspaceFileChange[] => {
+        if (!change || typeof change !== "object") return [];
+        const value = change as { path?: unknown; type?: unknown };
+        return typeof value.path === "string" &&
+          (value.type === 1 || value.type === 2 || value.type === 3)
+          ? [{ path: value.path, type: value.type }]
+          : [];
+      });
+      service.workspaceFilesChanged(changes);
+      return;
+    }
     if (message.type !== "request" || typeof message.id !== "number" || typeof message.method !== "string") return;
     void (async () => {
       try {
@@ -418,6 +834,7 @@ if (typeof process.send === "function") {
           case "restart": result = await service.restart(String(args[0] ?? "")); break;
           case "cancel": service.cancel(); break;
           case "terminalCommand": result = await service.terminalCommand(String(args[0] ?? ""), String(args[1] ?? "")); break;
+          case "skill": result = await service.skill((args[0] && typeof args[0] === "object" ? args[0] : {}) as CppSkillRequest); break;
           case "lsp": result = await service.lsp(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
           case "notify": result = await service.notify(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
           case "shutdown": service.shutdown(); break;

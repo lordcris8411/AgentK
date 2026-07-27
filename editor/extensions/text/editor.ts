@@ -536,6 +536,14 @@ defineEditor((host, initial) => {
     markSaved(content) {
       saved = content;
       host.reportDirty(model.getValue() !== saved);
+      if (cpp && cppDocumentOpened) {
+        languageSync = languageSync.catch(() => undefined).then(() =>
+          host.languageRequest("textDocument/didSave", {
+            textDocument: { uri: model.uri.toString() },
+            text: content,
+          }).then(() => undefined).catch(() => undefined),
+        );
+      }
     },
     navigate(line, column) {
       const targetLine = Math.max(1, Math.min(line, model.getLineCount()));

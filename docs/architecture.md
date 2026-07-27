@@ -106,6 +106,10 @@ Windows/Linux x64, verifies SHA-256 checksums, stores them in application cache,
 environment to generate CMake metadata outside the project. clangd starts only for explicitly loaded projects. The Editor bridge forwards
 optional semantic requests by language without importing C++ logic into the host or text Editor.
 
+The bundled C++ Language Skill is loaded into Pi through its public Skill interface. Its tool request crosses Pi's Extension UI
+channel back into Electron, then reaches the same trusted `cpp-clangd` worker that owns the UI's loaded-project state. Pi never
+launches a second clangd instance, and queries cannot implicitly load a workspace.
+
 See [Native language-extension protocol](language-server-plugin.md).
 
 ## Credentials and security

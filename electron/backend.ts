@@ -44,6 +44,7 @@ import {
 } from "./file-formats.js";
 import { installSkillHub, previewSkillHub } from "./skill-hub.js";
 import { LanguageServerRegistry } from "./language-server-registry.js";
+import type { WorkspaceFileChange } from "./language-server-host.js";
 import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
 
 export interface DesktopBackendOptions {
@@ -80,6 +81,8 @@ export class DesktopBackend {
   private workspaceWatcher?: FSWatcher;
   private workspaceWatchRoot?: string;
   private readonly workspaceWatchTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly workspaceLanguageChanges = new Map<string, WorkspaceFileChange>();
+  private workspaceLanguageChangeTimer?: ReturnType<typeof setTimeout>;
 
   constructor(options: DesktopBackendOptions) {
     this.options = options;
@@ -128,6 +131,12 @@ export class DesktopBackend {
         directory: dirname(plugin.path),
         id: plugin.id,
       })),
+      firstPartyLanguageServerSkills: this.languageServers.list()
+        .filter((plugin) => Boolean(plugin.skill))
+        .map((plugin) => ({
+          directory: join(this.options.firstPartyLanguageServerPluginsSource, plugin.id),
+          id: plugin.id,
+        })),
       launch: this.piLaunch,
       minimum: settings.workerPoolSize,
       permissionExtensionSource: this.options.permissionExtensionSource,
@@ -300,7 +309,11 @@ export class DesktopBackend {
       case "project_context":
         return this.files.projectContext(requiredString(args.root, "root"));
       case "directory_tree":
-        return this.files.directoryTree(requiredString(args.root, "root"), requiredString(args.path, "path"));
+        return this.files.directoryTree(
+          requiredString(args.root, "root"),
+          requiredString(args.path, "path"),
+          requiredDirectoryDepth(args.depth),
+        );
       case "browse_directories": {
         const path = optionalString(args.path) ?? homedir();
         const entries = readdirSync(path, { withFileTypes: true });
@@ -399,6 +412,23 @@ export class DesktopBackend {
     this.workspaceWatcher?.close(); this.workspaceWatcher = undefined; this.workspaceWatchRoot = undefined;
     for (const timer of this.workspaceWatchTimers.values()) clearTimeout(timer);
     this.workspaceWatchTimers.clear();
+    if (this.workspaceLanguageChangeTimer) clearTimeout(this.workspaceLanguageChangeTimer);
+    this.workspaceLanguageChangeTimer = undefined;
+    this.workspaceLanguageChanges.clear();
+  }
+
+  private queueLanguageServerFileChange(change: WorkspaceFileChange): void {
+    const previous = this.workspaceLanguageChanges.get(change.path);
+    const merged = mergeWorkspaceFileChange(previous, change);
+    if (merged) this.workspaceLanguageChanges.set(change.path, merged);
+    else this.workspaceLanguageChanges.delete(change.path);
+    if (this.workspaceLanguageChangeTimer) return;
+    this.workspaceLanguageChangeTimer = setTimeout(() => {
+      this.workspaceLanguageChangeTimer = undefined;
+      const changes = [...this.workspaceLanguageChanges.values()];
+      this.workspaceLanguageChanges.clear();
+      this.languageServers.workspaceFilesChanged(changes);
+    }, 120);
   }
 
   private async watchWorkspace(rootInput?: string): Promise<void> {
@@ -407,7 +437,7 @@ export class DesktopBackend {
     const root = await realpath(rootInput);
     this.workspaceWatchRoot = root;
     try {
-      this.workspaceWatcher = watch(root, { recursive: true }, (_kind, name) => {
+      this.workspaceWatcher = watch(root, { recursive: true }, (kind, name) => {
         if (!name || !this.workspaceWatchRoot) return;
         const absolute = resolve(root, String(name));
         if (!isPathInside(root, absolute)) return;
@@ -415,7 +445,12 @@ export class DesktopBackend {
         const previous = this.workspaceWatchTimers.get(path); if (previous) clearTimeout(previous);
         this.workspaceWatchTimers.set(path, setTimeout(() => {
           this.workspaceWatchTimers.delete(path);
-          if (this.workspaceWatchRoot === root) this.options.emit({ type: "workspace_file_changed", root, path });
+          if (this.workspaceWatchRoot !== root) return;
+          const changeType: WorkspaceFileChange["type"] = kind === "change"
+            ? 2
+            : existsSync(absolute) ? 1 : 3;
+          this.options.emit({ type: "workspace_file_changed", root, path, kind, changeType });
+          this.queueLanguageServerFileChange({ path: absolute, type: changeType });
         }, 80));
       });
       this.workspaceWatcher.on("error", (cause) => this.options.emit({ type: "workspace_watch_error", root, error: String(cause) }));
@@ -596,6 +631,25 @@ function requiredNumber(value: unknown, name: string): number {
   if (typeof value !== "number" || !Number.isFinite(value))
     throw new Error(`${name} must be a number`);
   return value;
+}
+
+function requiredDirectoryDepth(value: unknown): 1 | 2 {
+  if (value === 1 || value === 2) return value;
+  throw new Error("depth must be 1 or 2");
+}
+
+function mergeWorkspaceFileChange(
+  previous: WorkspaceFileChange | undefined,
+  next: WorkspaceFileChange,
+): WorkspaceFileChange | undefined {
+  if (!previous) return next;
+  // A short-lived file that was created and removed before the batch is
+  // invisible to consumers. Delete+create is an atomic replacement/change.
+  if (previous.type === 1 && next.type === 3) return undefined;
+  if (previous.type === 3 && next.type === 1) return { ...next, type: 2 };
+  if (previous.type === 1 && next.type === 2) return previous;
+  if (next.type === 3) return next;
+  return next;
 }
 
 function terminalDimension(value: number, fallback: number): number {

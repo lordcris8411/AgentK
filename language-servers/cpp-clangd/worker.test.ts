@@ -7,6 +7,7 @@ import {
   cachedCompilationDatabase,
   cmakeConfigurationSnapshot,
   findProjectCompilationDatabase,
+  isCMakeConfigurationPath,
   prepareClangdCompilationDatabase,
   recordCompilationDatabase,
 } from "./cmake-cache.ts";
@@ -17,6 +18,22 @@ import {
   parseWindowsEnvironment,
   toolchainArchiveFormat,
 } from "./toolchain.ts";
+import { selectWorkspaceSymbols } from "./skill-symbols.ts";
+
+test("selects only exact clangd workspace symbols for semantic skill actions", () => {
+  const range = { start: { line: 2, character: 4 }, end: { line: 2, character: 9 } };
+  const symbols = [
+    { name: "render", containerName: "Renderer", kind: 6, location: { uri: "file:///project/render.cpp", range } },
+    { name: "rendererState", kind: 13, location: { uri: "file:///project/state.cpp", range } },
+    { name: "RenderState", kind: 23, location: { uri: "file:///project/state.hpp", range } },
+  ];
+
+  assert.deepEqual(selectWorkspaceSymbols(symbols, "Renderer::render").map((item) => item.name), ["render"]);
+  assert.deepEqual(selectWorkspaceSymbols(symbols, "render").map((item) => item.name), ["render"]);
+  assert.deepEqual(selectWorkspaceSymbols(symbols, "renderer"), []);
+  assert.deepEqual(selectWorkspaceSymbols(symbols, "RenderState", true).map((item) => item.name), ["RenderState"]);
+  assert.deepEqual(selectWorkspaceSymbols(symbols, "render", true), []);
+});
 
 test("uses the standard Visual Studio Installer path when vswhere is not discoverable", () => {
   assert.equal(DEFAULT_VSWHERE_PATH, "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe");
@@ -97,6 +114,17 @@ test("fingerprints project CMake files but ignores generated build dependencies"
   assert.equal((await cmakeConfigurationSnapshot(root)).fingerprint, initial.fingerprint);
   await writeFile(join(root, "cmake", "options.cmake"), "set(EXAMPLE OFF)\n", "utf8");
   assert.notEqual((await cmakeConfigurationSnapshot(root)).fingerprint, initial.fingerprint);
+});
+
+test("classifies only project-owned CMake configuration changes", () => {
+  const root = join(tmpdir(), "agent-k-cmake-project");
+  assert.equal(isCMakeConfigurationPath(root, join(root, "CMakeLists.txt")), true);
+  assert.equal(isCMakeConfigurationPath(root, join(root, "cmake", "options.cmake")), true);
+  assert.equal(isCMakeConfigurationPath(root, join(root, "CMakePresets.json")), true);
+  assert.equal(isCMakeConfigurationPath(root, join(root, "src", "main.cpp")), false);
+  assert.equal(isCMakeConfigurationPath(root, join(root, "build", "_deps", "CMakeLists.txt")), false);
+  assert.equal(isCMakeConfigurationPath(root, join(root, ".cache", "generated.cmake")), false);
+  assert.equal(isCMakeConfigurationPath(root, join(root, "..", "CMakeLists.txt")), false);
 });
 
 test("persists the CMake fingerprint for Agent K compilation database caches", async (context) => {

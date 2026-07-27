@@ -10,7 +10,7 @@ const electronExecutable = windows
   ? join(root, "node_modules", "electron", "dist", "electron.exe")
   : bin("electron");
 const tsc = join(root, "node_modules", "typescript", "bin", "tsc");
-const vite = join(root, "node_modules", "vite", "bin", "vite.js");
+const viteDev = join(root, "script", "vite-dev.mjs");
 
 function run(command, args, options = {}) {
   return spawn(command, args, {
@@ -56,7 +56,9 @@ if (languageServerBuildCode !== 0) process.exit(Number(languageServerBuildCode) 
 // If it is terminated together with Electron on Windows, that mode can leak
 // back to PowerShell (Backspace then prints as ^H). It only needs stdout and
 // stderr for this launcher, so deliberately give it no console input handle.
-const viteProcess = run(process.execPath, [vite, "--host", "127.0.0.1"], {
+// The dedicated launcher closes Vite if this process disappears before its
+// normal finally block can run, preventing an orphan from retaining port 1420.
+const viteProcess = run(process.execPath, [viteDev, String(process.pid)], {
   detached: !windows,
   stdio: ["ignore", "inherit", "inherit"],
 });

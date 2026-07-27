@@ -300,6 +300,12 @@ GCC/Clang toolchain. Windows accepts `CC`/`CXX`, Clang, MinGW, or MSVC; when nec
 `vswhere` and initializes `VsDevCmd`. Missing compiler prerequisites produce an explicit error rather than downloading an
 incomplete full LLVM SDK. clangd runs in a separate process with background indexing and disk-backed PCH storage.
 
+The C++ Language Skill lets Pi check a named CMake workspace's load state and query exact-symbol references, definitions,
+declarations, implementations, hover information, diagnostics, workspace/document symbols, and call/type hierarchies through
+the already-running clangd worker. Queries never implicitly load a project, and lifecycle operations are idempotent so Pi can
+keep useful workspaces loaded instead of repeatedly configuring and indexing them. For semantic C++ questions this path takes
+priority over shell text search; builds, tests, execution, Git, and explicitly textual searches continue to use the terminal.
+
 See [Native language-extension protocol](docs/language-server-plugin.md).
 
 ### Extension authoring from Agent K
@@ -695,6 +701,11 @@ Ninja 1.12.1 和独立 clangd 22.1.6，校验 SHA-256 后存入私有缓存。ZI
 CMake 元数据在源码树之外生成，并使用项目环境中的编译器。Linux 使用已配置的 GCC/Clang；Windows 支持 `CC`/`CXX`、Clang、
 MinGW 或 MSVC，必要时通过 `vswhere` 发现 Visual Studio Build Tools 并初始化 `VsDevCmd`。如果缺少编译器，会返回明确错误，
 而不是下载仍不完整的完整 LLVM SDK。clangd 在独立进程中运行，启用后台索引并把 PCH 保存在磁盘。
+
+C++ Language Skill 可让 Pi 检查指定 CMake 工作区的加载状态，并通过已经运行的 clangd worker 查询精确符号的引用、定义、声明、
+实现、悬浮信息、诊断、工作区/文档符号以及调用/类型层级。查询不会隐式加载工程；生命周期操作具有幂等性，因此 Pi 可以保持有用
+的工作区处于加载状态，而不会反复执行 CMake 配置与 clangd 索引。
+对于 C++ 语义问题，该路径优先于 Shell 文本搜索；编译、测试、运行、Git 和明确的文本搜索仍直接使用终端。
 
 详见[原生语言扩展协议](docs/language-server-plugin.md)。
 

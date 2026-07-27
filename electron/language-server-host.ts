@@ -27,6 +27,10 @@ type WorkerRequest = { args?: unknown[]; id: number; type: "request"; method: st
 type WorkerResponse = { error?: string; id: number; result?: unknown; type: "response" };
 type WorkerEvent = { event: Record<string, unknown>; type: "event" };
 type WorkerMessage = WorkerResponse | WorkerEvent;
+export type WorkspaceFileChange = {
+  path: string;
+  type: 1 | 2 | 3;
+};
 
 /** Generic process supervisor and RPC broker for native language plugins. */
 export class LanguageServerHost {
@@ -69,6 +73,20 @@ export class LanguageServerHost {
     if (child.connected) child.send({ id: 0, method: "shutdown", type: "request" } satisfies WorkerRequest, () => undefined);
     child.disconnect();
     child.kill();
+  }
+
+  workspaceFilesChanged(changes: WorkspaceFileChange[]): void {
+    const child = this.child;
+    if (!changes.length || !child?.connected) return;
+    // File watching is an optional worker capability. A plugin that does not
+    // consume this one-way message remains completely independent from the
+    // implementations that do.
+    try {
+      child.send({ changes, type: "workspace-files-changed" }, () => undefined);
+    } catch {
+      // The worker may disconnect between the connected check and send while
+      // a project is intentionally being unloaded or the app is shutting down.
+    }
   }
 
   private async ensureWorker(): Promise<void> {

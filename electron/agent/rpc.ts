@@ -52,6 +52,7 @@ export interface RpcBridgeOptions {
   bundledExtensionsDirectory: string;
   bundledSkillsDirectory: string;
   firstPartyEditorExtensions: Array<{ directory: string; id: string }>;
+  firstPartyLanguageServerSkills: Array<{ directory: string; id: string }>;
   cwd: string;
   launch: PiLaunch;
   permissionExtensionSource: string;
@@ -237,6 +238,15 @@ export class RpcBridge {
     for (const editorExtension of options.firstPartyEditorExtensions) {
       if (disabledEditorSkills.has(editorExtension.id)) continue;
       args.push("--skill", editorExtension.directory);
+    }
+    const disabledLanguageServerSkills = new Set([
+      ...asArray(clientSettings.disabledLanguageServers),
+      ...asArray(clientSettings.disabledLanguageServerSkills),
+    ].filter((id): id is string => typeof id === "string"));
+    for (const languageServerSkill of options.firstPartyLanguageServerSkills) {
+      if (disabledLanguageServerSkills.has(languageServerSkill.id)) continue;
+      if (!existsSync(join(languageServerSkill.directory, "SKILL.md"))) continue;
+      args.push("--skill", languageServerSkill.directory);
     }
 
     let child: ChildProcessWithoutNullStreams;
@@ -494,6 +504,7 @@ function sessionTitlePrompt(message: string | undefined): string | undefined {
   if (!message) return undefined;
   const fileEditorContext = /\s*<agent_k_file_editor>[\s\S]*?<\/agent_k_file_editor>\s*$/u;
   const fileFormatContext = /\s*<agent_k_file_format>[\s\S]*?<\/agent_k_file_format>\s*$/u;
+  const languageServicesContext = /\s*<agent_k_language_services>[\s\S]*?<\/agent_k_language_services>\s*$/u;
   const attachedFilesContext = /\s*<attached_files>[\s\S]*?<\/attached_files>(?:\s*Use the available file tools to inspect these local files when needed\.)?\s*$/u;
   const leadingSkill = /^\s*<skill\b[^>]*>[\s\S]*?<\/skill>\s*/u;
   let visible = message;
@@ -503,6 +514,7 @@ function sessionTitlePrompt(message: string | undefined): string | undefined {
     visible = visible
       .replace(fileEditorContext, "")
       .replace(fileFormatContext, "")
+      .replace(languageServicesContext, "")
       .replace(attachedFilesContext, "");
   } while (visible !== previous);
   return visible.replace(leadingSkill, "").replace(/\s+/g, " ").trim() || undefined;

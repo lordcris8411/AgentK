@@ -42,6 +42,16 @@ test("hides attachment and editor context together", () => {
   );
 });
 
+test("hides authoritative language-service context from user messages", () => {
+  assert.equal(
+    displayUserContent(
+      "user",
+      'SceneLight 在哪里使用？\n\n<agent_k_language_services>\n- C++ CMake workspace "vulkan_renderer" is loaded and clangd is ready.\n</agent_k_language_services>',
+    ),
+    "SceneLight 在哪里使用？",
+  );
+});
+
 test("keeps a useful label when a skill was invoked without arguments", () => {
   assert.equal(
     displayUserContent(

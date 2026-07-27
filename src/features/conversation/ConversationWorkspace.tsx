@@ -14,11 +14,12 @@ import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import type { SessionSummary } from "../../lib/desktop";
+import type { LanguageServerProject, SessionSummary } from "../../lib/desktop";
 import { desktop } from "../../lib/desktop";
 import { stopDampedScrolling } from "../../lib/dampedScrolling";
 import { desktopWindow, platform } from "../../lib/platform";
 import type { ReviewCall } from "./ReviewPanel";
+import { highlightCode } from "./codeHighlight";
 import { displayUserContent } from "./messageContent";
 import { useSettings } from "../settings/SettingsContext";
 import {
@@ -28,6 +29,91 @@ import {
 } from "../extensions/ExtensionUiContext";
 
 type ToolCall = { id?: string; name: string; args: Record<string, unknown> };
+
+function normalizedWorkspacePath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/\/+$/u, "").toLocaleLowerCase("en-US");
+}
+
+function projectBelongsToWorkspace(project: LanguageServerProject, cwd: string): boolean {
+  const workspace = normalizedWorkspacePath(cwd);
+  const root = normalizedWorkspacePath(project.root);
+  return root === workspace || root.startsWith(`${workspace}/`);
+}
+
+function languageServiceContext(projects: LanguageServerProject[], cwd: string): string {
+  const cpp = projects.filter((project) =>
+    project.languageServerId === "cpp-clangd" &&
+    project.status === "ready" &&
+    projectBelongsToWorkspace(project, cwd),
+  );
+  if (!cpp.length) return "";
+  return `<agent_k_language_services>
+Authoritative Agent K language-service state for this request:
+${cpp.map((project) => `- C++ CMake workspace ${JSON.stringify(project.name)} is loaded and clangd is ready.`).join("\n")}
+
+For a semantic C++ question about a symbol's references, definition, declaration, type, implementation, hover information, diagnostics, call hierarchy, type hierarchy, or indexed symbols, you MUST use agent_k_cpp_language_server before any bash, grep, rg, findstr, compiler-output scraping, or custom Clang command. First call action "status" with the workspace name, then call the appropriate semantic action. Do not replace a clangd query with text search. Shell remains appropriate for builds, tests, execution, Git operations, and explicitly textual or regular-expression searches.
+</agent_k_language_services>`;
+}
+
+const CODE_LANGUAGE_ALIASES: Record<string, string> = {
+  "c++": "cpp",
+  cxx: "cpp",
+  cs: "csharp",
+  docker: "dockerfile",
+  h: "cpp",
+  hpp: "cpp",
+  html: "xml",
+  js: "javascript",
+  jsx: "javascript",
+  md: "markdown",
+  ps1: "powershell",
+  py: "python",
+  rs: "rust",
+  sh: "bash",
+  shell: "bash",
+  ts: "typescript",
+  tsx: "typescript",
+  vue: "xml",
+  yml: "yaml",
+};
+
+const CODE_LANGUAGE_LABELS: Record<string, string> = {
+  bash: "Shell",
+  c: "C",
+  cmake: "CMake",
+  cpp: "C++",
+  csharp: "C#",
+  css: "CSS",
+  diff: "Diff",
+  dockerfile: "Dockerfile",
+  glsl: "GLSL",
+  go: "Go",
+  ini: "INI",
+  java: "Java",
+  javascript: "JavaScript",
+  json: "JSON",
+  kotlin: "Kotlin",
+  lua: "Lua",
+  makefile: "Makefile",
+  markdown: "Markdown",
+  objectivec: "Objective-C",
+  perl: "Perl",
+  php: "PHP",
+  plaintext: "Plain text",
+  powershell: "PowerShell",
+  python: "Python",
+  r: "R",
+  ruby: "Ruby",
+  rust: "Rust",
+  scss: "SCSS",
+  sql: "SQL",
+  swift: "Swift",
+  typescript: "TypeScript",
+  vbnet: "Visual Basic",
+  wasm: "WebAssembly",
+  xml: "HTML / XML",
+  yaml: "YAML",
+};
 type ModelOption = {
   provider: string;
   id: string;
@@ -1208,6 +1294,28 @@ function reactNodeText(node: ReactNode): string {
   return "";
 }
 
+function markdownCodeDetails(children?: ReactNode) {
+  const codeElement = isValidElement<{ children?: ReactNode; className?: string }>(children)
+    ? children
+    : Array.isArray(children)
+      ? children.find((child) => isValidElement<{ children?: ReactNode; className?: string }>(child))
+      : undefined;
+  const className = codeElement?.props.className;
+  const declaredLanguage = className?.match(/(?:^|\s)language-([^\s]+)/)?.[1]?.toLowerCase();
+  const language = declaredLanguage
+    ? CODE_LANGUAGE_ALIASES[declaredLanguage] ?? declaredLanguage
+    : undefined;
+  const code = reactNodeText(codeElement?.props.children ?? children).replace(/\n$/, "");
+  return {
+    className,
+    code,
+    language,
+    label: language
+      ? CODE_LANGUAGE_LABELS[language] ?? declaredLanguage ?? language
+      : undefined,
+  };
+}
+
 function MarkdownCodeBlock({
   children,
   className,
@@ -1220,33 +1328,53 @@ function MarkdownCodeBlock({
   onCopyError(message: string): void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [highlighted, setHighlighted] = useState<string>();
   const resetTimer = useRef<number | undefined>(undefined);
+  const code = useMemo(() => markdownCodeDetails(children), [children]);
+  useEffect(() => {
+    let disposed = false;
+    setHighlighted(undefined);
+    if (code.language) void highlightCode(code.code, code.language).then((value) => {
+      if (!disposed) setHighlighted(value);
+    });
+    return () => { disposed = true; };
+  }, [code.code, code.language]);
   useEffect(() => () => {
     if (resetTimer.current !== undefined) window.clearTimeout(resetTimer.current);
   }, []);
   return (
     <div className="message-code-block">
-      <button
-        aria-label={en ? "Copy code" : "复制代码"}
-        className={copied ? "is-copied" : undefined}
-        onClick={() => {
-          const text = reactNodeText(children).replace(/\n$/, "");
-          void platform.copyText(text).then(() => {
-            setCopied(true);
-            if (resetTimer.current !== undefined)
-              window.clearTimeout(resetTimer.current);
-            resetTimer.current = window.setTimeout(() => setCopied(false), 1_400);
-          }).catch((cause) => onCopyError(String(cause)));
-        }}
-        title={en ? "Copy code" : "复制代码"}
-        type="button"
-      >
-        <i
-          aria-hidden="true"
-          className={`fa-${copied ? "solid fa-check" : "regular fa-copy"}`}
-        />
-      </button>
-      <pre className={className}>{children}</pre>
+      <header className="message-code-header">
+        <span>{code.label ?? (en ? "Code" : "代码")}</span>
+        <button
+          aria-label={en ? "Copy code" : "复制代码"}
+          className={copied ? "is-copied" : undefined}
+          onClick={() => {
+            void platform.copyText(code.code).then(() => {
+              setCopied(true);
+              if (resetTimer.current !== undefined)
+                window.clearTimeout(resetTimer.current);
+              resetTimer.current = window.setTimeout(() => setCopied(false), 1_400);
+            }).catch((cause) => onCopyError(String(cause)));
+          }}
+          title={en ? "Copy code" : "复制代码"}
+          type="button"
+        >
+          <i
+            aria-hidden="true"
+            className={`fa-${copied ? "solid fa-check" : "regular fa-copy"}`}
+          />
+          <span>{copied ? (en ? "Copied" : "已复制") : (en ? "Copy" : "复制")}</span>
+        </button>
+      </header>
+      <pre className={className}>
+        {highlighted !== undefined ? (
+          <code
+            className={`${code.className ?? ""} hljs`.trim()}
+            dangerouslySetInnerHTML={{ __html: highlighted }}
+          />
+        ) : <code className={code.className}>{code.code}</code>}
+      </pre>
     </div>
   );
 }
@@ -1509,13 +1637,12 @@ export function ConversationWorkspace({
   const autoScrollFrame = useRef<number | undefined>(undefined);
   const scrollMetricsFrame = useRef<number | undefined>(undefined);
   const scrollbarDragRef = useRef<{
-    maxScroll: number;
+    grabOffset: number;
     pointerId: number;
-    top: number;
-    trackHeight: number;
   } | undefined>(undefined);
   const scrollbarDragFrame = useRef<number | undefined>(undefined);
   const scrollbarDragTarget = useRef(0);
+  const scrollbarHideTimer = useRef<number | undefined>(undefined);
   const commitDraft = useCallback((value: string) => {
     if (draftCommitTimer.current !== undefined) {
       window.clearTimeout(draftCommitTimer.current);
@@ -2384,21 +2511,42 @@ export function ConversationWorkspace({
     setShowJumpToLatest(false);
     list.scrollTo({ top: list.scrollHeight, behavior });
   };
+  const clearScrollbarHideTimer = () => {
+    if (scrollbarHideTimer.current === undefined) return;
+    window.clearTimeout(scrollbarHideTimer.current);
+    scrollbarHideTimer.current = undefined;
+  };
+  const revealConversationScrollbar = () => {
+    const scrollbar = scrollbarRef.current;
+    if (!scrollbar) return;
+    scrollbar.classList.add("is-active");
+    clearScrollbarHideTimer();
+    if (scrollbarDragRef.current) return;
+    scrollbarHideTimer.current = window.setTimeout(() => {
+      scrollbarHideTimer.current = undefined;
+      scrollbarRef.current?.classList.remove("is-active");
+    }, 850);
+  };
   const updateScrollMetrics = (list = messageListRef.current) => {
     const scrollbar = scrollbarRef.current;
     if (!list || !scrollbar) return;
     const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
-    const height = Math.min(
-      100,
-      Math.max(5, (list.clientHeight / Math.max(list.scrollHeight, 1)) * 100),
-    );
     const thumb = scrollbar.firstElementChild as HTMLElement | null;
-    scrollbar.classList.toggle("is-visible", maxScroll > 1);
+    const hasOverflow = maxScroll > 1;
+    scrollbar.classList.toggle("has-overflow", hasOverflow);
+    if (!hasOverflow) {
+      clearScrollbarHideTimer();
+      scrollbar.classList.remove("is-active", "is-dragging");
+    }
     if (thumb) {
-      thumb.style.height = `${height}%`;
-      thumb.style.top = `${
-        maxScroll > 0 ? (list.scrollTop / maxScroll) * (100 - height) : 0
-      }%`;
+      const trackHeight = scrollbar.clientHeight;
+      const height = Math.min(
+        trackHeight,
+        Math.max(28, trackHeight * (list.clientHeight / Math.max(list.scrollHeight, 1))),
+      );
+      const travel = Math.max(0, trackHeight - height);
+      thumb.style.height = `${height}px`;
+      thumb.style.top = `${maxScroll > 0 ? (list.scrollTop / maxScroll) * travel : 0}px`;
     }
   };
   const scheduleScrollMetrics = (list = messageListRef.current) => {
@@ -2480,6 +2628,7 @@ export function ConversationWorkspace({
         window.cancelAnimationFrame(scrollbarDragFrame.current);
         scrollbarDragFrame.current = undefined;
       }
+      clearScrollbarHideTimer();
     };
   }, []);
   useEffect(() => {
@@ -2758,7 +2907,7 @@ export function ConversationWorkspace({
     const filePaths = activeAttachments
       .filter((attachment) => attachment.kind !== "image")
       .map((attachment) => attachment.path);
-    const withFileReferences = (message: string) => {
+    const withFileReferences = (message: string, languageProjects: LanguageServerProject[]) => {
       const additions = [
         `<agent_k_file_editor>
 To open, show, display, or preview a workspace file in Agent K's editor, you MUST call agent_k_file_editor with action "open" and the requested workspace path before replying. Do not substitute the read tool for an explicit request to open or display a file. Use read only when the user asks for the file's contents or when reading is necessary after opening it. The open action is available even when no editor tab is currently active.
@@ -2771,6 +2920,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
         fileFormatContext
           ? `<agent_k_file_format>\nThe active Agent K ${fileFormatContext.name} editor is showing ${JSON.stringify(fileFormatContext.path)}. The agent_k_file_editor tool always supports open for a workspace file path, run-web-project for a project directory with an npm dev script, capture-preview for the currently visible HTML or web-project preview, and get-preview-console for the current web-project preview. For the active editor,${fileFormatContext.capabilities.length ? ` use only one of these additional capabilities:\n${fileFormatContext.capabilities.map((capability) => `- ${capability.id}: ${capability.description}${capability.parameters ? `; parameters ${JSON.stringify(capability.parameters)}` : ""}`).join("\n")}` : " no additional editor actions are available."}\n</agent_k_file_format>`
           : "",
+        languageServiceContext(languageProjects, session.cwd),
       ].filter(Boolean);
       return additions.length
         ? `${message}${message.trim() ? "\n\n" : ""}${additions.join("\n\n")}`
@@ -2786,7 +2936,8 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
     try {
       const modelMessage = await beforeSend(value);
       if (modelMessage === false) return;
-      const outboundMessage = withFileReferences(running ? value : modelMessage);
+      const languageProjects = await desktop.listLanguageServerProjects().catch(() => []);
+      const outboundMessage = withFileReferences(running ? value : modelMessage, languageProjects);
       commitDraft("");
       setAttachments([]);
       stickToBottom.current = true;
@@ -3193,6 +3344,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
             stickToBottom.current = isAtBottom;
             setShowJumpToLatest(!isAtBottom);
             scheduleScrollMetrics(element);
+            revealConversationScrollbar();
           }}
           ref={messageListRef}
         >
@@ -3321,36 +3473,45 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
           aria-hidden="true"
           className="conversation-scrollbar"
           onPointerDown={(event) => {
-            event.currentTarget.setPointerCapture(event.pointerId);
             const list = messageListRef.current;
-            if (!list) return;
-            const rect = event.currentTarget.getBoundingClientRect();
+            const scrollbar = event.currentTarget;
+            const thumb = scrollbar.firstElementChild as HTMLElement | null;
+            if (!list || !thumb) return;
+            event.preventDefault();
+            clearScrollbarHideTimer();
+            scrollbar.classList.add("is-active", "is-dragging");
+            scrollbar.setPointerCapture(event.pointerId);
+            const thumbBounds = thumb.getBoundingClientRect();
+            const grabOffset = event.target === thumb
+              ? event.clientY - thumbBounds.top
+              : thumbBounds.height / 2;
             scrollbarDragRef.current = {
-              maxScroll: Math.max(0, list.scrollHeight - list.clientHeight),
+              grabOffset,
               pointerId: event.pointerId,
-              top: rect.top,
-              trackHeight: rect.height,
             };
-            const ratio = Math.max(
-              0,
-              Math.min(1, (event.clientY - rect.top) / rect.height),
-            );
-            list.scrollTop = ratio * scrollbarDragRef.current.maxScroll;
+            const trackBounds = scrollbar.getBoundingClientRect();
+            const travel = Math.max(0, trackBounds.height - thumbBounds.height);
+            const thumbTop = Math.max(0, Math.min(travel, event.clientY - trackBounds.top - grabOffset));
+            list.scrollTop = travel > 0
+              ? (thumbTop / travel) * Math.max(0, list.scrollHeight - list.clientHeight)
+              : 0;
           }}
           onPointerMove={(event) => {
             if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
             const list = messageListRef.current;
             const drag = scrollbarDragRef.current;
-            if (!list || !drag || drag.pointerId !== event.pointerId) return;
-            const ratio = Math.max(
-              0,
-              Math.min(1, (event.clientY - drag.top) / drag.trackHeight),
-            );
+            const thumb = event.currentTarget.firstElementChild as HTMLElement | null;
+            if (!list || !drag || !thumb || drag.pointerId !== event.pointerId) return;
+            const trackBounds = event.currentTarget.getBoundingClientRect();
+            const thumbBounds = thumb.getBoundingClientRect();
+            const travel = Math.max(0, trackBounds.height - thumbBounds.height);
+            const thumbTop = Math.max(0, Math.min(travel, event.clientY - trackBounds.top - drag.grabOffset));
             // Streaming tool output can grow while the thumb is held. The
-            // maximum captured on pointer-down would then only reach the old
-            // halfway point, even when the pointer is at the bottom.
+            // maximum and thumb size therefore come from the current layout.
             scrollbarDragTarget.current =
-              ratio * Math.max(0, list.scrollHeight - list.clientHeight);
+              travel > 0
+                ? (thumbTop / travel) * Math.max(0, list.scrollHeight - list.clientHeight)
+                : 0;
             if (scrollbarDragFrame.current !== undefined) return;
             scrollbarDragFrame.current = window.requestAnimationFrame(() => {
               scrollbarDragFrame.current = undefined;
@@ -3359,8 +3520,18 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
             });
           }}
           onPointerUp={(event) => {
-            if (scrollbarDragRef.current?.pointerId === event.pointerId)
+            if (scrollbarDragRef.current?.pointerId === event.pointerId) {
               scrollbarDragRef.current = undefined;
+              event.currentTarget.classList.remove("is-dragging");
+              revealConversationScrollbar();
+            }
+          }}
+          onPointerCancel={(event) => {
+            if (scrollbarDragRef.current?.pointerId === event.pointerId) {
+              scrollbarDragRef.current = undefined;
+              event.currentTarget.classList.remove("is-dragging");
+              revealConversationScrollbar();
+            }
           }}
           ref={scrollbarRef}
         >

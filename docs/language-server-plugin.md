@@ -83,7 +83,7 @@ example-lsp/
 | `projectMarkers` | yes | Direct child names used by the generic file tree to recognize a loadable project directory. |
 | `projectMenu` | no | Localized load/unload labels and optional project actions. Each action maps an `id` and `label` to an opaque worker `method`. |
 | `editorContribution` | no | Describes semantic functionality attached to an existing Editor plugin. `version` must be `x.y.z`; `editorPluginId` identifies the reused file Editor. |
-| `skill` | no | Inline Skill frontmatter/body displayed by the language-extension manager and controlled by its Language Skill switch. It does not change worker privileges. |
+| `skill` | no | Inline Skill metadata/body displayed by the language-extension manager. For a bundled package with `SKILL.md`, the Language Skill switch also controls whether Agent K passes that package to Pi through public `--skill` loading. It does not grant worker privileges. |
 | `commands` | no | Slash-command contributions. API v1 supports `kind: "project-manager"`. |
 | `worker` | yes | Built `.js` file inside the same package. Absolute paths and traversal are rejected. |
 | `debugServer` | no | Declares a future/current DAP boundary and platform-specific adapter commands; declaration alone does not launch a debugger. |
@@ -107,6 +107,22 @@ Responses and events use:
 { type: "event", event: Record<string, unknown> }
 ```
 
+An already-running worker may also receive the optional one-way workspace
+notification below. Workers that do not implement filesystem synchronization
+can ignore it without replying:
+
+```ts
+{
+  type: "workspace-files-changed",
+  changes: Array<{ path: string; type: 1 | 2 | 3 }>
+}
+```
+
+The change types follow LSP `FileChangeType`: `1` created, `2` changed, and `3`
+deleted. Events come from the operating-system workspace watcher, so they also
+cover files written by Pi tools, shell commands, compilers, and external
+applications rather than only edits made inside an Agent K Editor.
+
 The first call is `initialize(cachePath)`. The host adds `languageServerId` to every emitted event and otherwise treats its
 contents as opaque. Shutdown resolves outstanding host requests, asks the worker to stop, disconnects IPC, and terminates the
 child.
@@ -122,6 +138,7 @@ Project-aware workers implement these generic methods:
 | `cancel()` | Cancel the active preparation/download/configuration operation. |
 | `trace()` | Return bounded diagnostic transport history for the project-manager trace UI. |
 | manifest action method | Return data expected by the generic action consumer; for example, `terminalCommand(root, relativePath)` returns a command for the project PTY. |
+| optional Skill method | A package may expose a high-level structured method used by its Pi-facing Skill; the C++ package uses `skill(request)`. The generic host treats its method name and payload as opaque. |
 | `lsp(file, method, params)` | Handle an Editor request routed by language and file. |
 | `notify(file, method, params)` | Handle an Editor notification such as `didOpen`, `didChange`, or `didClose`. |
 | `shutdown()` | Stop child services and release package state. |
@@ -154,9 +171,23 @@ directory outside the source tree with `CMAKE_EXPORT_COMPILE_COMMANDS=ON`, then 
 background indexing and disk-backed PCH storage. Project unload/restart and preparation cancellation are available
 from the file tree and project manager.
 
-The text Editor currently integrates document synchronization, diagnostics, completion, hover, semantic tokens, definition,
-declaration, and references for loaded C++ projects. The manifest's DAP adapters reserve WinDbg on Windows and LLDB/GDB on
-Linux/macOS, but no debug adapter is launched yet.
+Its Pi-facing `agent_k_cpp_language_server` tool names a CMake workspace rather than passing an arbitrary path. `status`,
+`load`, and `unload` provide an idempotent lifecycle; every semantic action rejects a workspace that is not loaded and ready.
+Semantic actions include exact-symbol references, definitions, declarations, type declarations, implementations, hover,
+workspace/document symbols, diagnostics, call hierarchy, and type hierarchy. The Skill explicitly keeps useful workspaces
+loaded instead of repeatedly paying CMake configuration and clangd indexing costs. In a ready workspace these semantic
+operations take priority over shell text searches; shell remains the direct path for builds, tests, execution, Git, and
+explicitly textual or regular-expression searches.
+
+The text Editor currently integrates document synchronization (including
+`didOpen`, versioned `didChange`, `didSave`, and `didClose`), diagnostics,
+completion, hover, semantic tokens, definition, declaration, and references for
+loaded C++ projects. The worker converts workspace watcher events to
+`workspace/didChangeWatchedFiles`; project-owned CMake configuration changes
+are coalesced and rebuild the compilation database before clangd restarts.
+Generated build/dependency CMake files do not trigger reconfiguration. The
+manifest's DAP adapters reserve WinDbg on Windows and LLDB/GDB on Linux/macOS,
+but no debug adapter is launched yet.
 
 ## Build and verification
 

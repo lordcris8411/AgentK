@@ -232,26 +232,32 @@ function pathIsWithin(path: string, parent: string) {
   );
 }
 function mergeFileTree(fresh: FileEntry, previous?: FileEntry): FileEntry {
-  if (!previous || fresh.path !== previous.path || !fresh.isDir) return fresh;
-  if (!fresh.loaded && previous.loaded)
-    return { ...fresh, children: previous.children, loaded: true };
-  if (!fresh.loaded || !previous.loaded) return fresh;
+  if (!previous || fresh.path !== previous.path || fresh.isDir !== previous.isDir)
+    return fresh;
+  if (!fresh.isDir)
+    return fresh.name === previous.name && fresh.loaded === previous.loaded
+      ? previous
+      : fresh;
+  if (!fresh.loaded && previous.loaded) return previous;
+  if (!fresh.loaded || !previous.loaded)
+    return fresh.name === previous.name &&
+      fresh.loaded === previous.loaded &&
+      fresh.children.length === previous.children.length
+      ? previous
+      : fresh;
   const previousChildren = new Map(
     previous.children.map((entry) => [entry.path, entry]),
   );
-  return {
-    ...fresh,
-    children: fresh.children.map((entry) =>
-      mergeFileTree(entry, previousChildren.get(entry.path)),
-    ),
-  };
-}
-function loadedDirectoryPaths(entry?: FileEntry): string[] {
-  if (!entry?.isDir || !entry.loaded) return [];
-  return [
-    ...(entry.path ? [entry.path] : []),
-    ...entry.children.flatMap(loadedDirectoryPaths),
-  ];
+  const children = fresh.children.map((entry) =>
+    mergeFileTree(entry, previousChildren.get(entry.path)),
+  );
+  if (
+    fresh.name === previous.name &&
+    fresh.loaded === previous.loaded &&
+    children.length === previous.children.length &&
+    children.every((entry, index) => entry === previous.children[index])
+  ) return previous;
+  return { ...fresh, children };
 }
 function replaceTreeEntry(
   tree: FileEntry,
@@ -260,12 +266,27 @@ function replaceTreeEntry(
 ): FileEntry {
   if (tree.path === path) return replacement;
   if (!tree.isDir) return tree;
-  return {
-    ...tree,
-    children: tree.children.map((entry) =>
-      replaceTreeEntry(entry, path, replacement),
-    ),
-  };
+  const children = tree.children.map((entry) =>
+    replaceTreeEntry(entry, path, replacement),
+  );
+  return children.every((entry, index) => entry === tree.children[index])
+    ? tree
+    : { ...tree, children };
+}
+function findTreeEntry(tree: FileEntry | undefined, path: string): FileEntry | undefined {
+  if (!tree) return undefined;
+  if (tree.path === path) return tree;
+  if (!tree.isDir) return undefined;
+  for (const child of tree.children) {
+    const found = findTreeEntry(child, path);
+    if (found) return found;
+  }
+  return undefined;
+}
+function parentDirectoryPath(path: string): string {
+  const normalized = path.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  const separator = normalized.lastIndexOf("/");
+  return separator < 0 ? "" : normalized.slice(0, separator);
 }
 const languageFor = (path: string) => {
   return languageIdFor(path);
@@ -654,7 +675,6 @@ export function InspectorPanel({
   const explorerWidthRef = useRef(explorerWidth);
   const explorerResizeFrame = useRef<number | undefined>(undefined);
   const pendingExplorerWidth = useRef<number | undefined>(undefined);
-  const refreshInFlight = useRef(new Set<string>());
   const currentRoot = useRef(root);
   const tabsRoot = useRef(root);
   const workspaceEditorStates = useRef(new Map<string, WorkspaceEditorState>());
@@ -770,49 +790,14 @@ export function InspectorPanel({
   }, [contextMenu]);
   const refresh = (silent = false) => {
     const targetRoot = root;
-    if (!targetRoot || refreshInFlight.current.has(targetRoot)) return;
-    refreshInFlight.current.add(targetRoot);
+    if (!targetRoot) return;
     if (!silent) setLoading(true);
     void desktop
       .tree(targetRoot)
-      .then(async (loaded) => {
+      .then((loaded) => {
         if (currentRoot.current !== targetRoot) return;
-        const previous = treeRef.current;
-        let nextTree = mergeFileTree(loaded, previous);
-        const loadedPaths = loadedDirectoryPaths(previous);
-        const refreshedDirectories = await Promise.all(
-          loadedPaths.map(async (path) => {
-            try {
-              return await desktop.directory(targetRoot, path);
-            } catch {
-              return undefined;
-            }
-          }),
-        );
-        if (currentRoot.current !== targetRoot) return;
-        for (const refreshed of refreshedDirectories) {
-          if (!refreshed) continue;
-          const priorDirectory = (() => {
-            let found: FileEntry | undefined;
-            const visit = (entry?: FileEntry) => {
-              if (!entry || found) return;
-              if (entry.path === refreshed.path) {
-                found = entry;
-                return;
-              }
-              entry.children.forEach(visit);
-            };
-            visit(previous);
-            return found;
-          })();
-          nextTree = replaceTreeEntry(
-            nextTree,
-            refreshed.path,
-            mergeFileTree(refreshed, priorDirectory),
-          );
-        }
         setTree((current) => {
-          const merged = mergeFileTree(nextTree, current);
+          const merged = mergeFileTree(loaded, current);
           treeRef.current = merged;
           return merged;
         });
@@ -822,7 +807,6 @@ export function InspectorPanel({
           onError(`无法读取项目文件：${String(cause)}`);
       })
       .finally(() => {
-        refreshInFlight.current.delete(targetRoot);
         if (!silent && currentRoot.current === targetRoot) setLoading(false);
       });
   };
@@ -847,9 +831,7 @@ export function InspectorPanel({
     treeRef.current = undefined;
     selectedEntryRef.current = undefined;
     setSelectedEntry(undefined);
-    refresh(false);
-    const interval = window.setInterval(() => refresh(true), 5_000);
-    return () => window.clearInterval(interval);
+    refresh();
   }, [root]);
   useEffect(() => {
     void desktop.watchWorkspace(root);
@@ -857,6 +839,55 @@ export function InspectorPanel({
   }, [root]);
   useEffect(() => {
     const normalize = (path: string) => path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
+    const pendingDirectories = new Set<string>();
+    let refreshTimer: number | undefined;
+    let refreshing = false;
+    let disposed = false;
+    const flushDirectoryRefreshes = async () => {
+      refreshTimer = undefined;
+      if (refreshing || disposed || !root) return;
+      const currentTree = treeRef.current;
+      const paths = [...pendingDirectories].filter((path) => {
+        const entry = findTreeEntry(currentTree, path);
+        return entry?.isDir && entry.loaded;
+      });
+      pendingDirectories.clear();
+      if (!paths.length) return;
+      refreshing = true;
+      try {
+        const refreshed = await Promise.all(paths.map(async (path) => {
+          try {
+            return await desktop.directory(root, path, 1);
+          } catch {
+            // A rename/delete event may make the old parent disappear before
+            // its coalesced refresh runs. Its surviving parent event will
+            // update the visible tree.
+            return undefined;
+          }
+        }));
+        if (disposed || currentRoot.current !== root) return;
+        setTree((current) => {
+          let next = current;
+          for (const fresh of refreshed) {
+            if (!fresh || !next) continue;
+            const previous = findTreeEntry(next, fresh.path);
+            if (!previous?.isDir || !previous.loaded) continue;
+            next = replaceTreeEntry(next, fresh.path, mergeFileTree(fresh, previous));
+          }
+          treeRef.current = next;
+          return next;
+        });
+      } finally {
+        refreshing = false;
+        if (!disposed && pendingDirectories.size && refreshTimer === undefined)
+          refreshTimer = window.setTimeout(() => void flushDirectoryRefreshes(), 120);
+      }
+    };
+    const scheduleDirectoryRefresh = (path: string) => {
+      pendingDirectories.add(parentDirectoryPath(path));
+      if (refreshTimer !== undefined || refreshing) return;
+      refreshTimer = window.setTimeout(() => void flushDirectoryRefreshes(), 120);
+    };
     const stop = desktop.onEvent((event) => {
       if (event.type === "advanced_search_progress" && event.root === root && typeof event.path === "string") {
         setAdvancedProgress(String(event.path));
@@ -864,6 +895,7 @@ export function InspectorPanel({
       }
       if (event.type !== "workspace_file_changed" || event.root !== root || typeof event.path !== "string" || !root) return;
       const path = event.path;
+      if (event.kind === "rename") scheduleDirectoryRefresh(path);
       const tab = tabsRef.current.find((candidate) => normalize(candidate.path) === normalize(path));
       if (!tab || tab.unsupported || tab.binary) return;
       void desktop.read(root, path).then((content) => {
@@ -876,11 +908,29 @@ export function InspectorPanel({
           return;
         }
         setTabs((currentTabs) => currentTabs.map((candidate) => normalize(candidate.path) === normalize(path) ? { ...candidate, content, externalChanged: false, saved: content } : candidate));
-        if (normalize(activePathRef.current ?? "") === normalize(path) && currentTab.format?.editor === "plugin")
-          pluginEditorRef.current?.setContent(content);
+        if (currentTab.format?.editor === "plugin") {
+          if (normalize(activePathRef.current ?? "") === normalize(path)) {
+            pluginEditorRef.current?.setContent(content);
+          } else {
+            // A cached iframe retains its own Monaco model while hidden. Drop
+            // only this clean inactive runtime so reopening the tab creates a
+            // fresh model from the externally modified disk contents.
+            const runtimePrefix = `${root}\0${currentTab.format.id}\0${currentTab.path}\0`;
+            setEditorRuntimeKeys((keys) =>
+              keys.filter((key) => !key.startsWith(runtimePrefix)),
+            );
+            editorRuntimeRecency.current = editorRuntimeRecency.current.filter(
+              (key) => !key.startsWith(runtimePrefix),
+            );
+          }
+        }
       }).catch(() => undefined);
     });
-    return stop;
+    return () => {
+      disposed = true;
+      stop();
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+    };
   }, [root]);
   useEffect(() => {
     const refreshFileFormats = () => {
