@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { createServer } from "node:net";
-import { existsSync, readdirSync, watch, type FSWatcher } from "node:fs";
-import { cp, readFile, realpath } from "node:fs/promises";
+import { constants, existsSync, readdirSync, watch, type FSWatcher } from "node:fs";
+import { access, cp, mkdir, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
@@ -145,6 +145,15 @@ export class DesktopBackend {
     switch (command) {
       case "get_runtime_info":
         return this.runtimeInfo();
+      case "get_cache_directory_info":
+        return { activePath: this.options.cachePath, defaultPath: join(this.options.appDataPath, "cache") };
+      case "validate_cache_directory": {
+        const path = requiredString(args.path, "path");
+        if (!isAbsolute(path)) throw new Error("Cache directory must be an absolute path");
+        await mkdir(path, { recursive: true });
+        await access(path, constants.W_OK);
+        return path;
+      }
       case "get_client_settings":
         return loadClientSettings(this.options.appDataPath);
       case "save_client_settings":

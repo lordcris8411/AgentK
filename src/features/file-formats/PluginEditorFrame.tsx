@@ -391,16 +391,15 @@ void (async () => {
     }, [path, plugin.id]);
 
     useEffect(() => {
-      let stop: (() => void) | undefined;
-      void desktop.onEvent((event) => {
+      const stop = desktop.onEvent((event) => {
         if (event.type !== "language_server_project") return;
         const project = event.project as { root?: unknown; status?: unknown } | undefined;
         if (project?.status !== "ready" || typeof project.root !== "string") return;
         const file = absolutePath.replaceAll("\\", "/").toLowerCase();
         const root = project.root.replaceAll("\\", "/").toLowerCase();
         if (file === root || file.startsWith(`${root}/`)) send("action", { id: "language-server-project-ready", parameters: { root: project.root, languageServerId: event.languageServerId } });
-      }).then((unlisten) => { stop = unlisten; });
-      return () => stop?.();
+      });
+      return stop;
     }, [absolutePath]);
 
     useEffect(() => {

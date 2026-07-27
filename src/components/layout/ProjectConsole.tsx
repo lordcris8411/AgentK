@@ -199,9 +199,7 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   }, [resolvedTheme]);
 
   useEffect(() => {
-    let stop: (() => void) | undefined;
-    let disposed = false;
-    void desktop.onProjectConsoleEvent((event) => {
+    const stop = desktop.onProjectConsoleEvent((event) => {
       const id = typeof event.id === "string" ? event.id : undefined;
       if (!id) return;
       if (event.type === "project_console_output" && typeof event.data === "string") {
@@ -228,14 +226,8 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
           `${enRef.current ? "Console input failed" : "控制台输入失败"}：${String(event.error ?? "")}`,
         );
       }
-    }).then((unlisten) => {
-      if (disposed) unlisten();
-      else stop = unlisten;
     });
-    return () => {
-      disposed = true;
-      stop?.();
-    };
+    return stop;
   }, []);
 
   useEffect(() => {

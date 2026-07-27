@@ -7,6 +7,14 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import extractZip from "extract-zip";
+import {
+  cachedCompilationDatabase,
+  cmakeConfigurationSnapshot,
+  describeCompilationDatabase,
+  findProjectCompilationDatabase,
+  prepareClangdCompilationDatabase,
+  recordCompilationDatabase,
+} from "./cmake-cache.js";
 import { DEFAULT_VSWHERE_PATH, managedToolchainArchives, managedToolchainMarker, parseWindowsEnvironment, toolchainArchiveFormat } from "./toolchain.js";
 
 export type CppProjectStatus = "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped";
@@ -249,18 +257,37 @@ export class CppService {
   private async configure(root: string, bin: string): Promise<{ commandsDir: string; environment: NodeJS.ProcessEnv }> {
     const platform = process.platform as "linux" | "win32";
     const key = createHash("sha256").update(root).update("\0").update(managedToolchainMarker(platform)).digest("hex"); const build = join(this.cachePath, "cpp-build", key);
-    await mkdir(build, { recursive: true }); const cmake = join(bin, process.platform === "win32" ? "cmake.exe" : "cmake");
-    if (!existsSync(cmake)) throw new Error("Managed CMake is unavailable");
+    const snapshot = await cmakeConfigurationSnapshot(root);
+    const projectCommands = await findProjectCompilationDatabase(root, snapshot);
+    const cachedCommands = projectCommands ? undefined : await cachedCompilationDatabase(build, snapshot);
     const environment = await this.cmakeEnvironment(bin);
-    await this.run(cmake, ["-S", root, "-B", build, "-G", "Ninja", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"], root, bin, environment);
-    const commands = join(build, "compile_commands.json");
-    if (!existsSync(commands)) throw new Error("CMake did not generate compile_commands.json");
-    // CMake writes -include-pch flags into its compilation database. This
-    // feature configures without building, so a newly configured project has
-    // no PCH yet. Retain an existing PCH by reference (never copy it); remove
-    // only missing PCH inputs while keeping CMake's wrapper header (-include).
-    await this.stripMissingPrecompiledHeaders(commands);
-    return { commandsDir: build, environment };
+    let sourceCommands = projectCommands ?? cachedCommands;
+    if (sourceCommands) {
+      this.emit({
+        type: "language_server_progress",
+        stage: "configuring",
+        detail: `Reusing compilation database from ${describeCompilationDatabase(root, sourceCommands)}\n`,
+      });
+    } else {
+      await mkdir(build, { recursive: true }); const cmake = join(bin, process.platform === "win32" ? "cmake.exe" : "cmake");
+      if (!existsSync(cmake)) throw new Error("Managed CMake is unavailable");
+      await this.run(cmake, ["-S", root, "-B", build, "-G", "Ninja", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"], root, bin, environment);
+      sourceCommands = join(build, "compile_commands.json");
+      if (!existsSync(sourceCommands)) throw new Error("CMake did not generate compile_commands.json");
+      // CMake writes -include-pch flags into its compilation database. This
+      // feature configures without building, so a newly configured project has
+      // no PCH yet. Retain an existing PCH by reference (never copy it); remove
+      // only missing PCH inputs while keeping CMake's wrapper header (-include).
+      await this.stripMissingPrecompiledHeaders(sourceCommands);
+      await recordCompilationDatabase(sourceCommands, snapshot);
+    }
+    const prepared = await prepareClangdCompilationDatabase(root, sourceCommands, join(this.cachePath, "cpp-index", key));
+    this.emit({
+      type: "language_server_progress",
+      stage: "configuring",
+      detail: `Prepared ${prepared.included} project translation units${prepared.excluded ? `; excluded ${prepared.excluded} dependency units` : ""}\n`,
+    });
+    return { commandsDir: dirname(prepared.commands), environment };
   }
   private async stripMissingPrecompiledHeaders(commandsPath: string): Promise<void> {
     type Command = { arguments?: unknown; command?: unknown };

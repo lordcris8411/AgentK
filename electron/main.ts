@@ -19,6 +19,7 @@ import {
 } from "electron";
 import { DesktopBackend } from "./backend.js";
 import { editorPluginDependencyFilePath } from "./file-formats.js";
+import { loadClientSettings } from "./settings.js";
 import type { JsonObject } from "./types.js";
 import { asObject, errorMessage } from "./utils.js";
 
@@ -530,6 +531,9 @@ function number(value: unknown): number {
 
 async function start(): Promise<void> {
   await app.whenReady();
+  const appDataPath = app.getPath("userData");
+  const startupSettings = await loadClientSettings(appDataPath);
+  const cachePath = startupSettings.cacheDirectory || join(appDataPath, "cache");
   protocol.handle("agentk-file", (request) => {
     const url = new URL(request.url);
     const path = url.searchParams.get("path");
@@ -588,7 +592,7 @@ async function start(): Promise<void> {
   createWindows();
   registerIpc();
   backend = new DesktopBackend({
-    appDataPath: app.getPath("userData"),
+    appDataPath,
     bundledExtensionsSource: app.isPackaged
       ? join(process.resourcesPath, "extensions")
       : projectPath("extensions"),
@@ -600,7 +604,7 @@ async function start(): Promise<void> {
     bundledPiCli: app.isPackaged
       ? join(process.resourcesPath, "pi-runtime", "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js")
       : projectPath("node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js"),
-    cachePath: join(app.getPath("userData"), "cache"),
+    cachePath,
     permissionExtensionSource: projectPath("agent-k-permissions.ts"),
     emit: emitBackendEvent,
     emitProjectConsole: sendProjectConsoleEvent,

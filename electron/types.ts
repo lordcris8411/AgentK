@@ -6,6 +6,7 @@ export interface ClientSettings {
   locale: "zh-CN" | "en-US";
   permissionMode: "ask" | "full";
   browserId: string;
+  cacheDirectory: string;
   piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
   autoCompactEnabled: boolean;

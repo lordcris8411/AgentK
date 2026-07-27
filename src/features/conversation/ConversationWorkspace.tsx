@@ -2139,10 +2139,7 @@ export function ConversationWorkspace({
     requestAnimationFrame(() => placeCaretAtEnd(composerRef.current));
   }, [commitDraft, editorTextUpdate]);
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
-    void desktop
-      .onEvent((event) => {
+    const stop = desktop.onEvent((event) => {
         const activeRuntimeId = activeRuntimeIdRef.current;
         if (!activeRuntimeId || event.runtimeId !== activeRuntimeId) return;
         const type = String(event.type ?? "");
@@ -2365,15 +2362,8 @@ export function ConversationWorkspace({
               : [...current, next];
           });
         }
-      })
-      .then((stop) => {
-        if (disposed) stop();
-        else unlisten = stop;
       });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
+    return stop;
   }, []);
   useEffect(() => {
     const refresh = () => {

@@ -665,8 +665,7 @@ export function InspectorPanel({
   tabsRef.current = tabs;
   explorerWidthRef.current = explorerWidth;
   useEffect(() => {
-    let stop: (() => void) | undefined;
-    void desktop.onEvent((event) => {
+    const stop = desktop.onEvent((event) => {
       if (event.type !== "language_server_progress") return;
       const value = event as { bytes?: unknown; detail?: unknown; languageServerId?: unknown; rate?: unknown; stage?: unknown; total?: unknown };
       if (typeof value.stage !== "string") return;
@@ -681,18 +680,17 @@ export function InspectorPanel({
         ...(stage === "configuring" && rawDetail ? { log: `${previous?.log ?? ""}${rawDetail}`.slice(-16_000) } : {}),
       }));
       if (value.stage === "ready") window.setTimeout(() => setCppProgress(undefined), 900);
-    }).then((unlisten) => { stop = unlisten; });
-    return () => stop?.();
+    });
+    return stop;
   }, [en]);
   useEffect(() => {
-    let stop: (() => void) | undefined;
-    void desktop.onEvent((event) => {
+    const stop = desktop.onEvent((event) => {
       if (event.type !== "language_server_diagnostics" || typeof event.file !== "string" || !Array.isArray(event.diagnostics)) return;
       const diagnostics = event.diagnostics as unknown[];
       const key = event.file.replaceAll("\\", "/").toLowerCase();
       setCppDiagnostics((current) => ({ ...current, [key]: diagnostics.filter((item): item is Record<string, unknown> => !!item && typeof item === "object") }));
-    }).then((unlisten) => { stop = unlisten; });
-    return () => stop?.();
+    });
+    return stop;
   }, []);
   useEffect(() => {
     const show = () => setCppProjectsDialogOpen(true);
@@ -712,11 +710,10 @@ export function InspectorPanel({
     const refresh = () => void desktop.listLanguageServerProjects().then((projects) => { if (!disposed) setLanguageProjects(projects); });
     void desktop.listLanguageServerPlugins().then((plugins) => { if (!disposed) setLanguagePlugins(plugins); });
     refresh();
-    let stop: (() => void) | undefined;
-    void desktop.onEvent((event) => {
+    const stop = desktop.onEvent((event) => {
       if (event.type === "language_server_project" || event.type === "language_server_project_removed") refresh();
-    }).then((unlisten) => { stop = unlisten; });
-    return () => { disposed = true; stop?.(); };
+    });
+    return () => { disposed = true; stop(); };
   }, []);
   useEffect(() => {
     const move = (event: MouseEvent) => {
@@ -857,9 +854,8 @@ export function InspectorPanel({
     return () => { void desktop.watchWorkspace(); };
   }, [root]);
   useEffect(() => {
-    let stop: (() => void) | undefined;
     const normalize = (path: string) => path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
-    void desktop.onEvent((event) => {
+    const stop = desktop.onEvent((event) => {
       if (event.type === "advanced_search_progress" && event.root === root && typeof event.path === "string") {
         setAdvancedProgress(String(event.path));
         return;
@@ -881,8 +877,8 @@ export function InspectorPanel({
         if (normalize(activePathRef.current ?? "") === normalize(path) && currentTab.format?.editor === "plugin")
           pluginEditorRef.current?.setContent(content);
       }).catch(() => undefined);
-    }).then((unlisten) => { stop = unlisten; });
-    return () => stop?.();
+    });
+    return stop;
   }, [root]);
   useEffect(() => {
     const refreshFileFormats = () => {

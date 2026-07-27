@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { shell } from "electron";
 import type { PiLaunch } from "./pi-runtime.js";
 import type { ClientSettings, JsonObject } from "./types.js";
@@ -26,11 +26,12 @@ export interface ProviderDraft {
 }
 
 const DEFAULT_SETTINGS: ClientSettings = {
-  version: 6,
+  version: 9,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
   browserId: "default",
+  cacheDirectory: "",
   piExecutable: "",
   workerPoolSize: 4,
   autoCompactEnabled: true,
@@ -94,6 +95,11 @@ export function parseClientSettings(value: unknown): ClientSettings {
   if (["ask", "full"].includes(String(source.permissionMode)))
     settings.permissionMode = source.permissionMode as ClientSettings["permissionMode"];
   if (safeBrowserId(source.browserId)) settings.browserId = source.browserId;
+  if (
+    typeof source.cacheDirectory === "string" &&
+    source.cacheDirectory.length <= 4096 &&
+    (!source.cacheDirectory.trim() || isAbsolute(source.cacheDirectory.trim()))
+  ) settings.cacheDirectory = source.cacheDirectory.trim();
   if (typeof source.piExecutable === "string" && source.piExecutable.length <= 4096)
     settings.piExecutable = source.piExecutable.trim();
   if ([2, 3, 4].includes(Number(source.workerPoolSize)))
@@ -144,7 +150,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.windowHeight = Number(source.windowHeight);
   if (typeof source.windowMaximized === "boolean")
     settings.windowMaximized = source.windowMaximized;
-  settings.version = Math.max(8, Number(source.version) || 8);
+  settings.version = Math.max(9, Number(source.version) || 9);
   return settings;
 }
 
@@ -165,6 +171,7 @@ export async function saveClientSettings(
     settings.locale === original.locale &&
     settings.permissionMode === original.permissionMode &&
     settings.browserId === original.browserId &&
+    settings.cacheDirectory === original.cacheDirectory &&
     settings.piExecutable === original.piExecutable &&
     settings.workerPoolSize === original.workerPoolSize &&
     settings.autoCompactEnabled === original.autoCompactEnabled &&

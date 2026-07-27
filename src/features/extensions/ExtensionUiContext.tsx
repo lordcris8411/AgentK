@@ -350,10 +350,7 @@ export function ExtensionUiProvider({ children }: { children: ReactNode }) {
   }, [activeRuntimeId]);
 
   useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void desktop
-      .onEvent((event) => {
+    const stop = desktop.onEvent((event) => {
         if (event.type === "auth_event") {
           const auth =
             typeof event.event === "object" && event.event !== null
@@ -471,17 +468,10 @@ export function ExtensionUiProvider({ children }: { children: ReactNode }) {
             },
           }));
         }
-      })
-      .then((stop) => {
-        if (disposed) stop();
-        else {
-          unlisten = stop;
-          setReady(true);
-        }
       });
+    setReady(true);
     return () => {
-      disposed = true;
-      unlisten?.();
+      stop();
       const pending = dialogsRef.current;
       dialogsRef.current = [];
       for (const request of pending)

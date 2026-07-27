@@ -20,6 +20,28 @@ body {
 .agent-k-cpp-macro { color: #c586c0 !important; }
 .agent-k-cpp-method { color: #9cdc8c !important; }
 .agent-k-cpp-namespace { color: #c586c0 !important; }
+.agent-k-cpp-language-status {
+  align-items: center;
+  background: #f4f1eced;
+  border: 1px solid #d8d2c9;
+  border-radius: 999px;
+  box-shadow: 0 3px 10px #201b1517;
+  color: #746d64;
+  display: flex;
+  font: 11px/1 "Noto Sans SC", "Segoe UI", sans-serif;
+  gap: 7px;
+  padding: 6px 9px;
+  pointer-events: none;
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  z-index: 15;
+}
+.agent-k-cpp-language-status[hidden] { display: none; }
+.agent-k-cpp-language-status[data-theme="dark"] { background: #302e2bec; border-color: #4d4944; box-shadow: 0 3px 10px #0005; color: #bdb7af; }
+.agent-k-cpp-language-spinner { animation: agent-k-cpp-language-spin .75s linear infinite; border: 2px solid #bdb5aa; border-radius: 50%; border-top-color: #8d5d25; box-sizing: border-box; height: 11px; width: 11px; }
+.agent-k-cpp-language-status[data-theme="dark"] .agent-k-cpp-language-spinner { border-color: #625d56; border-top-color: #d59a52; }
+@keyframes agent-k-cpp-language-spin { to { transform: rotate(360deg); } }
 /* Monaco's compatibility multi-cursor action is not supported by the
    host-backed editor, so keep it out of every context menu deterministically. */
 .agent-k-editor-context-menu { background: #353535; border: 1px solid #4a4a4a; border-radius: 4px; box-shadow: 0 6px 18px #0007; min-width: 190px; padding: 4px 0; position: absolute; z-index: 30; }

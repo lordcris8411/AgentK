@@ -50,6 +50,7 @@ export type ClientSettings = {
   locale: "zh-CN" | "en-US";
   permissionMode: "ask" | "full";
   browserId: string;
+  cacheDirectory: string;
   piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
   autoCompactEnabled: boolean;
@@ -203,6 +204,8 @@ export type LocalServiceInfo = {
 
 export const desktop = {
   runtimeInfo: () => invoke<RuntimeInfo>("get_runtime_info"),
+  cacheDirectoryInfo: () => invoke<{ activePath: string; defaultPath: string }>("get_cache_directory_info"),
+  validateCacheDirectory: (path: string) => invoke<string>("validate_cache_directory", { path }),
   getSettings: () => invoke<ClientSettings>("get_client_settings"),
   saveSettings: (settings: ClientSettings) =>
     invoke<ClientSettings>("save_client_settings", { settings }),
@@ -348,13 +351,13 @@ export const desktop = {
     invoke<Array<{ path: string; line: number; preview: string }>>("advanced_search_files", { root, ...options }),
   watchWorkspace: (root?: string) => invoke<void>("watch_workspace", { root }),
   onEvent: (listener: (event: Record<string, unknown>) => void) =>
-    Promise.resolve(window.agentK.onPiEvent(listener)),
+    window.agentK.onPiEvent(listener),
   onProjectConsoleEvent: (listener: (event: Record<string, unknown>) => void) => {
     const channel = window.agentK.projectConsole;
-    if (channel) return Promise.resolve(channel.onEvent(listener));
-    return Promise.resolve(window.agentK.onPiEvent((event) => {
+    if (channel) return channel.onEvent(listener);
+    return window.agentK.onPiEvent((event) => {
       if (String(event.type ?? "").startsWith("project_console_"))
         listener(event);
-    }));
+    });
   },
 };

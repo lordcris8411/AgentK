@@ -150,10 +150,33 @@ export function SettingsDialog({
   const [browsers, setBrowsers] = useState<BrowserOption[]>([
     { id: "default", name: "System default" },
   ]);
+  const [cacheDirectoryInfo, setCacheDirectoryInfo] = useState<{ activePath: string; defaultPath: string }>();
   const providersRef = useRef<ProviderCatalogItem[]>([]);
   const lastCatalogRefreshRef = useRef(0);
   const providerDisplayName = (provider: Pick<ProviderCatalogItem, "id" | "name">) =>
     provider.id === "ollama" ? "Ollama" : provider.id === "vllm" ? "vLLM" : provider.name || provider.id;
+  const chooseCacheDirectory = async () => {
+    setError(undefined);
+    const selected = await platform.openDialog({ directory: true, title: t("cacheDirectoryDialog") });
+    const path = Array.isArray(selected) ? selected[0] : selected;
+    if (!path) return;
+    try {
+      const validated = await desktop.validateCacheDirectory(path);
+      await update({ cacheDirectory: validated });
+      setNotice(t("cacheDirectoryRestart"));
+    } catch (cause) {
+      setError(String(cause));
+    }
+  };
+  const resetCacheDirectory = async () => {
+    setError(undefined);
+    try {
+      await update({ cacheDirectory: "" });
+      setNotice(t("cacheDirectoryRestart"));
+    } catch (cause) {
+      setError(String(cause));
+    }
+  };
   const discoverLocal = async () => {
     setBusy(true);
     setError(undefined);
@@ -350,6 +373,7 @@ export function SettingsDialog({
   useEffect(() => {
     if (!open || page !== "agentSettings") return;
     void loadBrowserData().then(setBrowsers).catch(() => undefined);
+    void desktop.cacheDirectoryInfo().then(setCacheDirectoryInfo).catch(() => undefined);
   }, [open, page]);
   useEffect(() => {
     if (!open) return;
@@ -689,6 +713,20 @@ export function SettingsDialog({
                     placeholder={t("piExecutablePlaceholder")}
                     value={settings.piExecutable}
                   />
+                </div>
+                <div className="settings-section">
+                  <label htmlFor="settings-cache-directory">{t("cacheDirectory")}</label>
+                  <p className="settings-inline-description">{t("cacheDirectoryDescription")}</p>
+                  <div className="inline-field settings-path-field">
+                    <input
+                      id="settings-cache-directory"
+                      readOnly
+                      value={settings.cacheDirectory || cacheDirectoryInfo?.defaultPath || ""}
+                    />
+                    <button onClick={() => void chooseCacheDirectory()} type="button">{t("cacheDirectoryBrowse")}</button>
+                    {settings.cacheDirectory ? <button onClick={() => void resetCacheDirectory()} type="button">{t("cacheDirectoryDefault")}</button> : null}
+                  </div>
+                  {cacheDirectoryInfo ? <small className="settings-active-path">{t("cacheDirectoryActive")}：{cacheDirectoryInfo.activePath}</small> : null}
                 </div>
                 <div className="settings-section">
                   <label>{t("workerPoolSize")}</label>

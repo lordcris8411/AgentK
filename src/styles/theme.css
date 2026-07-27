@@ -344,6 +344,8 @@ body {
 .settings-subdialog-card h3 { font-size: 15px; margin: 0 0 4px; }
 .inline-field { display: flex; gap: 7px; }
 .inline-field input { flex: 1; min-width: 0; }
+.settings-path-field input { cursor: default; }
+.settings-active-path { color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
 .discovered-models { display: flex; flex-wrap: wrap; gap: 5px; }
 .discovered-models button { background: var(--surface-panel); border: 0; border-radius: 6px; color: var(--text-secondary); padding: 5px 7px; }
 .settings-subdialog footer { display: flex; gap: 7px; justify-content: flex-end; margin-top: 7px; }

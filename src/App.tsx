@@ -466,9 +466,8 @@ export function App() {
   };
 
   useEffect(() => {
-    let stop: (() => void) | undefined;
     let finishReload: (() => void) | undefined;
-    void desktop.onEvent((event) => {
+    const stop = desktop.onEvent((event) => {
       if (event.type === "pi_reload_progress") {
         const total = typeof event.total === "number" && event.total > 0
           ? Math.floor(event.total)
@@ -548,11 +547,9 @@ export function App() {
         return moved;
       });
       void reload();
-    }).then((unlisten) => {
-      stop = unlisten;
     });
     return () => {
-      stop?.();
+      stop();
       finishReload?.();
     };
   }, [en]);

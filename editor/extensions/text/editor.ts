@@ -89,15 +89,29 @@ defineEditor((host, initial) => {
     wordWrap: initial.wordWrap ? "on" : "off",
   });
   const cpp = initial.language === "cpp";
+  const languageStatus = cpp ? globalThis.document.createElement("div") : undefined;
+  if (languageStatus) {
+    languageStatus.className = "agent-k-cpp-language-status";
+    languageStatus.dataset.theme = initial.theme;
+    const spinner = globalThis.document.createElement("span");
+    spinner.className = "agent-k-cpp-language-spinner";
+    const label = globalThis.document.createElement("span");
+    label.textContent = initial.locale === "en-US" ? "Preparing C++ analysis…" : "正在准备 C++ 语义分析…";
+    languageStatus.append(spinner, label);
+    host.root.append(languageStatus);
+  }
+  const hideLanguageStatus = () => { if (languageStatus) languageStatus.hidden = true; };
+  const showLanguageStatus = () => { if (languageStatus) languageStatus.hidden = false; };
   const position = (value: Monaco.Position) => ({ line: value.lineNumber - 1, character: value.column - 1 });
   const document = () => ({ uri: model.uri.toString(), languageId: "cpp", version: model.getVersionId(), text: model.getValue() });
   let languageSync: Promise<void> = Promise.resolve();
   let cppDocumentOpened = false;
   const openDocument = () => {
     if (!cpp) return languageSync;
+    showLanguageStatus();
     languageSync = languageSync.catch(() => undefined).then(() => host.languageRequest("textDocument/didOpen", { textDocument: document() })
-      .then((accepted) => { cppDocumentOpened = accepted === true; })
-      .catch(() => { cppDocumentOpened = false; }));
+      .then((accepted) => { cppDocumentOpened = accepted === true; if (!cppDocumentOpened) hideLanguageStatus(); })
+      .catch(() => { cppDocumentOpened = false; hideLanguageStatus(); }));
     return languageSync;
   };
   const syncDocument = () => {
@@ -230,7 +244,7 @@ defineEditor((host, initial) => {
           try {
             const result = await host.languageRequest("textDocument/semanticTokens/full", { textDocument: { uri: model.uri.toString() } }) as { data?: number[] } | undefined;
             if (token?.isCancellationRequested || requestedVersion !== model.getVersionId()) return null;
-            const data = sanitizeSemanticTokens(result?.data ?? []); applyMemberDecorations(data);
+            const data = sanitizeSemanticTokens(result?.data ?? []); applyMemberDecorations(data); hideLanguageStatus();
             return { data: new Uint32Array(data) };
           } catch {
             // clangd cancels an in-flight request when didChange wins the race.
@@ -487,6 +501,7 @@ defineEditor((host, initial) => {
       definitionHover.dispose(); definitionClick.dispose(); definitionLink.clear();
       languageFocus.dispose(); referenceBlur.dispose();
       hideReferences(); referencePanel.remove();
+      languageStatus?.remove();
       memberDecorations.clear();
       if (cpp) void host.languageRequest("textDocument/didClose", { textDocument: { uri: model.uri.toString() } }).catch(() => undefined);
       completion?.dispose(); hover?.dispose(); semantic?.dispose();
@@ -495,7 +510,7 @@ defineEditor((host, initial) => {
     },
     executeAction(action, parameters) {
       if (action === "set-language-diagnostics" && Array.isArray(parameters.diagnostics))
-        applyDiagnostics(parameters.diagnostics as LspDiagnostic[]);
+        { applyDiagnostics(parameters.diagnostics as LspDiagnostic[]); hideLanguageStatus(); }
       if (action === "language-server-project-ready") {
         cppDocumentOpened = false;
         void openDocument();
@@ -534,6 +549,7 @@ defineEditor((host, initial) => {
     },
     setTheme(theme) {
       monaco.editor.setTheme(themeName(theme));
+      if (languageStatus) languageStatus.dataset.theme = theme;
     },
     setWordWrap(enabled) {
       editor.updateOptions({ wordWrap: enabled ? "on" : "off" });
