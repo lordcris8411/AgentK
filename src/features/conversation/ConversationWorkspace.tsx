@@ -995,10 +995,10 @@ function formatDuration(durationMs?: number) {
 }
 function formatMessageTime(timestamp?: number) {
   if (!timestamp) return "";
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(timestamp);
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  const twoDigits = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())} ${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`;
 }
 function ActivityRow({ item }: { item: Item }) {
   const en = useSettings().settings.locale === "en-US";

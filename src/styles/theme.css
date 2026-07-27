@@ -2707,6 +2707,12 @@ body.is-resizing-panels .composer {
   position: absolute;
   z-index: 30;
 }
+.inspector-dialog-backdrop.is-viewport {
+  align-items: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 300;
+}
 .inspector-dialog {
   background: var(--surface-raised);
   border: 1px solid var(--border-color);

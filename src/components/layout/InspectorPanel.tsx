@@ -2,6 +2,7 @@ import { createPortal } from "react-dom";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   memo,
   useRef,
   useState,
@@ -441,7 +442,6 @@ const Tree = memo(function Tree({
   loadDirectory,
   open,
   dropTarget,
-  selectedPath,
   select,
   shouldSuppressClick,
   showContextMenu,
@@ -451,8 +451,7 @@ const Tree = memo(function Tree({
   loadDirectory(path: string): void;
   open(path: string): void;
   dropTarget: string | null;
-  selectedPath?: string;
-  select(entry: FileEntry): void;
+  select(entry: FileEntry, element: HTMLElement): void;
   shouldSuppressClick(): boolean;
   showContextMenu(entry: FileEntry, event: ReactMouseEvent): void;
   startPointerDrag(event: ReactPointerEvent, entry: FileEntry): void;
@@ -473,11 +472,11 @@ const Tree = memo(function Tree({
       }}
     >
       <summary
-        className={entry.path === selectedPath ? "selected" : undefined}
+        data-tree-path={entry.path}
         onClick={(event) => {
           event.preventDefault();
           if (shouldSuppressClick()) return;
-          select(entry);
+          select(entry, event.currentTarget);
         }}
         onContextMenu={(event) => showContextMenu(entry, event)}
         onPointerDown={(event) => {
@@ -537,7 +536,6 @@ const Tree = memo(function Tree({
           loadDirectory={loadDirectory}
           open={open}
           dropTarget={dropTarget}
-          selectedPath={selectedPath}
           select={select}
           shouldSuppressClick={shouldSuppressClick}
           showContextMenu={showContextMenu}
@@ -547,10 +545,11 @@ const Tree = memo(function Tree({
     </details>
   ) : (
     <button
-      className={`file-node${entry.path === selectedPath ? " selected" : ""}`}
-      onClick={() => {
+      className="file-node"
+      data-tree-path={entry.path}
+      onClick={(event) => {
         if (shouldSuppressClick()) return;
-        select(entry);
+        select(entry, event.currentTarget);
         open(entry.path);
       }}
       onContextMenu={(event) => showContextMenu(entry, event)}
@@ -644,6 +643,7 @@ export function InspectorPanel({
   const [cppTraceDialogText, setCppTraceDialogText] = useState<string>();
   const [cppTraceCopied, setCppTraceCopied] = useState(false);
   const inspectorRef = useRef<HTMLElement>(null);
+  const fileTreeRef = useRef<HTMLDivElement>(null);
   const editorBodyRef = useRef<HTMLDivElement>(null);
   const pluginEditorRef = useRef<PluginEditorHandle | null>(null);
   const activePathRef = useRef<string | undefined>(undefined);
@@ -659,6 +659,7 @@ export function InspectorPanel({
   const tabsRoot = useRef(root);
   const workspaceEditorStates = useRef(new Map<string, WorkspaceEditorState>());
   const treeRef = useRef<FileEntry | undefined>(undefined);
+  const selectedEntryRef = useRef<FileEntry | undefined>(undefined);
   currentRoot.current = root;
   treeRef.current = tree;
   activePathRef.current = active;
@@ -844,6 +845,7 @@ export function InspectorPanel({
     setResults([]);
     setTree(undefined);
     treeRef.current = undefined;
+    selectedEntryRef.current = undefined;
     setSelectedEntry(undefined);
     refresh(false);
     const interval = window.setInterval(() => refresh(true), 5_000);
@@ -989,6 +991,29 @@ export function InspectorPanel({
       onError(`无法读取目录：${String(cause)}`);
     }
   };
+  const paintTreeSelection = useCallback((path?: string, target?: HTMLElement) => {
+    const container = fileTreeRef.current;
+    if (!container) return;
+    for (const selected of container.querySelectorAll<HTMLElement>(".file-node.selected, summary.selected"))
+      selected.classList.remove("selected");
+    if (target && container.contains(target) && target.matches("[data-tree-path]")) {
+      target.classList.add("selected");
+      return;
+    }
+    if (path === undefined) return;
+    for (const candidate of container.querySelectorAll<HTMLElement>("[data-tree-path]")) {
+      if (candidate.dataset.treePath !== path) continue;
+      candidate.classList.add("selected");
+      break;
+    }
+  }, []);
+  const selectTreeEntry = useCallback((entry: FileEntry, element: HTMLElement) => {
+    selectedEntryRef.current = entry;
+    paintTreeSelection(entry.path, element);
+  }, [paintTreeSelection]);
+  useLayoutEffect(() => {
+    paintTreeSelection(selectedEntryRef.current?.path);
+  }, [paintTreeSelection, query, tree]);
   const activateTab = (path: string) => {
     const pathKey = path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
     const targetPath = tabs.find((tab) => tab.path.replaceAll("\\", "/").toLocaleLowerCase("en-US") === pathKey)?.path ?? path;
@@ -1379,6 +1404,7 @@ export function InspectorPanel({
   const showContextMenu = (entry: FileEntry, event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
+    selectTreeEntry(entry, event.currentTarget as HTMLElement);
     const bounds = inspectorRef.current?.getBoundingClientRect();
     const localX = bounds ? event.clientX - bounds.left : event.clientX;
     const localY = bounds ? event.clientY - bounds.top : event.clientY;
@@ -1485,7 +1511,9 @@ export function InspectorPanel({
         currentTabs.map((tab) => ({ ...tab, path: remap(tab.path) })),
       );
       setActive((current) => (current ? remap(current) : current));
-      setSelectedEntry({ ...selectedEntry, path: newPath, name });
+      const renamedEntry = { ...selectedEntry, path: newPath, name };
+      selectedEntryRef.current = renamedEntry;
+      setSelectedEntry(renamedEntry);
       setRenameDialogOpen(false);
       setRenameName("");
       refresh(false);
@@ -1507,6 +1535,7 @@ export function InspectorPanel({
       setActive((current) =>
         current && pathIsWithin(current, deletedPath) ? undefined : current,
       );
+      selectedEntryRef.current = undefined;
       setSelectedEntry(undefined);
       setDeleteDialogOpen(false);
       refresh(false);
@@ -1542,6 +1571,13 @@ export function InspectorPanel({
         currentTabs.map((tab) => ({ ...tab, path: remap(tab.path) })),
       );
       setActive((current) => (current ? remap(current) : current));
+      const selected = selectedEntryRef.current;
+      if (selected && pathIsWithin(selected.path, sourcePath))
+        selectedEntryRef.current = {
+          ...selected,
+          name: selected.path === sourcePath ? name : selected.name,
+          path: remap(selected.path),
+        };
       setSelectedEntry((current) =>
         current && pathIsWithin(current.path, sourcePath)
           ? {
@@ -1828,6 +1864,7 @@ export function InspectorPanel({
           {advancedDirectoryPickerOpen && root ? <DirectoryPickerDialog initialPath={root} onCancel={() => setAdvancedDirectoryPickerOpen(false)} onSelect={(path) => { const normalizedRoot = root.replaceAll("\\", "/").replace(/\/$/, "").toLowerCase(); const normalizedPath = path.replaceAll("\\", "/").replace(/\/$/, ""); const candidate = normalizedPath.toLowerCase(); if (candidate !== normalizedRoot && !candidate.startsWith(`${normalizedRoot}/`)) { onError("选择的目录不在当前项目中"); return; } const relative = normalizedPath.slice(normalizedRoot.length).replace(/^\//, ""); setAdvancedDirectory(relative ? `${relative}/**` : "**"); setAdvancedDirectoryPickerOpen(false); }} restrictedRoot={root} title="选择搜索目录" /> : null}
           <div
             className="file-tree-scroll"
+            ref={fileTreeRef}
             onContextMenu={(event) => {
               if (tree && event.target === event.currentTarget)
                 showContextMenu(tree, event);
@@ -1839,8 +1876,7 @@ export function InspectorPanel({
                 loadDirectory={treeLoadDirectory}
                 open={treeOpen}
                 dropTarget={dropTarget}
-                selectedPath={selectedEntry?.path}
-                select={setSelectedEntry}
+                select={selectTreeEntry}
                 shouldSuppressClick={shouldSuppressTreeClick}
                 showContextMenu={treeShowContextMenu}
                 startPointerDrag={treeStartPointerDrag}
@@ -1856,7 +1892,8 @@ export function InspectorPanel({
                 <button
                   className="file-node search-result"
                   key={path}
-                  onClick={() => {
+                  data-tree-path={path}
+                  onClick={(event) => {
                     const entry = {
                       children: [],
                       isDir: false,
@@ -1864,7 +1901,7 @@ export function InspectorPanel({
                       name: path.split(/[\\/]/).pop() ?? path,
                       path,
                     };
-                    setSelectedEntry(entry);
+                    selectTreeEntry(entry, event.currentTarget);
                     void open(path);
                   }}
                   onContextMenu={(event) =>
@@ -2484,8 +2521,8 @@ export function InspectorPanel({
           </form>
         </div>
       ) : null}
-      {cppProgress ? (
-        <div className="inspector-dialog-backdrop">
+      {cppProgress ? createPortal(
+        <div className="inspector-dialog-backdrop is-viewport">
           <section aria-modal="true" className="inspector-dialog cpp-progress-dialog" role="dialog">
             <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{cppProgress.stage === "failed" ? (en ? "Language project load failed" : "语言工程加载失败") : (en ? "Preparing language project" : "正在准备语言工程")}</h2><p>{cppProgress.detail ?? cppProgress.stage}</p></div><button aria-label={cppProgress.stage === "failed" ? (en ? "Close" : "关闭") : (en ? "Cancel language project load" : "取消加载语言工程")} className="cpp-progress-close" disabled={cppProgress.stage === "cancelling"} onClick={() => { if (cppProgress.stage === "failed") { setCppProgress(undefined); return; } setCppProgress((current) => current ? { ...current, stage: "cancelling", detail: en ? "Cancelling…" : "正在取消…" } : current); if (cppProgress.languageServerId) void desktop.languageServerCall(cppProgress.languageServerId, "cancel").catch((cause) => setCppProgress({ stage: "failed", error: String(cause) })); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
             {cppProgress.total ? <progress className="cpp-toolchain-progress" max={cppProgress.total} value={Math.min(cppProgress.bytes ?? 0, cppProgress.total)} /> : <p>{en ? "Working…" : "处理中…"}</p>}
@@ -2493,15 +2530,17 @@ export function InspectorPanel({
             {cppProgress.error ? <p>{cppProgress.error}</p> : null}
             {cppProgress.log ? <details><summary>{en ? "Configuration output" : "工程配置输出"}</summary><pre className="cpp-progress-log">{cppProgress.log}</pre></details> : null}
           </section>
-        </div>
+        </div>,
+        document.body,
       ) : null}
-      {cppProjectsDialogOpen ? (
-        <div className="inspector-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCppProjectsDialogOpen(false); }}>
+      {cppProjectsDialogOpen ? createPortal(
+        <div className="inspector-dialog-backdrop is-viewport" onMouseDown={(event) => { if (event.target === event.currentTarget) setCppProjectsDialogOpen(false); }}>
           <section aria-modal="true" className="inspector-dialog" role="dialog">
             <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{en ? "Active language projects" : "已加载的语言工程"}</h2><p>{languageProjects.length ? (en ? `${languageProjects.length} projects` : `${languageProjects.length} 个工程`) : (en ? "No projects loaded" : "当前没有已加载工程")}</p></div><button aria-label={en ? "Close" : "关闭"} className="inspector-dialog-close" onClick={() => setCppProjectsDialogOpen(false)} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
             {languageProjects.map((project) => <div className="cpp-project-row" key={`${project.languageServerId}:${project.root}`}><div className="cpp-project-row-heading"><strong>{project.name}</strong><div className="cpp-project-row-actions"><button aria-label={en ? "Restart language project" : "重启语言工程"} onClick={() => void desktop.languageServerCall(project.languageServerId, "restart", project.root)} title={en ? "Restart" : "重启"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-rotate-right" /></button><button aria-label={en ? "Unload language project" : "卸载语言工程"} onClick={() => void desktop.languageServerCall(project.languageServerId, "unload", project.root)} title={en ? "Unload" : "卸载"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-right-from-bracket" /></button></div></div><small>{project.languageServerName} · {project.root}</small><span className={`is-${project.status}`}>{project.status}{project.error ? ` · ${project.error}` : ""}</span></div>)}
           </section>
-        </div>
+        </div>,
+        document.body,
       ) : null}
       {cppTraceDialogText ? (
         <div className="inspector-dialog-backdrop">
