@@ -3,164 +3,248 @@
 
   # Agent K
 
-  **A fast desktop workspace for the [Pi coding agent](https://github.com/earendil-works/pi).**
+  **A fast visual workspace for the [Pi coding agent](https://github.com/earendil-works/pi).**
 
-  Manage Pi sessions, project files, tool calls, and model configuration through one visual workspace on Windows and Linux.
+  Bring conversations, projects, files, tools, models, and Pi extensions together on Windows and Linux.
 
-  [English](#features) · [中文](#中文说明)
+  [Product overview](#part-i-product-overview) · [Technical guide](#part-ii-technical-guide) · [中文](#第一部分产品介绍)
 
   [![CI](https://github.com/lordcris8411/AgentK/actions/workflows/ci.yml/badge.svg)](https://github.com/lordcris8411/AgentK/actions/workflows/ci.yml)
   [![Electron 43](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
   [![React 19](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)](https://react.dev/)
-  [![Windows](https://img.shields.io/badge/Windows-supported-0078D4?logo=windows)](#requirements)
-  [![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)](#requirements)
+  [![Windows](https://img.shields.io/badge/Windows-supported-0078D4?logo=windows)](#platform-support)
+  [![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)](#platform-support)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 </div>
 
-## Features
+## Part I: Product overview
 
-- **A GUI built for Pi:** a dedicated visual frontend for Pi conversations, sessions, tools, models, and project workflows—not a separate agent runtime.
-- **Compatible with the Pi ecosystem:** connects through Pi's public JSONL RPC and preserves its providers, sessions, slash commands, Skills, Extensions, and user/project configuration.
-- **Pooled Pi sessions:** prewarms a configurable pool of 2–4 Pi RPC workers, keeps sessions attached to reusable runtimes, expands on demand, and retires excess idle processes automatically.
-- **Performance-focused desktop UI:** GPU-accelerated Chromium rendering, bounded 60 Hz resize updates, responsive Monaco layout, deferred React commits, and optimized scrolling keep large conversations and files responsive.
-- **Light, dark, and system themes:** a complete semantic color system covers the workspace, dialogs, previews, Markdown, and Monaco editor, with theme-aware selection and highlight colors.
-- **Programmable Editor SDK:** Editor plugins own their DOM, CSS, framework, and editing engine. The first-party code/text package chooses and configures Monaco itself, while a typed sandbox bridge provides theme, content, save, navigation, and Pi capability integration.
-- **Native language extensions:** trusted worker packages own project detection, managed toolchains, build databases, diagnostics, LSP/DAP declarations, and semantic Editor integration without coupling a language implementation to the Electron host.
-- **Project workspace tools:** a native PTY, file operations and drag/drop, fast filename filtering, bounded advanced content search, CMake actions, cached Editor tabs, and workspace pinning/activity order live beside each conversation.
-- **Skill Hub and resource managers:** preview and install bounded GitHub/skills.sh Skills, then inspect, enable, or disable Pi Skills, Extensions, file Editors, Editor Skills, language extensions, and Language Skills from Settings.
-- **Context-aware conversations:** automatic context compaction, usage and billing indicators, hidden raw Editor context, streaming reasoning/tool progress, code copying, terminal-to-chat selection, execution approval, change review, forks, and session history.
-- **Clear security boundary:** the sandboxed React renderer has no Node.js access and cannot directly launch processes or access local files.
+### Pi, with a complete desktop workspace
 
-## Architecture
+Agent K is the graphical desktop frontend for Pi. It does not replace Pi or create a separate agent ecosystem. Your Pi models,
+providers, conversations, commands, Skills, Extensions, and project settings remain available, while Agent K gives them a
+focused visual workspace.
+
+You can keep the conversation in the center, browse project files on the side, open a terminal when needed, and preview or edit
+files without leaving the application. Long-running work remains visible through live reasoning, tool activity, progress, and
+change-review cards.
+
+### What you can do
+
+- **Work with multiple projects and conversations:** pin active workspaces, switch between recent sessions, create branches, and
+  return to previous work without rebuilding your desktop layout.
+- **Follow the agent while it works:** see live progress, reasoning, tool calls, permission requests, file changes, elapsed time,
+  context usage, and completion status in one conversation view.
+- **Browse, search, preview, and edit files:** work with code and text, Markdown, HTML, images, audio, video, and PDF files from the
+  project panel. Recent file tabs stay ready when you switch conversations or workspaces.
+- **Use a real project terminal:** run normal shell commands, copy terminal content, or send selected output back into the chat.
+- **Manage the Pi ecosystem visually:** inspect, install, enable, or disable Skills and Extensions without manually editing
+  configuration files. File editors and language features have their own controls.
+- **Choose models and permissions:** manage providers, switch models, select reasoning levels, and control whether a session may
+  run actions.
+- **Keep long conversations useful:** optional automatic context cleanup preserves the important recent state before the context
+  becomes full.
+- **Match your desktop:** choose light, dark, or system theme. Window size, panel widths, terminal height, and panel visibility are
+  remembered for the next launch.
+- **Stay responsive on larger work:** session reuse, file-editor caching, and interaction optimizations reduce pauses when
+  switching conversations, opening files, scrolling, or resizing panels.
+
+### Supported file experiences
+
+| Category | Available experience |
+| --- | --- |
+| Code and text | Multi-tab editing, syntax colors, search, undo, save, navigation, and optional language assistance |
+| Markdown | Source editing and rendered preview |
+| HTML | Source editing, sandboxed preview, preview capture, and preview-console inspection |
+| Images | Fit, pan, and smooth zoom |
+| Audio and video | In-app playback, seeking, and media information |
+| PDF | In-app document preview |
+
+Additional file experiences can be installed independently. Each category can be enabled or disabled from Settings.
+
+### A typical workflow
+
+1. Add a project folder and open or create a conversation.
+2. Ask Pi to inspect, explain, change, build, or test the project.
+3. Follow the current activity above the message box and review tool calls as they complete.
+4. Open changed files beside the conversation, use preview when available, and review proposed changes.
+5. Continue in the same session, create a branch to explore another direction, or switch to another project while work continues.
+
+### Commands available from chat
+
+Type `/` in the message box to search both Pi commands and Agent K actions.
+
+| Command | What it opens or does |
+| --- | --- |
+| `/settings` | Open Agent K Settings |
+| `/skills`, `/extensions`, `/editors` | Open the corresponding manager |
+| `/model [provider/model]` | Choose a model or switch directly |
+| `/compact [instructions]` | Clean up the current conversation context |
+| `/new` | Start a new conversation |
+| `/fork`, `/tree` | Explore conversation branches |
+| `/name <name>` | Rename the current conversation |
+| `/session` | Show session usage and statistics |
+| `/reload` | Apply refreshed Pi resources and configuration |
+
+Installed language packages may add their own project actions.
+
+### Platform support
+
+- Windows 10/11 x64
+- Modern Linux x64 desktops using X11 or Wayland
+- Light, dark, and system theme modes on both platforms
+
+Release builds include a compatible, unmodified Pi distribution, so a separate global Pi installation is not required.
+
+### Product roadmap
+
+- One-click local model packages with llama.cpp and downloads from ModelScope or Hugging Face.
+- More built-in Skills and Extensions, plus in-app discovery across compatible Skill catalogs.
+- More specialized file preview and editing experiences.
+- Integrated debugging workflows for C/C++, Python, and JavaScript/TypeScript.
+- A supported macOS release.
+
+## Part II: Technical guide
+
+### Architecture and Pi boundary
 
 ~~~text
-┌─────────────────────────┐
-│ React / TypeScript UI   │
-└────────────┬────────────┘
+┌──────────────────────────┐
+│ React renderer           │
+│ sandboxed, process-free  │
+└────────────┬─────────────┘
              │ context-isolated preload IPC
-┌────────────▼────────────┐
-│ Electron main process   │
-│ Pi pool · files · PTY   │
-└────────────┬────────────┘
-       ┌─────┴──────────────┐
-       │ public JSONL RPC   │ trusted worker IPC
-┌────────────▼────────────┐
-│ external pi --mode rpc  │
-└─────────────────────────┘
-                         ┌─▼────────────────────┐
-                         │ language worker/LSP │
-                         └──────────────────────┘
+┌────────────▼─────────────┐
+│ Electron main process    │
+│ files · PTY · Pi pool    │
+└───────┬───────────┬──────┘
+        │           │ trusted worker IPC
+        │ public JSONL RPC
+┌───────▼──────────┐  ┌────▼────────────────┐
+│ external Pi RPC │  │ language worker/LSP │
+└──────────────────┘  └─────────────────────┘
 ~~~
 
-Agent K **does not include, modify, or commit Pi source code**. Pi always runs as an external child runtime communicating exclusively through its public RPC protocol; release packages may carry an unmodified Pi distribution for one-click startup. `.reference/pi/` is ignored and used only for local upstream reference.
+Agent K maintains only the visual client. Pi runs as an external child process in RPC mode and is accessed exclusively through
+its public protocol. Agent K never edits, vendors, or commits Pi source; `.reference/pi/` is ignored reference material. A
+release may carry an unmodified Pi distribution for one-click startup without changing this process boundary.
 
-The desktop backend is written in TypeScript. Pi protocol integration stays under `electron/agent/`, while `electron/preload.cjs` exposes a narrow API to the renderer with context isolation and Chromium sandboxing enabled. See [Architecture](docs/architecture.md) for details.
+Protocol-specific code stays under `electron/agent/`. The React renderer has no Node.js or direct process access; a
+context-isolated preload exposes a narrow, typed desktop API. Filesystem, credentials, PTY, process, and native language work
+remain in the Electron main process or dedicated trusted workers. See [Architecture](docs/architecture.md).
 
-## Agent K commands
+### Pi runtime selection and session pool
 
-Type `/` to search Pi commands and Agent K commands. Client commands are handled locally and are not sent to the model as prompts.
-
-| Command | Action |
-| --- | --- |
-| `/settings`, `/skills`, `/extensions`, `/editors` | Open the corresponding settings page |
-| `/model [provider/model]` | Open the model picker or switch directly |
-| `/compact [instructions]` | Compact the current context |
-| `/new` | Start a new Pi session |
-| `/fork`, `/tree` | Open session branch navigation |
-| `/name <name>` | Rename the current session |
-| `/session` | Show current session statistics |
-| `/reload` | Reload Pi configuration, Skills, and Extensions |
-| `/active-cpp-projects [trace\|restart <root>\|unload <root>]` | Inspect or manage projects contributed by the bundled C++ language extension |
-
-Native language extensions may contribute additional project-manager commands; their manifests, rather than Agent K's chat UI, define the command names.
-
-## Bundled Skills
-
-Agent K ships these project-owned Skills and loads them through Pi's public `--skill` option:
-
-| Skill | Purpose | Runtime requirements |
-| --- | --- | --- |
-| `weather` | Current weather, hourly conditions, and seven-day forecasts through Open-Meteo | `bash`, `curl`, `jq` |
-| `gdb-debug` | GDB launch, crash backtrace, thread, and core-dump workflows | `bash`, `gdb`, `nm` |
-| `create-agent-k-extensions` | Author and validate Editor, native language, and companion Skill packages | Python 3 only for the optional packaging helper |
-
-At first launch, bundled Skills are copied to a stable application-data directory so the external Pi process never needs to read Electron archives. They appear alongside user and project Skills in the `/skills` manager and can be enabled or disabled independently. Closing Settings applies pending resource changes in one worker-pool refresh. Existing `~/.pi/agent/skills` content is never overwritten.
-
-The bundled scripts target a POSIX shell. On Windows, use Git Bash, MSYS2, or WSL to run them; the Skills can still be inspected and managed without those environments.
-
-The Skills page also accepts copied `skills add` commands, skills.sh links, GitHub repository links, and direct GitHub Skill-directory links. Agent K downloads at most 80 files / 2 MiB, displays the exact `SKILL.md` and file list for review, verifies a content hash before installation, and installs to either user or project scope without running npm lifecycle scripts.
-
-## Bundled Extension
-
-K's Plan is bundled as a first-party Pi Extension and is loaded automatically through Pi's public `--extension` option. Use `/plan <description>` to create, review, and execute a file-backed plan. It appears in the `/extensions` manager and can be enabled or disabled independently.
-
-## Native language extensions
-
-The bundled `cpp-clangd` package recognizes CMake and compilation-database projects and attaches C/C++ diagnostics, completion, hover, semantic highlighting, definition/declaration navigation, and references to the independent text Editor. Loading a project on Windows/Linux x64 prepares pinned CMake, Ninja, and standalone clangd archives in Agent K's private cache, verifies their SHA-256 hashes, creates build metadata outside the source tree with a compiler available in the project environment, and starts clangd in a separate worker process. Windows projects may use Visual Studio Build Tools, Clang, or MinGW; Agent K initializes an installed Visual Studio C++ environment automatically and does not download an incomplete compiler SDK.
-
-Language packages live under `language-servers/`; user-installed trusted packages are copied to the application-data `language-server-plugins/` directory. They are managed from the Editor settings page and are never loaded from an opened project. The bundled DAP declarations reserve WinDbg, LLDB, and GDB integration, but debugger launch is still roadmap work. See [Native language-extension protocol](docs/language-server-plugin.md).
-
-## File-format SDK
-
-Agent K selects a right-panel editor by exact filename, absolute path, file extension, or MIME type. First-party handlers for text, Markdown, HTML, images, audio, video, and PDF are fully independent plugin packages under `editor/extensions/` in the installation directory. Each package owns its implementation and CSS; plugins never inherit from or import UI code from one another.
-
-A format package contains discovery metadata in `editor.json`, executable UI source such as `editor.ts`, a prebuilt browser bundle under `dist/`, and its Pi `SKILL.md`. Project packages may be placed in `.pi/skills/` or `.agents/skills/`; user packages may be placed in `~/.pi/agent/skills/` or `~/.agents/skills/`. Project packages take precedence over user packages, then first-party packages.
-
-At startup Agent K validates the installed first-party packages, reads their switches, and passes each enabled Editor Skill to Pi through its public `--skill` option. The splash screen reports this as the “Configuring Editor plugins…” stage.
-
-The dedicated Editor Extensions settings page gives every first-party file category and installed format package its own `Editor` and `Editor Skill` switches. Disabling a category's Editor also disables its Editor Skill; enabling its Editor Skill also enables its Editor.
-
-In programmable packages, `editor.ts` is real application code. A plugin can choose Monaco, CodeMirror, Canvas, a framework, or plain DOM and fully define the frame's appearance and behavior. Agent K executes the compiled bundle in a unique-origin `<iframe sandbox="allow-scripts">`; the plugin has no Node, Electron IPC, host DOM, or direct filesystem access and uses a versioned typed message bridge for content, dirty state, saves, theme changes, navigation, and line references. A separate `editor.json` remains necessary so discovery never executes unknown code. The former JSON-in-`editor.ts` comment format is not supported.
-
-With Editor Skill enabled, Agent K gives Pi the active format and file path as hidden outbound context; it is visible to the user only under the message's **Raw information** disclosure. `agent_k_file_editor` provides `open`, web-project preview, preview capture, and preview-console actions. Plugins may declare additional callable capabilities; first-party audio and video implement `play`, `pause`, and `seek`. The Editor bridge can also route optional semantic requests to an independently installed native language package.
-
-See [File-format SDK](docs/file-format-sdk.md) for the complete manifest, field reference, example, and safety model.
-
-## Technical advantages
-
-Agent K optimizes both sides of the desktop boundary instead of treating every UI action as a fresh Pi startup or a full React render.
-
-| Area | Implementation | Benefit |
-| --- | --- | --- |
-| Pi RPC and session pool | Starts 2–4 workers concurrently during launch, remembers the runtime assigned to each session, reuses matching workspace/session processes, grows when every worker is busy, and reaps excess workers after five idle minutes. | Switching or creating sessions usually avoids process startup latency while background work can continue in other sessions. |
-| Safe pool refresh | Skill and Extension changes stay local to Settings until it closes. When every worker is idle, replacements are prepared concurrently, their sessions are restored, and the old pool is swapped only after every replacement succeeds. | One refresh applies all resource changes without partially updated workers or unnecessary sequential restarts. |
-| Session and RPC reuse | Session paths are mapped to runtime IDs, selected history is fetched once and passed into the conversation as an initial seed, and the active Pi connection remains authoritative for subsequent commands. | Avoids duplicate connection, history, and state work during navigation. |
-| Lightweight caches | The provider/model catalog is reused for 30 seconds, About and browser discovery use shared promises, and stable settings/layout data are restored locally before expensive background work. | Settings pages reopen quickly and repeated system/model queries are reduced. |
-| Theme pipeline | Light, dark, and system modes are persisted, system color-scheme changes are observed live, semantic CSS colors cover every major surface, and Monaco receives a matching theme event with dedicated selection colors. The startup splash resolves the saved theme before workers finish warming. | Theme changes remain consistent across native startup, the application shell, previews, dialogs, and editors without a mismatched flash. |
-| Input isolation | The content-editable composer paints keystrokes immediately, while ordinary text synchronizes to React only after 350 ms of idle time; slash-command filtering remains immediate. | Typing and IME input do not trigger a full conversation-tree update on every keypress. |
-| Automatic context management | The Agent K Pi Extension reports context usage after responses and can compact older work at a configurable 40–90% threshold with optional custom summary instructions. | Long-running sessions retain important recent state without waiting for a hard context limit. |
-| Monaco layout control | Monaco is owned by each code-capable Editor plugin with `automaticLayout` disabled. The host bridge suspends plugin layout during panel drags and requests one authoritative layout when dragging ends. | Large documents do not repeatedly relayout while sidebars move, without coupling Agent K to Monaco. |
-| Monaco dependency cache | Exact-version Monaco JavaScript and CSS load from a read-only internal protocol with Chromium resource and V8 code caching; language workers are fetched only when their service is needed. | Editor frames avoid repeatedly transferring and compiling the same multi-megabyte bundle, while ordinary text and non-TypeScript files never carry the 7 MB TypeScript worker. |
-| Editor instance cache | Keeps the 40 most recently used file Editor frames alive across tab, session, and workspace switches, with LRU eviction only after the limit is reached. | Returning to a recently opened file preserves its initialized editor and avoids another plugin or Monaco startup. |
-| Frame-budgeted interaction | Sidebar pointer reports are capped at 60 Hz; scroll measurements, custom scrollbars, media zoom, and delayed layout commits are coordinated with `requestAnimationFrame`. | Reduces main-thread bursts and visual tearing during resizing, scrolling, and media interaction. |
-| Sandboxed Editor micro-apps | File editors render in independent frames, own their dependencies and styles, and communicate through a nonce-checked, versioned bridge. Runtime bundles and real asset paths are validated before loading. | Third-party formats can provide genuinely custom editing experiences without gaining Electron or filesystem authority. |
-| Native language workers | Trusted packages are forked lazily, receive private caches, and own all project/toolchain/LSP behavior. The built-in C++ package reuses verified downloads and keeps generated CMake data outside source trees. | Semantic features can evolve independently of both the text Editor and Electron host while expensive toolchains are downloaded only once. |
-| Project search and terminal | Filename filtering avoids eager full-tree expansion; advanced search scans with directory/file globs and returns at most 500 virtualized results. The project console is a real platform shell PTY with WebGL rendering when available. | Large workspaces remain navigable, and build commands behave like the user's normal terminal. |
-
-## Quick start
-
-### 1. Choose Pi
-
-Release builds include Pi `0.80.10`; no global Pi installation is required. Agent K uses this priority order:
+Agent K resolves Pi in this order:
 
 1. `AGENT_K_PI_EXECUTABLE`
-2. The executable path configured in Agent Settings
-3. `pi` discovered on the system PATH
+2. The executable configured in Agent Settings
+3. `pi` on the system `PATH`
 4. The bundled Pi runtime
 
-To use another executable:
+The desktop prewarms a configurable pool of 2–4 Pi RPC processes. A session is mapped to a reusable runtime, matching
+workspace/session processes are retained, capacity grows when every worker is occupied, and surplus workers are reaped after
+five idle minutes. Switching sessions therefore normally reuses an established RPC connection instead of starting Pi again.
 
-~~~bash
-export AGENT_K_PI_EXECUTABLE=/absolute/path/to/pi
+Skill and Extension changes remain pending inside Settings. When Settings closes and every worker is idle, replacement workers
+are prepared concurrently, their sessions are restored, and the pool is swapped only after all replacements succeed. This
+transactional refresh avoids mixed resource states across workers.
+
+### Performance design
+
+| Area | Implementation |
+| --- | --- |
+| Conversation input | The editable surface paints keystrokes immediately; ordinary text is committed to React after 350 ms idle, while slash filtering remains immediate. Composer state does not invalidate the conversation tree. |
+| Session navigation | Runtime assignment, selected history, and active RPC state are reused instead of reconnecting and refetching on every switch. |
+| React rendering | Conversation rows and stable subtrees are memoized; streaming state is scoped so terminal input and unrelated panels do not rerender with every agent event. |
+| Panel resizing | Pointer reports are capped at 60 Hz. Editor layout is suspended during a drag and one authoritative layout is requested when the interaction ends. |
+| Monaco layout | Code-capable Editor packages own Monaco with `automaticLayout` disabled. The host never reaches into Monaco internals. |
+| Dependency cache | Exact Monaco JavaScript/CSS versions use an internal read-only protocol, Chromium resource caching, and V8 code caching. Language workers are loaded only when required. |
+| Editor instance cache | Up to 40 recently used Editor frames remain alive across file, session, and workspace switches, with LRU eviction. |
+| Scrolling and media | Scroll measurement, custom scrollbars, delayed commits, and media zoom are frame-budgeted with `requestAnimationFrame`. |
+| Terminal | The project console uses a native PTY and enables WebGL rendering when available. Terminal input is isolated from conversation streaming. |
+| Lightweight caches | Provider catalogs use a short TTL; About/browser discovery share promises; layout and theme state restore before expensive background initialization. |
+
+### Programmable file Editor SDK
+
+File Editors are independent browser applications, not subclasses of a shared host editor. A package owns its DOM, CSS,
+framework, editing engine, controls, and rendering strategy; packages do not import one another. Selection can match an extension,
+an exact filename, an absolute path, or a MIME type.
+
+A package contains:
+
+~~~text
+example-editor/
+├── editor.json       # discovery, matching, permissions, and runtime metadata
+├── editor.ts         # real application source
+├── dist/             # prebuilt browser runtime
+└── SKILL.md          # optional Pi-facing format guidance
 ~~~
 
-Windows PowerShell:
+Agent K runs the bundle in a unique-origin `<iframe sandbox="allow-scripts">`. The frame has no Node.js, Electron IPC, host DOM,
+or direct filesystem access. A nonce-checked, versioned bridge carries content, dirty state, save requests, themes, navigation,
+line references, and declared callable capabilities. Runtime bundles and resolved asset paths are validated before execution.
 
-~~~powershell
-$env:AGENT_K_PI_EXECUTABLE = "C:\path\to\pi.cmd"
-~~~
+Project packages in `.pi/skills/` or `.agents/skills/` override user packages in `~/.pi/agent/skills/` or `~/.agents/skills/`,
+which override first-party packages. The Editor and its Pi-facing Editor Skill have separate switches, with the invariant that a
+disabled Editor cannot leave its Skill enabled.
 
-### 2. Start Agent K
+The first-party text package chooses Monaco 0.55.1, while other packages remain free to use another Monaco version, CodeMirror,
+Canvas, a framework, or plain DOM. Dependencies are identified and cached independently by exact version.
+See [File-format SDK](docs/file-format-sdk.md).
+
+### Native language extensions
+
+Native language packages are trusted worker packages with process access. They own project markers, tool preparation, build
+databases, diagnostics, LSP transport, project lifecycle, semantic Editor contributions, and DAP declarations. They are loaded
+only from the installation or application-data plugin directory—never from an opened workspace—and start lazily on first use.
+
+The bundled `cpp-clangd` package supports CMake and compilation-database projects. On Windows/Linux x64 it downloads pinned
+CMake 3.31.6, Ninja 1.12.1, and standalone clangd 22.1.6 archives, verifies SHA-256 hashes, and keeps them in a private cache.
+ZIP files are extracted in-process instead of being passed to platform `tar` implementations.
+
+CMake metadata is generated outside the source tree with a compiler from the project environment. Linux uses the configured
+GCC/Clang toolchain. Windows accepts `CC`/`CXX`, Clang, MinGW, or MSVC; when necessary it discovers Visual Studio Build Tools via
+`vswhere` and initializes `VsDevCmd`. Missing compiler prerequisites produce an explicit error rather than downloading an
+incomplete full LLVM SDK. clangd runs in a separate process with background indexing and disk-backed PCH storage.
+
+See [Native language-extension protocol](docs/language-server-plugin.md).
+
+### Pi resources and Skill Hub
+
+Agent K exposes Pi Skills and Extensions through Pi's public launch options; it does not patch the runtime. Bundled resources
+include:
+
+| Resource | Purpose |
+| --- | --- |
+| `weather` Skill | Current, hourly, and seven-day weather through Open-Meteo |
+| `gdb-debug` Skill | GDB launch, backtrace, threads, and core-dump workflows |
+| `create-agent-k-extensions` Skill | Authoring and validation guidance for Agent K packages |
+| K's Plan Extension | Strict file-backed task planning and review through `/plan` |
+
+Skill Hub accepts `skills add` commands, skills.sh URLs, GitHub repository URLs, and direct GitHub Skill-directory URLs. Preview
+is bounded to 80 files / 2 MiB, displays the exact `SKILL.md` and file list, and verifies a content hash before installation. It
+does not execute npm lifecycle scripts.
+
+### Credentials and security
+
+- Provider catalogs come from Pi's public `get_available_models` RPC.
+- API keys cross an isolated Electron IPC boundary and are written to Pi's `auth.json`; they are never stored in browser storage.
+- OAuth and structured authentication use the official Pi interactive terminal.
+- Credential paths are `~/.pi/agent/auth.json` on Linux and `%USERPROFILE%\.pi\agent\auth.json` on Windows.
+- The renderer is Chromium-sandboxed, but Pi and approved tools run with the current user's OS permissions. Execution approval is
+  not an operating-system sandbox; use a container or VM for untrusted code.
+
+See [Security policy](SECURITY.md).
+
+### Requirements and source startup
+
+| Component | Requirement |
+| --- | --- |
+| Node.js | 22.19 or newer |
+| Pi | Bundled in release builds; optional external Pi 0.80.10 or compatible |
+| Windows | Windows 10/11 x64 |
+| Linux | Modern x64 desktop with X11 or Wayland |
 
 Linux:
 
@@ -178,18 +262,11 @@ cd AgentK
 script\run-windows.bat
 ~~~
 
-The scripts install locked npm dependencies, prepare the reviewed native PTY module, download the Electron runtime with its reviewed official installer, and launch Vite with Electron. Rust, Cargo, WebKitGTK development packages, and WebView2 are not required.
+The scripts install locked npm dependencies, prepare the reviewed native PTY module, download the Electron runtime with its
+reviewed official installer, and launch the complete development application. Rust, Cargo, WebKitGTK development packages, and
+WebView2 are not required.
 
-## Requirements
-
-| Component | Requirement |
-| --- | --- |
-| Node.js | 22.19 or newer |
-| Pi | Bundled in release builds; optional external Pi 0.80.10 or compatible |
-| Windows | Windows 10/11 x64 |
-| Linux | Modern x64 desktop distribution with X11 or Wayland |
-
-Electron bundles Chromium. Minimal Linux installations may need:
+Minimal Linux installations may need Chromium runtime libraries:
 
 ~~~bash
 # Debian / Ubuntu
@@ -199,9 +276,9 @@ sudo apt install libgtk-3-0 libnss3 libasound2t64 libgbm1
 sudo dnf install gtk3 nss alsa-lib mesa-libgbm
 ~~~
 
-## Development and builds
+### Development and builds
 
-Install dependencies without running third-party lifecycle scripts, then prepare the reviewed PTY module and Electron runtime explicitly:
+Install dependencies without running unreviewed third-party lifecycle scripts, then prepare the reviewed native components:
 
 ~~~bash
 npm ci --ignore-scripts
@@ -209,235 +286,263 @@ npm run prepare:native
 node node_modules/electron/install.js
 ~~~
 
-Building `node-pty` from source on Linux requires Python 3, `make`, and a C++ compiler. Release packages already contain the native module.
+Building `node-pty` from source on Linux requires Python 3, `make`, and a C++ compiler. Release packages contain the prepared
+native module.
 
 | Command | Purpose |
 | --- | --- |
 | `npm run dev` | Start Vite and the complete Electron development environment |
-| `npm run dev:web` | Start only the Vite renderer |
+| `npm run dev:web` | Start only the renderer |
 | `npm run prepare:native` | Prepare the reviewed `node-pty` native module |
-| `npm run check` | Check React, Electron, native language packages, all Editor sources, and K Plan |
+| `npm run check` | Check renderer, Electron, language packages, Editors, and K's Plan |
 | `npm run check:desktop` | Type-check the Electron main process |
 | `npm run build:editors` | Build all first-party Editor packages and shared dependencies |
 | `npm run build:language-servers` | Build trusted first-party native language workers |
-| `npm run check:language-servers` | Verify every native language package has a built runtime |
-| `npm test` | Run K Plan, resource, file-format, language registry, message, and project-order tests |
-| `npm run build` | Build native language workers, Electron main process, Editors, and renderer |
-| `npm run dist:linux` | Build a Linux AppImage |
-| `npm run dist:windows` | Build a Windows NSIS installer |
+| `npm test` | Run the repository test suite |
+| `npm run build` | Build language workers, Electron, Editors, and renderer |
+| `npm run dist:linux` | Build the Linux AppImage |
+| `npm run dist:windows` | Build the Windows NSIS installer |
 
-Platform test scripts:
+Platform checks are also available through `./script/test-linux.sh` and `script\test-windows.bat`.
 
-~~~bash
-./script/test-linux.sh
-~~~
-
-~~~bat
-script\test-windows.bat
-~~~
-
-## Repository layout
+### Repository layout
 
 ~~~text
 AgentK/
-├── electron/               # Electron main process, Pi RPC pool, files, and settings
-│   └── agent/              # External Pi process and JSONL RPC adapter
-├── src/                    # React renderer without Node.js privileges
-├── editor/                 # Programmable Editor SDK, packages, and shared dependencies
-├── language-servers/       # Trusted native language packages and worker sources
-├── extensions/k-plan/      # Bundled K Plan extension
-├── skills/                 # Bundled Pi Skills
-├── assets/icons/           # Desktop and installer icons
-├── script/                 # Windows/Linux run and test scripts
-└── docs/architecture.md    # Detailed architecture boundaries
+├── electron/               # Electron main process, desktop services, and Pi pool
+│   └── agent/              # Pi process and public RPC adapter
+├── src/                    # sandboxed React renderer
+├── editor/                 # programmable Editor SDK and independent packages
+├── language-servers/       # trusted native language packages
+├── extensions/k-plan/      # bundled Pi Extension
+├── skills/                 # bundled Pi Skills
+├── script/                 # Windows/Linux run, test, and build scripts
+└── docs/                   # protocol and architecture documentation
 ~~~
 
-## Providers and credentials
+### Contributing and license
 
-- The model catalog comes from Pi's public `get_available_models` RPC command.
-- API keys cross isolated Electron IPC and are written to Pi's `auth.json`; they are not stored in browser storage.
-- OAuth and structured authentication use the official interactive Pi CLI.
-- Credential paths are `~/.pi/agent/auth.json` on Linux and `%USERPROFILE%\.pi\agent\auth.json` on Windows.
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before starting. The central boundaries are:
 
-## Security
-
-Agent K launches external Pi processes with the current user's permissions. UI execution approval is not an operating-system sandbox. Use a container or virtual machine for untrusted code. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
-
-## Roadmap
-
-The following items are planned and are not part of the current release:
-
-- [ ] **One-click local AI distribution:** bundle llama.cpp and Pi, support self-contained packaging, download local models from ModelScope or Hugging Face, and run them in place without a separate inference-service setup.
-- [x] **Safe Skill Hub installation:** preview and install copied skills.sh/GitHub Skills at user or project scope without executing package installers.
-- [ ] **A broader Skill and Extension ecosystem:** ship more built-in Skills and Extensions and browse additional compatible resource catalogs directly in the app.
-- [x] **Programmable Editor SDK:** `SKILL.md + editor.json + editor.ts + dist` packages can provide complete sandboxed editor micro-apps, custom styles and dependencies while exposing active editor context and capabilities to Pi.
-- [x] **Native language-extension host:** trusted manifest-driven workers can own managed toolchains, project lifecycle, diagnostics, LSP routing, Editor contributions, and future DAP declarations.
-- [ ] **Integrated code debugging:** add debugging workflows for C/C++, Python, and JavaScript/TypeScript, including GDB and MSVC debugger support.
-- [ ] **macOS release:** add a supported macOS application, packaging pipeline, and platform integration.
-
-## Contributing
-
-Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
-
-- Do not vendor, modify, or commit Pi source.
-- Keep Pi protocol behavior in `electron/agent/`.
-- Keep external process management out of the React renderer.
-- Do not remove user-facing behavior without explicit approval.
-
-## License
+- never vendor, edit, or commit Pi source;
+- keep Pi protocol behavior under `electron/agent/`;
+- keep the React renderer process-free;
+- do not remove user-facing functionality without explicit approval.
 
 [MIT](LICENSE) © 2026 Agent K contributors
 
 ---
 
-# 中文说明
+## 第一部分：产品介绍
 
-Agent K 是 [Pi coding agent](https://github.com/earendil-works/pi) 的桌面工作区，可在 Windows 和 Linux 上通过可视化界面管理 Pi 会话、项目文件、工具调用和模型配置。
+### 为 Pi 打造的完整桌面工作区
 
-## 功能
+Agent K 是 Pi 的图形化桌面前端。它不会替代 Pi，也不会创造另一套不兼容的 Agent 生态。你在 Pi 中使用的模型、
+Provider、会话、命令、Skills、Extensions 和项目配置都可以继续使用，同时获得一个更完整、更集中的桌面界面。
 
-- **专为 Pi 打造的 GUI 前端：** 将 Pi 的对话、会话、工具、模型和项目工作流完整呈现在桌面界面中，而不是另造一套 Agent 运行时。
-- **兼容 Pi 生态：** 通过 Pi 公开的 JSONL RPC 接入，保留 Provider、会话、斜杠命令、Skills、Extensions 以及用户级和项目级配置。
-- **Pi Session 池化：** 预热可配置的 2–4 个 Pi RPC worker，将会话绑定到可复用 runtime，繁忙时按需扩容，并自动回收多余的空闲进程。
-- **面向高性能优化：** 使用 GPU 加速的 Chromium 渲染、最高 60 Hz 的尺寸更新、响应式 Monaco 布局、延迟 React 合并和滚动优化，改善长对话与大型文件场景的流畅度。
-- **浅色、深色与跟随系统主题：** 完整的语义配色覆盖工作区、对话框、预览、Markdown 和 Monaco 编辑器，并为不同主题分别优化选区与高亮颜色。
-- **可编程 Editor SDK：** Editor 插件拥有自己的 DOM、CSS、框架和编辑引擎；第一方代码/文本插件自行选择和配置 Monaco，并通过类型化沙箱桥接获得主题、内容、保存、导航及 Pi 能力集成。
-- **原生语言扩展：** 受信任的 worker 包独立拥有工程识别、托管工具链、编译数据库、诊断、LSP/DAP 声明和语义编辑器集成，不把具体语言实现耦合到 Electron 宿主。
-- **项目工作区工具：** 原生 PTY、文件操作与拖放、快速文件名筛选、有界高级内容搜索、CMake 动作、缓存 Editor 标签，以及工作区固定和活跃度排序都与对话并排集成。
-- **Skill Hub 与资源管理器：** 可预览并安装受限的 GitHub/skills.sh Skill，还可在设置中查看、启停 Pi Skills、Extensions、文件 Editor、Editor Skills、语言扩展和 Language Skills。
-- **上下文感知对话：** 自动整理上下文、用量与计费指示、隐藏的 Editor 原始上下文、流式思考/工具进度、代码复制、终端选区加入对话、执行确认、变更审阅、分支和会话历史。
-- **清晰的安全边界：** React 渲染进程没有 Node.js 权限，不能直接启动进程或访问本地文件。
+对话位于界面中央，项目文件、终端和预览编辑器分布在两侧。你无需频繁切换应用，就能看到 Agent 当前正在做什么、
+使用了哪些工具、修改了哪些文件，以及任务是否已经完成。
 
-## 架构
+### 你可以用它做什么
+
+- **同时管理多个项目和会话：** 固定常用工作区，按活跃度查看最近会话，创建对话分支，并在切换后保留原来的界面布局。
+- **实时跟进 Agent 工作：** 在同一个对话界面查看进度、思考过程、工具调用、执行确认、文件变更、耗时、上下文用量和完成状态。
+- **浏览、搜索、预览和编辑文件：** 直接处理代码和文本、Markdown、HTML、图片、音频、视频及 PDF；切换会话或工作区后，
+  最近打开的文件仍可快速恢复。
+- **使用真正的项目终端：** 运行日常命令、复制终端内容，或把选中的输出直接加入聊天框。
+- **可视化管理 Pi 生态：** 查看、安装、启用或关闭 Skills 和 Extensions，无需手动编辑配置文件；文件编辑器和语言功能也有独立开关。
+- **选择模型和权限：** 管理 Provider、切换模型、选择思考级别，并决定某个会话是否允许执行操作。
+- **保持长对话可用：** 可选的自动上下文整理会在容量耗尽前保留近期的重要信息。
+- **适应你的桌面习惯：** 支持浅色、深色和跟随系统主题，并记住窗口大小、边栏宽度、终端高度及面板开关状态。
+- **在大型任务中保持流畅：** 会话复用、文件编辑器缓存和交互优化可以减少切换会话、打开文件、滚动及调整面板时的等待。
+
+### 支持的文件体验
+
+| 类型 | 当前能力 |
+| --- | --- |
+| 代码和文本 | 多标签编辑、语法配色、搜索、撤销、保存、跳转，以及可选的语言辅助 |
+| Markdown | 源码编辑与渲染预览 |
+| HTML | 源码编辑、隔离预览、预览截图和预览控制台查看 |
+| 图片 | 自适应、拖动和平滑缩放 |
+| 音频和视频 | 应用内播放、定位和媒体信息 |
+| PDF | 应用内文档预览 |
+
+还可以独立安装更多文件处理能力，每个文件品类都能在设置中单独启用或关闭。
+
+### 一次典型的使用过程
+
+1. 添加一个项目文件夹，打开已有会话或新建会话。
+2. 让 Pi 检查、解释、修改、编译或测试项目。
+3. 在输入框上方查看当前工作状态，并在工具调用完成后检查结果。
+4. 在对话旁打开变更文件，使用可用的预览功能并审阅修改。
+5. 在同一会话继续工作、创建分支探索另一种方案，或切换到其他项目，同时保留正在进行的任务。
+
+### 聊天框中的快捷命令
+
+在输入框中键入 `/`，即可同时搜索 Pi 命令与 Agent K 操作。
+
+| 命令 | 功能 |
+| --- | --- |
+| `/settings` | 打开 Agent K 设置 |
+| `/skills`、`/extensions`、`/editors` | 打开对应管理器 |
+| `/model [provider/model]` | 选择模型或直接切换 |
+| `/compact [instructions]` | 整理当前对话的上下文 |
+| `/new` | 新建会话 |
+| `/fork`、`/tree` | 查看对话分支 |
+| `/name <name>` | 修改当前会话名称 |
+| `/session` | 查看会话用量和统计 |
+| `/reload` | 应用更新后的 Pi 资源和配置 |
+
+已安装的语言包还可以增加自己的项目操作。
+
+### 平台支持
+
+- Windows 10/11 x64
+- 使用 X11 或 Wayland 的现代 Linux x64 桌面
+- 两个平台都支持浅色、深色和跟随系统主题
+
+正式安装包包含兼容且未经修改的 Pi 发行物，不要求用户另外全局安装 Pi。
+
+### 产品路线图
+
+- 内置 llama.cpp，并支持从 ModelScope 或 Hugging Face 下载本地模型后直接使用。
+- 提供更多内置 Skills 和 Extensions，并在应用内浏览兼容的 Skill 目录。
+- 增加更多专用文件预览和编辑体验。
+- 集成 C/C++、Python、JavaScript/TypeScript 调试流程。
+- 提供正式支持的 macOS 版本。
+
+## 第二部分：技术说明
+
+### 架构与 Pi 边界
 
 ~~~text
-┌─────────────────────────┐
-│ React / TypeScript UI   │
-└────────────┬────────────┘
+┌──────────────────────────┐
+│ React renderer           │
+│ sandboxed, process-free  │
+└────────────┬─────────────┘
              │ context-isolated preload IPC
-┌────────────▼────────────┐
-│ Electron main process   │
-│ Pi pool · files · PTY   │
-└────────────┬────────────┘
-       ┌─────┴──────────────┐
-       │ public JSONL RPC   │ trusted worker IPC
-┌────────────▼────────────┐
-│ external pi --mode rpc  │
-└─────────────────────────┘
-                         ┌─▼────────────────────┐
-                         │ language worker/LSP │
-                         └──────────────────────┘
+┌────────────▼─────────────┐
+│ Electron main process    │
+│ files · PTY · Pi pool    │
+└───────┬───────────┬──────┘
+        │           │ trusted worker IPC
+        │ public JSONL RPC
+┌───────▼──────────┐  ┌────▼────────────────┐
+│ external Pi RPC │  │ language worker/LSP │
+└──────────────────┘  └─────────────────────┘
 ~~~
 
-Agent K **不包含、不修改也不提交 Pi 源码**。Pi 始终作为外部子进程运行，双方只通过公开 RPC 协议协作；正式安装包可以携带未经修改的 Pi 发行物以便一键启动。`.reference/pi/` 仅用于本地查阅上游实现，已排除在版本管理和构建输入之外。
+Agent K 只维护 Visual Client。Pi 始终以 RPC 模式作为外部子进程运行，双方只通过公开协议交互。Agent K 不修改、vendor
+或提交 Pi 源码；`.reference/pi/` 只是被版本管理忽略的本地参考材料。正式发行包可以携带未经修改的 Pi 发行物实现一键启动，
+但不会改变双方的进程边界。
 
-桌面后端使用 TypeScript 编写，Pi 协议适配集中在 `electron/agent/`。渲染进程通过 `electron/preload.cjs` 暴露的窄接口访问桌面能力，并启用 context isolation 和 Chromium sandbox。更多设计细节见[架构文档](docs/architecture.md)。
+所有 Pi 协议相关实现都位于 `electron/agent/`。React 渲染层没有 Node.js 权限，也不能直接管理进程；启用上下文隔离的
+preload 只暴露窄化、类型化的桌面接口。文件系统、凭据、PTY、外部进程和原生语言功能位于 Electron 主进程或独立的
+受信任 worker 中。详见[架构文档](docs/architecture.md)。
 
-## Agent K 命令
+### Pi 运行时选择与 Session Pool
 
-输入 `/` 可搜索 Pi 动态命令和 Agent K 内置命令。内置命令在客户端处理，不会作为普通提示发送给模型。
-
-| 命令 | 操作 |
-| --- | --- |
-| `/settings`、`/skills`、`/extensions`、`/editors` | 打开对应设置页面 |
-| `/model [provider/model]` | 打开模型选择器或直接切换模型 |
-| `/compact [instructions]` | 压缩当前上下文 |
-| `/new` | 新建 Pi 会话 |
-| `/fork`、`/tree` | 打开会话分支导航 |
-| `/name <name>` | 修改当前会话名称 |
-| `/session` | 显示当前会话统计 |
-| `/reload` | 重新加载 Pi 配置、Skills 与 Extensions |
-| `/active-cpp-projects [trace\|restart <root>\|unload <root>]` | 查看或管理内置 C++ 语言扩展贡献的工程 |
-
-原生语言扩展还可以贡献其他工程管理命令；命令名称由各自 manifest 声明，而不是写死在聊天界面中。
-
-## 内置 Skills
-
-Agent K 随应用发布以下自有 Skills，并通过 Pi 的公开 `--skill` 参数加载：
-
-| Skill | 用途 | 运行依赖 |
-| --- | --- | --- |
-| `weather` | 使用 Open-Meteo 查询实时天气、逐小时天气和七日预报 | `bash`、`curl`、`jq` |
-| `gdb-debug` | GDB 启动、崩溃回溯、线程和 core dump 分析工作流 | `bash`、`gdb`、`nm` |
-| `create-agent-k-extensions` | 编写并校验 Editor、原生语言扩展及配套 Skill 包 | 仅可选打包助手需要 Python 3 |
-
-首次启动时，内置 Skills 会复制到稳定的应用数据目录，因此外部 Pi 进程不需要读取 Electron 归档。它们会和用户及项目 Skills 一起显示在 `/skills` 管理器中，可以独立启用或停用；设置窗口关闭后，Agent K 会一次性刷新 worker pool。用户自己的 `~/.pi/agent/skills` 不会被覆盖。
-
-内置脚本面向 POSIX shell 环境。在 Windows 上可通过 Git Bash、MSYS2 或 WSL 使用；Skill 本身仍能被查看和管理。
-
-Skills 页面还接受复制的 `skills add` 命令、skills.sh 链接、GitHub 仓库链接和直接的 GitHub Skill 目录链接。Agent K 最多下载 80 个文件 / 2 MiB，安装前展示完整 `SKILL.md` 和文件列表，安装时再次校验内容哈希，并且不执行 npm lifecycle，可选择用户级或项目级目录。
-
-## 内置 Extension
-
-K's Plan 作为第一方 Pi Extension 随应用发布，并通过 Pi 公开的 `--extension` 参数自动加载。使用 `/plan <描述>` 创建、审阅并执行文件化计划。它会显示在 `/extensions` 管理器中，也可以单独启用或禁用。
-
-## 原生语言扩展
-
-内置 `cpp-clangd` 包会识别 CMake 与 compilation database 工程，并把 C/C++ 诊断、补全、悬停信息、语义高亮、定义/声明跳转和引用查找接入独立的文本 Editor。在 Windows/Linux x64 上首次加载工程时，它会在 Agent K 私有缓存中准备固定版本的 CMake、Ninja 和独立 clangd，校验各归档的 SHA-256，使用工程环境中可用的编译器在源码树之外生成构建元数据，并在独立 worker 进程中启动 clangd。Windows 工程可以使用 Visual Studio Build Tools、Clang 或 MinGW；Agent K 会自动初始化已安装的 Visual Studio C++ 环境，不会下载一个并不完整的编译器 SDK。
-
-语言包位于 `language-servers/`；用户安装且受信任的包会复制到应用数据目录的 `language-server-plugins/`。它们可在 Editor 设置页管理，并且绝不会从当前打开的项目直接加载。内置 DAP 声明预留了 WinDbg、LLDB 和 GDB 集成，但启动调试器仍属于 Roadmap。详见[原生语言扩展协议](docs/language-server-plugin.md)。
-
-## 文件格式 SDK
-
-Agent K 会按精确文件名、绝对路径、扩展名或 MIME type 选择右侧编辑器。文本、Markdown、HTML、图片、音频、视频和 PDF 的第一方处理器都是安装目录 `editor/extensions/` 下完全独立的标准插件包。每个包独占自己的实现和 CSS，插件之间不继承、也不导入任何 UI 代码。
-
-一个格式包包含用于安全发现的 `editor.json`、真正的 UI 源码（例如 `editor.ts`）、`dist/` 下预先构建的浏览器 bundle，以及配套 Pi `SKILL.md`。项目级包可放在 `.pi/skills/` 或 `.agents/skills/`；用户级包可放在 `~/.pi/agent/skills/` 或 `~/.agents/skills/`。匹配优先级依次为项目包、用户包和第一方包。
-
-Agent K 启动时会校验已安装的第一方包、读取开关状态，并通过 Pi 的公开 `--skill` 参数加载启用的 Editor Skill；splash 会显示“配置编辑器插件…”阶段。
-
-独立的 Editor 扩展设置页为每个第一方文件品类和已安装格式包提供各自的 `Editor` 与 `Editor Skill` 开关。关闭某个品类的 Editor 会同时关闭它的 Editor Skill；开启 Editor Skill 会同时开启对应 Editor。
-
-在可编程包中，`editor.ts` 是真正的应用代码。插件可以选择 Monaco、CodeMirror、Canvas、前端框架或原生 DOM，并完整定义自己的界面和功能。Agent K 把编译后的 bundle 放进独立源的 `<iframe sandbox="allow-scripts">` 中运行；插件没有 Node、Electron IPC、宿主 DOM 或直接文件系统权限，只能通过带版本和 nonce 校验的类型化消息桥接交换内容、dirty 状态、保存、主题、导航和行引用。独立 `editor.json` 让发现过程无需执行未知代码。旧版在 `editor.ts` 注释中嵌入 JSON 的格式不再支持。
-
-启用 Editor Skill 后，Agent K 会把当前格式与文件路径作为隐藏的出站上下文提供给 Pi，用户只会在消息的“原始信息”折叠区看到完整内容。`agent_k_file_editor` 提供 `open`、Web 工程预览、预览截图和预览控制台读取等宿主动作。插件还可声明额外能力；第一方音频和视频目前实现 `play`、`pause`、`seek`。Editor 桥接也可以把可选语义请求路由到独立安装的原生语言包。
-
-完整 manifest、字段说明、示例与安全模型见 [文件格式 SDK](docs/file-format-sdk.md)。
-
-## 技术优势
-
-Agent K 同时优化桌面边界的两侧，避免把每次界面操作都变成一次新的 Pi 启动或整棵 React 对话树重绘。
-
-| 领域 | 实现方式 | 带来的优势 |
-| --- | --- | --- |
-| Pi RPC 与 Session 池 | 启动时并行预热 2–4 个 worker，记录每个 Session 对应的 runtime，复用匹配的工作区/会话进程；全部繁忙时自动扩容，超额 worker 空闲五分钟后回收。 | 切换或创建会话通常无需等待新进程启动，不同会话的后台任务也可以继续运行。 |
-| 安全的池刷新 | Skill 与 Extension 改动先保留在设置界面；全部 worker 空闲后，并行创建替代进程、恢复原会话，并且仅在全部成功后替换旧池。 | 一次刷新应用所有资源改动，避免 worker 配置不一致和逐个重启造成的长时间等待。 |
-| Session 与 RPC 复用 | 将 Session 路径映射到 runtime ID；切换时只获取一次历史并作为初始种子交给对话区，后续命令继续使用同一个 Pi 连接。 | 减少导航过程中重复的连接、历史和状态请求。 |
-| 轻量缓存 | Provider/模型目录复用 30 秒，关于信息和浏览器探测共享 Promise，并在后台重任务前先从本地恢复稳定的设置与布局。 | 设置页面再次打开更快，减少重复的系统和模型查询。 |
-| 主题管线 | 持久化浅色、深色和跟随系统模式，实时监听系统配色变化；主要界面统一使用语义 CSS 色彩，Monaco 通过主题事件同步切换并使用独立选区颜色。启动 Splash 也会在 worker 预热完成前解析已保存的主题。 | 从原生启动、应用外壳、预览、对话框到编辑器始终保持一致，避免主题错配和启动闪烁。 |
-| 输入隔离 | `contentEditable` 立即绘制按键输入，普通文本只在停止输入 350 ms 后同步给 React；斜杠命令过滤仍保持即时响应。 | 输入法和连续输入不会在每次按键时触发整个对话区域更新。 |
-| 自动上下文管理 | Agent K Pi Extension 会在响应后上报上下文用量，并可在可配置的 40–90% 阈值自动整理较早内容，同时支持附加摘要提示。 | 长任务可以在硬性上限前保留近期状态和关键工作。 |
-| Monaco 布局控制 | Monaco 由需要代码编辑能力的 Editor 插件自行持有并关闭 `automaticLayout`；宿主桥接在拖动边栏时暂停插件布局，结束后请求一次权威 layout。 | 大型文档不会在侧栏移动过程中反复重排，同时 Agent K 不与 Monaco 强耦合。 |
-| Monaco 依赖缓存 | 精确版本的 Monaco JavaScript 与 CSS 通过只读内部协议加载，复用 Chromium 资源缓存和 V8 编译缓存；各语言 Worker 仅在对应服务实际需要时获取。 | 编辑器 iframe 不再反复传输和编译同一份数 MB bundle，普通文本及非 TypeScript 文件也不会携带 7 MB 的 TypeScript Worker。 |
-| Editor 实例缓存 | 跨标签、会话和工作区保留最近使用的 40 个文件 Editor frame，仅在超过上限后按 LRU 淘汰。 | 返回近期打开的文件时保留已初始化的编辑器，避免再次启动插件或 Monaco。 |
-| 帧预算交互 | 侧栏指针更新限制为最高 60 Hz，滚动测量、自定义滚动条、媒体缩放和延迟布局提交统一通过 `requestAnimationFrame` 调度。 | 减少调整尺寸、滚动和媒体操作时的主线程峰值与画面撕裂。 |
-| 沙箱 Editor 微应用 | 文件编辑器在独立 frame 中渲染，自带依赖和样式，并通过带 nonce 校验的版本化桥接通信；加载前还会验证 runtime bundle 与所有资源的真实路径。 | 第三方格式可以提供真正定制的编辑体验，同时不会取得 Electron 或文件系统权限。 |
-| 原生语言 worker | 受信任包按需 fork，使用私有缓存，并独立拥有工程、工具链和 LSP 行为；内置 C++ 包复用经过校验的下载，并把 CMake 生成内容放在源码树外。 | 语义能力可独立于文本 Editor 和 Electron 宿主演进，昂贵工具链也只需下载一次。 |
-| 项目搜索与终端 | 文件名筛选不需要急切展开整棵树；高级查找支持目录/文件 glob，最多返回 500 个虚拟化结果；项目控制台是平台真实 shell PTY，并在可用时启用 WebGL。 | 大型工作区仍可快速导航，编译命令也保持用户标准终端行为。 |
-
-## 快速开始
-
-### 1. 选择 Pi
-
-正式安装包内置 Pi `0.80.10`，无需全局安装。Agent K 按以下优先级选择 Pi：
+Agent K 按以下顺序选择 Pi：
 
 1. `AGENT_K_PI_EXECUTABLE`
-2. Agent 设置中配置的可执行文件路径
-3. 系统 PATH 中发现的 `pi`
-4. 内置 Pi 运行时
+2. Agent 设置中指定的可执行文件
+3. 系统 `PATH` 中的 `pi`
+4. 随应用提供的 Pi runtime
 
-也可以指定其他 Pi 可执行文件：
+桌面端会预热可配置的 2–4 个 Pi RPC 进程，将 Session 映射到可复用的 runtime，优先保留匹配工作区和会话的进程；
+当全部 worker 都繁忙时自动扩容，超额 worker 空闲五分钟后回收。因此切换 Session 通常会复用已有 RPC 连接，而不是重新启动 Pi。
 
-~~~bash
-export AGENT_K_PI_EXECUTABLE=/absolute/path/to/pi
+Skill 和 Extension 的改动先保留在设置界面。设置关闭且所有 worker 空闲后，替代进程会并行创建、恢复原会话，并且只有在
+全部成功后才原子替换旧池。这种事务式刷新可以避免多个 worker 处于不同资源版本。
+
+### 性能设计
+
+| 领域 | 实现 |
+| --- | --- |
+| 对话输入 | 可编辑区域立即绘制按键；普通文本在停止输入 350 ms 后合并到 React，斜杠命令筛选仍保持即时。输入框状态不会使整棵对话树失效。 |
+| Session 导航 | 复用 runtime 分配、已选择的历史和活跃 RPC 状态，避免每次切换都重新连接和重复获取数据。 |
+| React 渲染 | 对话行与稳定子树使用 memo；流式状态按作用域分离，Agent 事件不会使终端输入或无关面板反复渲染。 |
+| 面板缩放 | 指针回报限制为最高 60 Hz；拖动期间暂停 Editor layout，结束时只请求一次权威布局。 |
+| Monaco 布局 | 代码类 Editor 自行持有 Monaco 并关闭 `automaticLayout`，宿主不访问 Monaco 内部实现。 |
+| 依赖缓存 | 精确版本的 Monaco JavaScript/CSS 通过内部只读协议、Chromium 资源缓存和 V8 编译缓存加载；语言 worker 按需启动。 |
+| Editor 实例缓存 | 跨文件、Session 和工作区保留最近 40 个 Editor frame，超出上限后按 LRU 淘汰。 |
+| 滚动与媒体 | 滚动测量、自定义滚动条、延迟提交和媒体缩放统一使用 `requestAnimationFrame` 控制帧预算。 |
+| 终端 | 项目控制台使用原生 PTY，并在可用时启用 WebGL；终端输入与对话流式输出相互隔离。 |
+| 轻量缓存 | Provider 目录使用短 TTL，关于信息和浏览器探测共享 Promise；布局和主题在后台初始化前恢复。 |
+
+### 可编程文件 Editor SDK
+
+文件 Editor 是相互独立的浏览器应用，不继承公共宿主编辑器。每个包自行拥有 DOM、CSS、框架、编辑引擎、控件和渲染策略，
+包之间不相互导入。匹配条件可以是扩展名、精确文件名、绝对路径或 MIME type。
+
+一个标准包包含：
+
+~~~text
+example-editor/
+├── editor.json       # 发现、匹配、权限和 runtime 元数据
+├── editor.ts         # 真正的应用源码
+├── dist/             # 预构建浏览器 runtime
+└── SKILL.md          # 可选的 Pi 文件格式说明
 ~~~
 
-Windows PowerShell：
+Agent K 在独立源的 `<iframe sandbox="allow-scripts">` 中运行 bundle。frame 没有 Node.js、Electron IPC、宿主 DOM 或直接文件系统
+权限；带 nonce 校验的版本化桥接负责内容、dirty 状态、保存请求、主题、导航、行引用和已声明的可调用能力。执行前还会校验
+runtime bundle 与解析后的真实资源路径。
 
-~~~powershell
-$env:AGENT_K_PI_EXECUTABLE = "C:\path\to\pi.cmd"
-~~~
+`.pi/skills/` 或 `.agents/skills/` 中的项目包优先于 `~/.pi/agent/skills/` 或 `~/.agents/skills/` 中的用户包，用户包又优先于
+第一方包。Editor 与面向 Pi 的 Editor Skill 使用独立开关，但始终保证 Editor 关闭时对应 Skill 不能保持开启。
 
-### 2. 启动 Agent K
+第一方文本包选择 Monaco 0.55.1；其他包可以使用另一 Monaco 版本、CodeMirror、Canvas、任意框架或原生 DOM。依赖按照精确版本
+分别识别和缓存。详见[文件格式 SDK](docs/file-format-sdk.md)。
+
+### 原生语言扩展
+
+原生语言包是拥有进程权限的受信任 worker。它们独立负责项目标记、工具准备、构建数据库、诊断、LSP transport、项目生命周期、
+语义 Editor contribution 和 DAP 声明。包只会从安装目录或应用数据插件目录加载，绝不会直接加载当前工作区中的代码，并且在首次
+使用时才延迟启动。
+
+内置 `cpp-clangd` 包支持 CMake 和 compilation database 工程。在 Windows/Linux x64 上，它会下载固定版本的 CMake 3.31.6、
+Ninja 1.12.1 和独立 clangd 22.1.6，校验 SHA-256 后存入私有缓存。ZIP 归档在进程内解压，不再交给不同平台的 `tar` 实现。
+
+CMake 元数据在源码树之外生成，并使用项目环境中的编译器。Linux 使用已配置的 GCC/Clang；Windows 支持 `CC`/`CXX`、Clang、
+MinGW 或 MSVC，必要时通过 `vswhere` 发现 Visual Studio Build Tools 并初始化 `VsDevCmd`。如果缺少编译器，会返回明确错误，
+而不是下载仍不完整的完整 LLVM SDK。clangd 在独立进程中运行，启用后台索引并把 PCH 保存在磁盘。
+
+详见[原生语言扩展协议](docs/language-server-plugin.md)。
+
+### Pi 资源与 Skill Hub
+
+Agent K 通过 Pi 公开的启动参数提供 Skills 和 Extensions，不修改 Pi runtime。当前内置资源包括：
+
+| 资源 | 用途 |
+| --- | --- |
+| `weather` Skill | 通过 Open-Meteo 查询实时、逐小时和七日天气 |
+| `gdb-debug` Skill | GDB 启动、回溯、线程和 core dump 工作流 |
+| `create-agent-k-extensions` Skill | Agent K 扩展包的编写和校验说明 |
+| K's Plan Extension | 通过 `/plan` 使用严格、文件化的任务规划与审阅流程 |
+
+Skill Hub 接受 `skills add` 命令、skills.sh URL、GitHub 仓库 URL 和直接的 GitHub Skill 目录 URL。预览限制为 80 个文件 / 2 MiB，
+会展示完整 `SKILL.md` 和文件列表，并在安装前校验内容哈希；安装过程不执行 npm lifecycle script。
+
+### 凭据与安全
+
+- Provider 目录来自 Pi 公开的 `get_available_models` RPC。
+- API Key 通过隔离的 Electron IPC 写入 Pi 的 `auth.json`，不会进入浏览器存储。
+- OAuth 与结构化认证使用 Pi 官方交互终端。
+- Linux 凭据路径为 `~/.pi/agent/auth.json`；Windows 为 `%USERPROFILE%\.pi\agent\auth.json`。
+- 渲染层使用 Chromium sandbox，但 Pi 和经过确认的工具仍以当前用户的系统权限运行。执行确认不等于操作系统沙箱；处理不受信任
+  代码时应使用容器或虚拟机。
+
+详见[安全策略](SECURITY.md)。
+
+### 环境要求与源码启动
+
+| 组件 | 要求 |
+| --- | --- |
+| Node.js | 22.19 或更新版本 |
+| Pi | 正式发行包内置；也可使用外部 Pi 0.80.10 或兼容版本 |
+| Windows | Windows 10/11 x64 |
+| Linux | 支持 X11 或 Wayland 的现代 x64 桌面 |
 
 Linux：
 
@@ -455,18 +560,10 @@ cd AgentK
 script\run-windows.bat
 ~~~
 
-启动脚本会安装锁定的 npm 依赖、准备已审查的原生 PTY 模块、通过已审查的官方脚本下载 Electron 运行时，然后启动 Vite 与 Electron。不再需要 Rust、Cargo、WebKitGTK 开发包或 WebView2。
+脚本会安装锁定的 npm 依赖、准备经过审查的原生 PTY 模块、通过已审查的官方安装器下载 Electron runtime，并启动完整开发应用。
+不需要 Rust、Cargo、WebKitGTK 开发包或 WebView2。
 
-## 系统要求
-
-| 组件 | 要求 |
-| --- | --- |
-| Node.js | 22.19 或更新版本 |
-| Pi | 正式安装包内置；可选外部 Pi `0.80.10` 或兼容版本 |
-| Windows | Windows 10/11 x64 |
-| Linux | 支持 X11 或 Wayland 的现代 x64 桌面发行版 |
-
-Electron 自带 Chromium。精简 Linux 安装若缺少运行库，可安装：
+精简 Linux 系统可能需要 Chromium 运行库：
 
 ~~~bash
 # Debian / Ubuntu
@@ -476,9 +573,9 @@ sudo apt install libgtk-3-0 libnss3 libasound2t64 libgbm1
 sudo dnf install gtk3 nss alsa-lib mesa-libgbm
 ~~~
 
-## 开发与构建
+### 开发与构建
 
-安装依赖时默认不执行第三方生命周期脚本；随后显式准备已审查的 PTY 模块和 Electron 运行时：
+安装依赖时不执行未经审查的第三方 lifecycle script，然后显式准备已审查的原生组件：
 
 ~~~bash
 npm ci --ignore-scripts
@@ -486,81 +583,46 @@ npm run prepare:native
 node node_modules/electron/install.js
 ~~~
 
-Linux 源码开发环境构建 `node-pty` 时需要 Python 3、`make` 和 C++ 编译器；正式安装包已包含编译好的原生模块。
+Linux 源码环境构建 `node-pty` 需要 Python 3、`make` 和 C++ 编译器；正式发行包已包含准备好的原生模块。
 
 | 命令 | 用途 |
 | --- | --- |
-| `npm run dev` | 启动 Vite 与完整 Electron 开发环境 |
-| `npm run dev:web` | 只启动 Vite 渲染层 |
+| `npm run dev` | 启动 Vite 和完整 Electron 开发环境 |
+| `npm run dev:web` | 只启动渲染层 |
 | `npm run prepare:native` | 准备已审查的 `node-pty` 原生模块 |
-| `npm run check` | 检查 React、Electron、原生语言包、全部 Editor 源码和 K Plan |
+| `npm run check` | 检查渲染层、Electron、语言包、Editors 和 K's Plan |
 | `npm run check:desktop` | 检查 Electron 主进程 TypeScript |
-| `npm run build:editors` | 构建全部第一方 Editor 包和共享依赖 |
+| `npm run build:editors` | 构建全部第一方 Editor 包及共享依赖 |
 | `npm run build:language-servers` | 构建受信任的第一方原生语言 worker |
-| `npm run check:language-servers` | 验证每个原生语言包都已有构建产物 |
-| `npm test` | 运行 K Plan、资源、文件格式、语言注册表、消息和工程排序测试 |
-| `npm run build` | 构建原生语言 worker、Electron 主进程、Editors 与渲染层 |
+| `npm test` | 运行仓库测试套件 |
+| `npm run build` | 构建语言 worker、Electron、Editors 和渲染层 |
 | `npm run dist:linux` | 生成 Linux AppImage |
-| `npm run dist:windows` | 在 Windows 上生成 NSIS 安装包 |
+| `npm run dist:windows` | 生成 Windows NSIS 安装包 |
 
-平台测试脚本：
+还可以使用 `./script/test-linux.sh` 和 `script\test-windows.bat` 运行平台检查。
 
-~~~bash
-./script/test-linux.sh
-~~~
-
-~~~bat
-script\test-windows.bat
-~~~
-
-## 仓库结构
+### 仓库结构
 
 ~~~text
 AgentK/
-├── electron/               # Electron 主进程、Pi RPC pool、文件与设置服务
-│   └── agent/              # Pi 外部进程与 JSONL RPC 适配
-├── src/                    # 无 Node.js 权限的 React 渲染进程
-├── editor/                 # 可编程 Editor SDK、插件包与共享依赖
-├── language-servers/       # 受信任的原生语言包与 worker 源码
-├── extensions/k-plan/      # 随客户端发布的 K Plan 扩展
-├── skills/                 # 随客户端发布的 Pi Skills
-├── assets/icons/           # 桌面和安装包图标
-├── script/                 # Windows/Linux 运行与测试脚本
-└── docs/architecture.md    # 详细架构边界
+├── electron/               # Electron 主进程、桌面服务和 Pi pool
+│   └── agent/              # Pi 进程与公开 RPC 适配
+├── src/                    # 沙箱化 React 渲染层
+├── editor/                 # 可编程 Editor SDK 与独立插件包
+├── language-servers/       # 受信任的原生语言包
+├── extensions/k-plan/      # 内置 Pi Extension
+├── skills/                 # 内置 Pi Skills
+├── script/                 # Windows/Linux 运行、测试与构建脚本
+└── docs/                   # 协议与架构文档
 ~~~
 
-## Provider 与凭据
+### 参与贡献与许可证
 
-- 模型目录来自 Pi 的公开 `get_available_models` RPC。
-- API Key 通过隔离的 Electron IPC 写入 Pi 的 `auth.json`，不会进入浏览器存储。
-- OAuth 或结构化认证使用官方 Pi 交互终端完成。
-- Linux 凭据路径为 `~/.pi/agent/auth.json`；Windows 为 `%USERPROFILE%\.pi\agent\auth.json`。
+欢迎提交 Issue 和 Pull Request。开始前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。核心边界包括：
 
-## 安全说明
-
-Agent K 会以当前用户权限启动外部 Pi 进程。界面的执行确认不是操作系统级沙箱；处理不受信任的代码时，请使用容器或虚拟机。漏洞报告方式见 [SECURITY.md](SECURITY.md)。
-
-## Roadmap
-
-以下内容属于后续规划，尚未包含在当前版本中：
-
-- [ ] **一键式本地 AI 发行包：** 内置 llama.cpp 与 Pi，支持一键式完整打包；可从 ModelScope 或 Hugging Face 下载本地大模型，并在原位置直接运行，无需额外配置推理服务。
-- [x] **安全的 Skill Hub 安装：** 无需执行包安装器，即可预览复制的 skills.sh/GitHub Skill，并安装到用户或项目范围。
-- [ ] **更丰富的 Skill 与 Extension 生态：** 内置更多 Skills 和 Extensions，并直接在应用内浏览更多兼容资源目录。
-- [x] **可编程 Editor SDK：** `SKILL.md + editor.json + editor.ts + dist` 包可提供完整的沙箱编辑器微应用、自定义样式和依赖，并把当前编辑器上下文与能力接入 Pi。
-- [x] **原生语言扩展宿主：** 受信任、manifest 驱动的 worker 可独立拥有托管工具链、工程生命周期、诊断、LSP 路由、Editor contribution 与未来 DAP 声明。
-- [ ] **集成代码调试：** 支持 C/C++、Python、JavaScript/TypeScript 的调试工作流，包括 GDB 与 MSVC 调试器。
-- [ ] **macOS 版本：** 提供正式支持的 macOS 应用、打包流程和平台集成。
-
-## 参与贡献
-
-欢迎提交 Issue 和 Pull Request。开始前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-- 不 vendor、修改或提交 Pi 源码。
-- Pi 协议行为集中在 `electron/agent/`。
-- React 渲染层不直接管理外部进程。
+- 不 vendor、修改或提交 Pi 源码；
+- Pi 协议行为集中在 `electron/agent/`；
+- React 渲染层不直接管理进程；
 - 未经明确许可，不移除面向用户的现有功能。
-
-## 许可证
 
 [MIT](LICENSE) © 2026 Agent K contributors
