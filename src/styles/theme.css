@@ -25,6 +25,28 @@
   font-synthesis: none;
 }
 
+:root[data-theme="soft-light"] {
+  color-scheme: light;
+  --surface-app: #d9d5cf;
+  --surface-panel: #e2ded8;
+  --surface-raised: #ece9e4;
+  --surface-hover: #d3cec7;
+  --surface-active: #c8c2ba;
+  --border-color: #c8c1b8;
+  --border-strong: #b8b0a7;
+  --text-primary: #272523;
+  --text-secondary: #5e5953;
+  --text-muted: #777069;
+  --accent: #302d2a;
+  --selection-background: #a8c9e8;
+  --selection-foreground: #092e4f;
+  --scrollbar-thumb: #aaa39b;
+  --scrollbar-thumb-hover: #817a72;
+  --modal-overlay: rgb(28 25 22 / 44%);
+  color: var(--text-primary);
+  background: var(--surface-app);
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
   --surface-app: #1f1f1f;
@@ -352,6 +374,93 @@ body {
 .discovered-models button { background: var(--surface-panel); border: 0; border-radius: 6px; color: var(--text-secondary); padding: 5px 7px; }
 .settings-subdialog footer { display: flex; gap: 7px; justify-content: flex-end; margin-top: 7px; }
 .settings-subdialog footer .primary-button { background: var(--accent); border-color: var(--accent); color: var(--surface-raised); }
+
+:root[data-theme="soft-light"] body,
+:root[data-theme="soft-light"] .app-frame,
+:root[data-theme="soft-light"] .app-workspace { background: var(--surface-app); color: var(--text-primary); }
+:root[data-theme="soft-light"] .workspace-surface,
+:root[data-theme="soft-light"] .conversation-layout,
+:root[data-theme="soft-light"] .message-list,
+:root[data-theme="soft-light"] .app-sidebar,
+:root[data-theme="soft-light"] .sidebar-footer,
+:root[data-theme="soft-light"] .inspector-panel,
+:root[data-theme="soft-light"] .file-tree-panel,
+:root[data-theme="soft-light"] .editor-pane,
+:root[data-theme="soft-light"] .media-preview {
+  background: var(--surface-panel);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+:root[data-theme="soft-light"] .window-controls button,
+:root[data-theme="soft-light"] .workspace-header,
+:root[data-theme="soft-light"] .composer,
+:root[data-theme="soft-light"] .message-user .message-content,
+:root[data-theme="soft-light"] .tool-card,
+:root[data-theme="soft-light"] .message-file-changes,
+:root[data-theme="soft-light"] .file-change-summary,
+:root[data-theme="soft-light"] .load-history,
+:root[data-theme="soft-light"] .inspector-tabs,
+:root[data-theme="soft-light"] .review-panel > header,
+:root[data-theme="soft-light"] .review-file-header,
+:root[data-theme="soft-light"] .review-file-header button {
+  background: var(--surface-raised);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+:root[data-theme="soft-light"] .window-controls button:hover:not(.window-close),
+:root[data-theme="soft-light"] .session-item:hover,
+:root[data-theme="soft-light"] .row-action:hover,
+:root[data-theme="soft-light"] .project-new-session:hover,
+:root[data-theme="soft-light"] .file-node:hover,
+:root[data-theme="soft-light"] .tree-folder-toggle:hover,
+:root[data-theme="soft-light"] .tree-folder-toggle:focus-visible,
+:root[data-theme="soft-light"] .response-actions button:hover:not(:disabled),
+:root[data-theme="soft-light"] .inspector-tabs button:hover:not(:disabled),
+:root[data-theme="soft-light"] .editor-actions button:hover:not(:disabled),
+:root[data-theme="soft-light"] .review-body nav button:hover,
+:root[data-theme="soft-light"] .review-body nav button.active { background: var(--surface-hover); color: var(--text-primary); }
+:root[data-theme="soft-light"] .session-item.is-active,
+:root[data-theme="soft-light"] .file-row.is-selected,
+:root[data-theme="soft-light"] .new-task-button,
+:root[data-theme="soft-light"] .file-explorer summary.selected,
+:root[data-theme="soft-light"] .file-node.selected,
+:root[data-theme="soft-light"] .file-tab.active {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+:root[data-theme="soft-light"] .header-action,
+:root[data-theme="soft-light"] .file-tab,
+:root[data-theme="soft-light"] .inspector-tabs button,
+:root[data-theme="soft-light"] .editor-actions button,
+:root[data-theme="soft-light"] .inspector-dialog > footer button {
+  background: var(--surface-hover);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+:root[data-theme="soft-light"] .tab-strip,
+:root[data-theme="soft-light"] .file-explorer,
+:root[data-theme="soft-light"] .review-body nav {
+  background: var(--surface-panel);
+  border-color: var(--border-color);
+}
+:root[data-theme="soft-light"] .inspector-search input,
+:root[data-theme="soft-light"] .inspector-dialog > input {
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+:root[data-theme="soft-light"] .message-content,
+:root[data-theme="soft-light"] .message-meta,
+:root[data-theme="soft-light"] .review-panel > header h2,
+:root[data-theme="soft-light"] .review-file-header { color: var(--text-primary); }
+:root[data-theme="soft-light"] .message-content th { background: var(--surface-active); }
+:root[data-theme="soft-light"] .message-content th,
+:root[data-theme="soft-light"] .message-content td { border-color: var(--border-strong); }
+:root[data-theme="soft-light"] .message-content code { background: var(--surface-hover); }
+:root[data-theme="soft-light"] .file-change-icon { background: var(--surface-hover); color: var(--text-secondary); }
+:root[data-theme="soft-light"] .editor-resizer::after { background: var(--border-color); }
+:root[data-theme="soft-light"] .inspector-search input::placeholder { color: var(--text-muted); }
+:root[data-theme="soft-light"] .message-list { scrollbar-color: var(--scrollbar-thumb) transparent; }
 
 :root[data-theme="dark"] body,
 :root[data-theme="dark"] .app-frame,

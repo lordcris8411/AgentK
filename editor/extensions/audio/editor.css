@@ -1,4 +1,5 @@
 :root { color-scheme: light; --audio-background: #f6f4f1; --audio-border: #d7d1ca; --audio-text: #302e2b; --audio-card: #fff; }
+:root[data-theme="soft-light"] { color-scheme: light; --audio-background: #e2ded8; --audio-border: #c2bbb2; --audio-text: #292725; --audio-card: #ece9e4; }
 :root[data-theme="dark"] { color-scheme: dark; --audio-background: #252422; --audio-border: #45413d; --audio-text: #e8e4df; --audio-card: #302f2c; }
 html, body, #agent-k-editor-root { height: 100%; margin: 0; overflow: hidden; width: 100%; }
 body { background: var(--audio-background); color: var(--audio-text); font: 12px/1.5 "Noto Sans SC", "Segoe UI", sans-serif; }

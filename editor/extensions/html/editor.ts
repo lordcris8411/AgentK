@@ -7,7 +7,11 @@ const monaco = (globalThis as typeof globalThis & {
 }).AgentKEditorDependencies.monaco;
 
 function themeName(theme: EditorTheme): string {
-  return theme === "dark" ? "agent-k-html-dark" : "agent-k-html-light";
+  return theme === "dark"
+    ? "agent-k-html-dark"
+    : theme === "soft-light"
+      ? "agent-k-html-soft-light"
+      : "agent-k-html-light";
 }
 
 defineEditor((host, initial) => {
@@ -15,6 +19,10 @@ defineEditor((host, initial) => {
   monaco.editor.defineTheme("agent-k-html-light", {
     base: "vs", inherit: true, rules: [],
     colors: { "editor.background": "#F6F4F1", "editorGutter.background": "#F6F4F1", "editor.selectionBackground": "#B6D7FF" },
+  });
+  monaco.editor.defineTheme("agent-k-html-soft-light", {
+    base: "vs", inherit: true, rules: [],
+    colors: { "editor.background": "#E2DED8", "editorGutter.background": "#E2DED8", "editor.selectionBackground": "#A8C9E8" },
   });
   monaco.editor.defineTheme("agent-k-html-dark", {
     base: "vs-dark", inherit: true, rules: [],

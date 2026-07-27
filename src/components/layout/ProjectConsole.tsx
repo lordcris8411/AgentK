@@ -6,56 +6,69 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { desktop } from "../../lib/desktop";
 import { platform } from "../../lib/platform";
-import { useSettings } from "../../features/settings/SettingsContext";
+import {
+  useSettings,
+  type ResolvedTheme,
+} from "../../features/settings/SettingsContext";
 
-function terminalTheme(dark: boolean): ITheme {
-  return dark
+function terminalTheme(theme: ResolvedTheme): ITheme {
+  if (theme === "dark") {
+    return {
+      background: "#242321",
+      foreground: "#dedad4",
+      cursor: "#dedad4",
+      cursorAccent: "#242321",
+      selectionBackground: "#69533f",
+      black: "#242321",
+      red: "#d17a6d",
+      green: "#8fb573",
+      yellow: "#d5ad68",
+      blue: "#75a9c7",
+      magenta: "#b998c5",
+      cyan: "#72b8ad",
+      white: "#dedad4",
+      brightBlack: "#817b73",
+      brightRed: "#eb9184",
+      brightGreen: "#a8cc8d",
+      brightYellow: "#ebc47c",
+      brightBlue: "#8dc3e0",
+      brightMagenta: "#d0addb",
+      brightCyan: "#8ed0c5",
+      brightWhite: "#fffdf9",
+    };
+  }
+  const lightTheme: ITheme = {
+    background: "#fffdf9",
+    foreground: "#302d2a",
+    cursor: "#302d2a",
+    cursorAccent: "#fffdf9",
+    selectionBackground: "#d9c3ae",
+    black: "#302d2a",
+    red: "#a73e32",
+    green: "#557d3e",
+    yellow: "#936a20",
+    blue: "#316e92",
+    magenta: "#795388",
+    cyan: "#27796f",
+    white: "#e7e2dc",
+    brightBlack: "#77716a",
+    brightRed: "#c45548",
+    brightGreen: "#6d974f",
+    brightYellow: "#ad8132",
+    brightBlue: "#4488af",
+    brightMagenta: "#9369a3",
+    brightCyan: "#38958a",
+    brightWhite: "#ffffff",
+  };
+  return theme === "soft-light"
     ? {
-        background: "#242321",
-        foreground: "#dedad4",
-        cursor: "#dedad4",
-        cursorAccent: "#242321",
-        selectionBackground: "#69533f",
-        black: "#242321",
-        red: "#d17a6d",
-        green: "#8fb573",
-        yellow: "#d5ad68",
-        blue: "#75a9c7",
-        magenta: "#b998c5",
-        cyan: "#72b8ad",
-        white: "#dedad4",
-        brightBlack: "#817b73",
-        brightRed: "#eb9184",
-        brightGreen: "#a8cc8d",
-        brightYellow: "#ebc47c",
-        brightBlue: "#8dc3e0",
-        brightMagenta: "#d0addb",
-        brightCyan: "#8ed0c5",
-        brightWhite: "#fffdf9",
+        ...lightTheme,
+        background: "#e2ded8",
+        cursorAccent: "#e2ded8",
+        white: "#d2ccc4",
+        brightWhite: "#f0ede8",
       }
-    : {
-        background: "#fffdf9",
-        foreground: "#302d2a",
-        cursor: "#302d2a",
-        cursorAccent: "#fffdf9",
-        selectionBackground: "#d9c3ae",
-        black: "#302d2a",
-        red: "#a73e32",
-        green: "#557d3e",
-        yellow: "#936a20",
-        blue: "#316e92",
-        magenta: "#795388",
-        cyan: "#27796f",
-        white: "#e7e2dc",
-        brightBlack: "#77716a",
-        brightRed: "#c45548",
-        brightGreen: "#6d974f",
-        brightYellow: "#ad8132",
-        brightBlue: "#4488af",
-        brightMagenta: "#9369a3",
-        brightCyan: "#38958a",
-        brightWhite: "#ffffff",
-      };
+    : lightTheme;
 }
 
 export function ProjectConsole({ root, onError }: { root?: string; onError(message: string): void }) {
@@ -128,7 +141,7 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
       fontSize: 12,
       lineHeight: 1.25,
       scrollback: 10_000,
-      theme: terminalTheme(resolvedTheme === "dark"),
+      theme: terminalTheme(resolvedTheme),
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -195,7 +208,7 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) return;
-    terminal.options.theme = terminalTheme(resolvedTheme === "dark");
+    terminal.options.theme = terminalTheme(resolvedTheme);
   }, [resolvedTheme]);
 
   useEffect(() => {

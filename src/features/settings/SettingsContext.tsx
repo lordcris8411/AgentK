@@ -11,10 +11,11 @@ import {
 import { desktop, type ClientSettings } from "../../lib/desktop";
 
 export type Locale = "zh-CN" | "en-US";
-export type ThemeMode = "light" | "dark" | "system";
+export type ThemeMode = "light" | "soft-light" | "dark" | "system";
+export type ResolvedTheme = Exclude<ThemeMode, "system">;
 
 const fallback: ClientSettings = {
-  version: 9,
+  version: 10,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
@@ -62,6 +63,8 @@ const dictionaries = {
     about: "关于",
     close: "关闭",
     light: "白天模式",
+    softLight: "柔和亮色",
+    softLightDescription: "柔和亮色会降低界面、编辑器和终端的纸白亮度，适合 HDR 显示器；图片、视频和网页预览内容不会被压暗。",
     dark: "黑夜模式",
     systemTheme: "跟随系统",
     language: "界面语言",
@@ -211,6 +214,8 @@ const dictionaries = {
     about: "About",
     close: "Close",
     light: "Light",
+    softLight: "Soft light",
+    softLightDescription: "Soft light lowers the paper-white level of the interface, editors, and terminal for HDR displays without dimming images, video, or web previews.",
     dark: "Dark",
     systemTheme: "System",
     language: "Interface language",
@@ -345,7 +350,7 @@ const dictionaries = {
 
 type SettingsContextValue = {
   settings: ClientSettings;
-  resolvedTheme: "light" | "dark";
+  resolvedTheme: ResolvedTheme;
   ready: boolean;
   update(patch: Partial<ClientSettings>): Promise<void>;
   t: (key: keyof (typeof dictionaries)["zh-CN"]) => string;
@@ -353,7 +358,7 @@ type SettingsContextValue = {
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);
 
-function applyTheme(locale: Locale, theme: "light" | "dark") {
+function applyTheme(locale: Locale, theme: ResolvedTheme) {
   document.documentElement.dataset.theme = theme;
   document.documentElement.lang = locale;
   window.dispatchEvent(new CustomEvent("agent-k-theme", { detail: theme }));

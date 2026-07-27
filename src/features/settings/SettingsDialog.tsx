@@ -674,9 +674,11 @@ export function SettingsDialog({
                   <label>{t("appearance")}</label>
                   <div className="segmented-control">
                     <button className={settings.theme === "light" ? "is-active" : ""} onClick={() => void update({ theme: "light" })} type="button"><i className="fa-regular fa-sun" /> {t("light")}</button>
+                    <button className={settings.theme === "soft-light" ? "is-active" : ""} onClick={() => void update({ theme: "soft-light" })} type="button"><i className="fa-solid fa-cloud-sun" /> {t("softLight")}</button>
                     <button className={settings.theme === "dark" ? "is-active" : ""} onClick={() => void update({ theme: "dark" })} type="button"><i className="fa-regular fa-moon" /> {t("dark")}</button>
                     <button className={settings.theme === "system" ? "is-active" : ""} onClick={() => void update({ theme: "system" })} type="button"><i className="fa-solid fa-desktop" /> {t("systemTheme")}</button>
                   </div>
+                  <p className="settings-description">{t("softLightDescription")}</p>
                 </div>
                 <div className="settings-section">
                   <label htmlFor="settings-language">{t("language")}</label>

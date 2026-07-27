@@ -33,7 +33,12 @@ function versionsFor(call: ReviewCall) {
 function languageFor(path: string) { const extension = path.split(".").pop()?.toLowerCase(); return ({ py: "python", pyw: "python", ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", json: "json", md: "markdown", yml: "yaml", yaml: "yaml", sh: "shell", ps1: "powershell", rs: "rust", css: "css", html: "html", xml: "xml" } as Record<string, string>)[extension ?? ""] ?? "plaintext"; }
 
 export function ReviewPanel({ calls, root, onClose, onError }: { calls: ReviewCall[]; root?: string; onClose(): void; onError(message: string): void }) {
-  const editorTheme = useSettings().resolvedTheme === "dark" ? "agent-k-dark" : "agent-k-light";
+  const { resolvedTheme } = useSettings();
+  const editorTheme = resolvedTheme === "dark"
+    ? "agent-k-dark"
+    : resolvedTheme === "soft-light"
+      ? "agent-k-soft-light"
+      : "agent-k-light";
   const [selected, setSelected] = useState(0);
   const [reverted, setReverted] = useState<Set<number>>(() => new Set());
   const call = calls[selected];

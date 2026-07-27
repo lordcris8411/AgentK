@@ -27,9 +27,28 @@ export function defineAgentKTheme(monaco: typeof Monaco) {
       "editor.selectionHighlightBackground": "#2F669966",
     },
   });
+  monaco.editor.defineTheme("agent-k-soft-light", {
+    base: "vs",
+    inherit: true,
+    rules: [],
+    colors: {
+      "editor.background": "#E2DED8",
+      "editorGutter.background": "#E2DED8",
+      "editor.lineHighlightBackground": "#D8E0E5",
+      "editor.selectionBackground": "#A8C9E8",
+      "editor.inactiveSelectionBackground": "#C4D7E5",
+      "editor.selectionHighlightBackground": "#B8CFDF99",
+    },
+  });
   window.addEventListener("agent-k-theme", (event) => {
     const mode = (event as CustomEvent<string>).detail;
-    monaco.editor.setTheme(mode === "dark" ? "agent-k-dark" : "agent-k-light");
+    monaco.editor.setTheme(
+      mode === "dark"
+        ? "agent-k-dark"
+        : mode === "soft-light"
+          ? "agent-k-soft-light"
+          : "agent-k-light",
+    );
   });
 }
 
@@ -37,6 +56,8 @@ export function applyAgentKTheme(_: unknown, monaco: typeof Monaco) {
   monaco.editor.setTheme(
     document.documentElement.dataset.theme === "dark"
       ? "agent-k-dark"
-      : "agent-k-light",
+      : document.documentElement.dataset.theme === "soft-light"
+        ? "agent-k-soft-light"
+        : "agent-k-light",
   );
 }

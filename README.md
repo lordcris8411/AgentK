@@ -76,7 +76,7 @@ and agent workflow are shipped together.
   run actions.
 - **Keep long conversations useful:** optional automatic context cleanup preserves the important recent state before the context
   becomes full.
-- **Match your desktop:** choose light, dark, or system theme. Window size, panel widths, terminal height, and panel visibility are
+- **Match your desktop:** choose light, HDR-friendly soft light, dark, or system theme. Window size, panel widths, terminal height, and panel visibility are
   remembered for the next launch.
 - **Stay responsive on larger work:** session reuse, file-editor caching, and interaction optimizations reduce pauses when
   switching conversations, opening files, scrolling, or resizing panels.
@@ -184,7 +184,7 @@ Installed language packages may add their own project actions.
 
 - Windows 10/11 x64
 - Modern Linux x64 desktops using X11 or Wayland
-- Light, dark, and system theme modes on both platforms
+- Light, HDR-friendly soft light, dark, and system theme modes on both platforms
 
 Release builds include a compatible, unmodified Pi distribution, so a separate global Pi installation is not required.
 
@@ -491,7 +491,7 @@ Agent K 还具备自扩展能力：**用户可以直接在 Agent K 中与 Pi 协
 - **可视化管理 Pi 生态：** 查看、安装、启用或关闭 Skills 和 Extensions，无需手动编辑配置文件；文件编辑器和语言功能也有独立开关。
 - **选择模型和权限：** 管理 Provider、切换模型、选择思考级别，并决定某个会话是否允许执行操作。
 - **保持长对话可用：** 可选的自动上下文整理会在容量耗尽前保留近期的重要信息。
-- **适应你的桌面习惯：** 支持浅色、深色和跟随系统主题，并记住窗口大小、边栏宽度、终端高度及面板开关状态。
+- **适应你的桌面习惯：** 支持浅色、适合 HDR 显示器的柔和亮色、深色和跟随系统主题，并记住窗口大小、边栏宽度、终端高度及面板开关状态。
 - **在大型任务中保持流畅：** 会话复用、文件编辑器缓存和交互优化可以减少切换会话、打开文件、滚动及调整面板时的等待。
 
 ### Editor Skill 模型带来的可能性
@@ -593,7 +593,7 @@ Agent K 不会静默信任或安装生成的代码。Editor Extension 通过校�
 
 - Windows 10/11 x64
 - 使用 X11 或 Wayland 的现代 Linux x64 桌面
-- 两个平台都支持浅色、深色和跟随系统主题
+- 两个平台都支持浅色、适合 HDR 显示器的柔和亮色、深色和跟随系统主题
 
 正式安装包包含兼容且未经修改的 Pi 发行物，不要求用户另外全局安装 Pi。
 

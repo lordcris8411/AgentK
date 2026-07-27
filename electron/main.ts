@@ -20,8 +20,31 @@ import {
 import { DesktopBackend } from "./backend.js";
 import { editorPluginDependencyFilePath } from "./file-formats.js";
 import { loadClientSettings } from "./settings.js";
-import type { JsonObject } from "./types.js";
+import type { ClientSettings, JsonObject } from "./types.js";
 import { asObject, errorMessage } from "./utils.js";
+
+if (
+  process.platform === "linux" &&
+  (process.env.XDG_SESSION_TYPE?.toLowerCase() === "wayland" || process.env.WAYLAND_DISPLAY)
+) {
+  // Chromium's wp_color_manager_v1 integration currently retries unsupported
+  // image-description transfers whenever a BrowserWindow surface changes.
+  // Opening/resizing the project console therefore floods stderr on affected
+  // compositors. Keep native Wayland and GPU acceleration, but use Chromium's
+  // normal sRGB path until that optional protocol interoperates reliably.
+  const feature = "WaylandWpColorManagerV1";
+  const disabledFeatures = app.commandLine
+    .getSwitchValue("disable-features")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!disabledFeatures.includes(feature)) {
+    app.commandLine.appendSwitch(
+      "disable-features",
+      [...disabledFeatures, feature].join(","),
+    );
+  }
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -150,8 +173,16 @@ function firstPartyLanguageServerPluginsPath(): string {
     : projectPath("language-servers");
 }
 
-function createWindows(): void {
+function resolvedAppearanceTheme(
+  theme: ClientSettings["theme"],
+): "light" | "soft-light" | "dark" {
+  if (theme === "system") return nativeTheme.shouldUseDarkColors ? "dark" : "light";
+  return theme;
+}
+
+function createWindows(theme: ClientSettings["theme"]): void {
   const preload = projectPath("electron", "preload.cjs");
+  const appearance = resolvedAppearanceTheme(theme);
   mainWindow = new BrowserWindow({
     title: "Agent K",
     width: 1600,
@@ -160,7 +191,11 @@ function createWindows(): void {
     minHeight: 640,
     frame: false,
     show: false,
-    backgroundColor: "#f4f2ee",
+    backgroundColor: appearance === "dark"
+      ? "#1f1f1f"
+      : appearance === "soft-light"
+        ? "#dedad4"
+        : "#f4f2ee",
     icon: projectPath("assets", "icons", "icon.png"),
     webPreferences: {
       contextIsolation: true,
@@ -340,9 +375,11 @@ function notifyWindowState(): void {
 function applySplashState(): void {
   if (!splashState || !splashWindow || splashWindow.isDestroyed()) return;
   const { current, message, theme, total } = splashState;
-  const resolvedTheme = theme === "system"
-    ? nativeTheme.shouldUseDarkColors ? "dark" : "light"
-    : theme === "dark" ? "dark" : "light";
+  const resolvedTheme = resolvedAppearanceTheme(
+    ["light", "soft-light", "dark", "system"].includes(theme)
+      ? theme as ClientSettings["theme"]
+      : "light",
+  );
   if (!splashWindow || splashWindow.isDestroyed()) return;
   const percent = total > 0 ? (Math.min(current, total) / total) * 100 : 0;
   void splashWindow.webContents.executeJavaScript(
@@ -589,7 +626,7 @@ async function start(): Promise<void> {
       });
     });
   }
-  createWindows();
+  createWindows(startupSettings.theme);
   registerIpc();
   backend = new DesktopBackend({
     appDataPath,

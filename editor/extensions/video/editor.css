@@ -1,4 +1,5 @@
 :root { color-scheme: light; --video-background: #f6f4f1; --video-border: #d7d1ca; --video-text: #302e2b; }
+:root[data-theme="soft-light"] { color-scheme: light; --video-background: #e2ded8; --video-border: #c2bbb2; --video-text: #292725; }
 :root[data-theme="dark"] { color-scheme: dark; --video-background: #252422; --video-border: #45413d; --video-text: #e8e4df; }
 html, body, #agent-k-editor-root { height: 100%; margin: 0; overflow: hidden; width: 100%; }
 body { background: var(--video-background); color: var(--video-text); font: 12px/1.5 "Noto Sans SC", "Segoe UI", sans-serif; }

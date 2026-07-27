@@ -2,7 +2,7 @@ export type JsonObject = Record<string, unknown>;
 
 export interface ClientSettings {
   version: number;
-  theme: "light" | "dark" | "system";
+  theme: "light" | "soft-light" | "dark" | "system";
   locale: "zh-CN" | "en-US";
   permissionMode: "ask" | "full";
   browserId: string;

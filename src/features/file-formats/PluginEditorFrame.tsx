@@ -61,7 +61,7 @@ type PluginEditorFrameProps = {
   };
   readOnly?: boolean;
   root: string;
-  theme: "light" | "dark";
+  theme: "light" | "soft-light" | "dark";
   wordWrap: boolean;
 };
 

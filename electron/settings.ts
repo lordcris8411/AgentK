@@ -26,7 +26,7 @@ export interface ProviderDraft {
 }
 
 const DEFAULT_SETTINGS: ClientSettings = {
-  version: 9,
+  version: 10,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
@@ -88,7 +88,7 @@ function sameStringArray(value: unknown, expected: string[]): boolean {
 export function parseClientSettings(value: unknown): ClientSettings {
   const source = asObject(value);
   const settings = { ...DEFAULT_SETTINGS };
-  if (["light", "dark", "system"].includes(String(source.theme)))
+  if (["light", "soft-light", "dark", "system"].includes(String(source.theme)))
     settings.theme = source.theme as ClientSettings["theme"];
   if (["zh-CN", "en-US"].includes(String(source.locale)))
     settings.locale = source.locale as ClientSettings["locale"];
@@ -150,7 +150,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.windowHeight = Number(source.windowHeight);
   if (typeof source.windowMaximized === "boolean")
     settings.windowMaximized = source.windowMaximized;
-  settings.version = Math.max(9, Number(source.version) || 9);
+  settings.version = Math.max(10, Number(source.version) || 10);
   return settings;
 }
 

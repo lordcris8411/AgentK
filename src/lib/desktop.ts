@@ -46,7 +46,7 @@ export type LanguageServerPlugin = {
 
 export type ClientSettings = {
   version: number;
-  theme: "light" | "dark" | "system";
+  theme: "light" | "soft-light" | "dark" | "system";
   locale: "zh-CN" | "en-US";
   permissionMode: "ask" | "full";
   browserId: string;
@@ -261,7 +261,7 @@ export const desktop = {
     message: string,
     current: number,
     total: number,
-    theme: "light" | "dark",
+    theme: "light" | "soft-light" | "dark" | "system",
   ) => invoke<void>("update_startup_progress", { message, current, total, theme }),
   finishStartup: () => invoke<void>("finish_startup"),
   sessionMessages: (path: string) =>

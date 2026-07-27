@@ -1,7 +1,7 @@
 export const EDITOR_API_VERSION = 1 as const;
 export const EDITOR_CHANNEL = "agent-k-editor" as const;
 
-export type EditorTheme = "light" | "dark";
+export type EditorTheme = "light" | "soft-light" | "dark";
 
 export type EditorInitialState = {
   absolutePath: string;
@@ -233,7 +233,11 @@ export function defineEditor(factory: EditorFactory): void {
         if (typeof message.value === "boolean") instance.setLayoutSuspended?.(message.value);
         break;
       case "set-theme":
-        if (message.value === "light" || message.value === "dark")
+        if (
+          message.value === "light" ||
+          message.value === "soft-light" ||
+          message.value === "dark"
+        )
           instance.setTheme?.(message.value);
         break;
       case "set-word-wrap":

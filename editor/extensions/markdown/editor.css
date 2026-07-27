@@ -1,4 +1,5 @@
 :root { color-scheme: light; --md-background: #f6f4f1; --md-border: #d7d1ca; --md-text: #302e2b; --md-muted: #756f68; --md-raised: #fff; }
+:root[data-theme="soft-light"] { color-scheme: light; --md-background: #e2ded8; --md-border: #c2bbb2; --md-text: #292725; --md-muted: #68625c; --md-raised: #ece9e4; }
 :root[data-theme="dark"] { color-scheme: dark; --md-background: #252422; --md-border: #45413d; --md-text: #e8e4df; --md-muted: #aaa39b; --md-raised: #302f2c; }
 html, body, #agent-k-editor-root { height: 100%; margin: 0; overflow: hidden; width: 100%; }
 body { background: var(--md-background); color: var(--md-text); font: 13px/1.6 "Noto Sans SC", "Segoe UI", sans-serif; }

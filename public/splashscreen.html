@@ -6,8 +6,11 @@
       try {
         const cached = JSON.parse(localStorage.getItem("agent-k-settings") || "{}");
         const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-        document.documentElement.dataset.theme = cached.theme === "dark" ||
-          (cached.theme === "system" && systemDark) ? "dark" : "light";
+        document.documentElement.dataset.theme = cached.theme === "soft-light"
+          ? "soft-light"
+          : cached.theme === "dark" || (cached.theme === "system" && systemDark)
+            ? "dark"
+            : "light";
       } catch {
         document.documentElement.dataset.theme = window.matchMedia("(prefers-color-scheme: dark)").matches
           ? "dark"
@@ -41,6 +44,19 @@
         --spinner: #4b4844;
         --spinner-active: #ece9e4;
         color-scheme: dark;
+      }
+      :root[data-theme="soft-light"] {
+        --surface-raised: #e9e5df;
+        --border: #c8c1b8;
+        --text: #292725;
+        --muted: #746e67;
+        --mark-bg: #252525;
+        --mark-fg: #f4f1ec;
+        --track: #d4cec6;
+        --progress: #625d57;
+        --spinner: #c4bdb5;
+        --spinner-active: #34302d;
+        color-scheme: light;
       }
       html, body { background: transparent; }
       body { align-items: center; color: var(--text); display: flex; font-family: "Segoe UI Variable", "Microsoft YaHei UI", sans-serif; height: 100vh; justify-content: center; margin: 0; }

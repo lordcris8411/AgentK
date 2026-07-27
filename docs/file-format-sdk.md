@@ -133,7 +133,7 @@ defineEditor((host, initial) => {
 
 - 文件相对路径、绝对路径、文件名、MIME type、文本内容和编辑器无关的语言 ID；
 - 二进制插件所需的 `binary`、`byteSize`、`codec` 与 `mediaKind`；
-- `light` / `dark` 主题与 `zh-CN` / `en-US` locale；
+- `light` / `soft-light` / `dark` 主题与 `zh-CN` / `en-US` locale；`soft-light` 是降低纸白亮度的 HDR 友好亮色主题；
 - 只读状态与自动换行设置。
 
 插件实例必须实现 `getContent` 和 `setContent`，还可实现 `getSelection`、`markSaved`、`focus`、`navigate`、`executeAction`、`setLayoutSuspended`、`setTheme`、`setWordWrap` 和 `dispose`。`getSelection` 让宿主把当前选择预填到项目高级查找；`executeAction` 接收宿主或 Pi 发来的已声明动作；`setLayoutSuspended` 让重型编辑器在侧栏拖动期间暂停布局，并在结束后执行一次权威布局。

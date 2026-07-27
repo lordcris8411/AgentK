@@ -11,16 +11,18 @@ const monaco = (globalThis as typeof globalThis & {
 // generic LSP legend (notably `property` is index 6).
 const CLANGD_TOKEN_TYPES = ["variable", "variable", "parameter", "function", "method", "function", "property", "variable", "class", "interface", "enum", "enumMember", "type", "type", "unknown", "namespace", "typeParameter", "concept", "type", "macro", "modifier", "operator", "bracket", "label", "comment"];
 const CLANGD_TOKEN_MODIFIERS = ["declaration", "definition", "deprecated", "deduced", "readonly", "static", "abstract", "virtual", "dependentName", "defaultLibrary", "usedAsMutableReference", "usedAsMutablePointer", "constructorOrDestructor", "userDefined", "functionScope", "classScope", "fileScope", "globalScope"];
-const CLANGD_PROPERTY_TOKEN = CLANGD_TOKEN_TYPES.indexOf("property");
-const CLANGD_CLASS_TOKEN = CLANGD_TOKEN_TYPES.indexOf("class");
-const CLANGD_ENUM_TOKEN = CLANGD_TOKEN_TYPES.indexOf("enum");
-const CLANGD_ENUM_MEMBER_TOKEN = CLANGD_TOKEN_TYPES.indexOf("enumMember");
-const CLANGD_MACRO_TOKEN = CLANGD_TOKEN_TYPES.indexOf("macro");
 const CLANGD_METHOD_TOKEN = CLANGD_TOKEN_TYPES.indexOf("method");
-const CLANGD_NAMESPACE_TOKEN = CLANGD_TOKEN_TYPES.indexOf("namespace");
+const CLANGD_FUNCTION_TOKEN = CLANGD_TOKEN_TYPES.indexOf("function");
+const CLANGD_STATIC_MODIFIER = 1 << CLANGD_TOKEN_MODIFIERS.indexOf("static");
+const CLANGD_CONSTRUCTOR_OR_DESTRUCTOR_MODIFIER =
+  1 << CLANGD_TOKEN_MODIFIERS.indexOf("constructorOrDestructor");
 
 function themeName(theme: EditorTheme): string {
-  return theme === "dark" ? "agent-k-plugin-dark" : "agent-k-plugin-light";
+  return theme === "dark"
+    ? "agent-k-plugin-dark"
+    : theme === "soft-light"
+      ? "agent-k-plugin-soft-light"
+      : "agent-k-plugin-light";
 }
 
 function hoverMarkdown(contents: unknown): Array<{ value: string }> {
@@ -42,10 +44,21 @@ function pathFromFileUri(uri: string): string | undefined {
 }
 
 defineEditor((host, initial) => {
+  globalThis.document.documentElement.dataset.theme = initial.theme;
   monaco.editor.defineTheme("agent-k-plugin-light", {
     base: "vs",
     inherit: true,
-    rules: [{ token: "property", foreground: "8B6508" }],
+    rules: [
+      { token: "property", foreground: "8B6508" },
+      { token: "class", foreground: "267F99" },
+      { token: "enum", foreground: "B57614" },
+      { token: "enumMember", foreground: "B57614" },
+      { token: "function", foreground: "267F99" },
+      { token: "method", foreground: "2E7D32" },
+      { token: "macro", foreground: "AF00DB" },
+      { token: "namespace", foreground: "AF00DB" },
+      { token: "parameter", foreground: "6B7280" },
+    ],
     colors: {
       "editor.background": "#F6F4F1",
       "editorGutter.background": "#F6F4F1",
@@ -54,10 +67,42 @@ defineEditor((host, initial) => {
       "editor.inactiveSelectionBackground": "#DBEAFE",
     },
   });
+  monaco.editor.defineTheme("agent-k-plugin-soft-light", {
+    base: "vs",
+    inherit: true,
+    rules: [
+      { token: "property", foreground: "795C12" },
+      { token: "class", foreground: "226F87" },
+      { token: "enum", foreground: "98630E" },
+      { token: "enumMember", foreground: "98630E" },
+      { token: "function", foreground: "226F87" },
+      { token: "method", foreground: "286F2D" },
+      { token: "macro", foreground: "8F18B1" },
+      { token: "namespace", foreground: "8F18B1" },
+      { token: "parameter", foreground: "60666F" },
+    ],
+    colors: {
+      "editor.background": "#E2DED8",
+      "editorGutter.background": "#E2DED8",
+      "editor.lineHighlightBackground": "#D8E0E5",
+      "editor.selectionBackground": "#A8C9E8",
+      "editor.inactiveSelectionBackground": "#C4D7E5",
+    },
+  });
   monaco.editor.defineTheme("agent-k-plugin-dark", {
     base: "vs-dark",
     inherit: true,
-    rules: [{ token: "property", foreground: "C49732" }],
+    rules: [
+      { token: "property", foreground: "C49732" },
+      { token: "class", foreground: "4FC1FF" },
+      { token: "enum", foreground: "F9D65C" },
+      { token: "enumMember", foreground: "F9D65C" },
+      { token: "function", foreground: "4FC1FF" },
+      { token: "method", foreground: "9CDC8C" },
+      { token: "macro", foreground: "C586C0" },
+      { token: "namespace", foreground: "C586C0" },
+      { token: "parameter", foreground: "9CA3AF" },
+    ],
     colors: {
       "editor.background": "#252422",
       "editorGutter.background": "#252422",
@@ -140,7 +185,6 @@ defineEditor((host, initial) => {
     });
     monaco.editor.setModelMarkers(model, "clangd", markers);
   };
-  const memberDecorations = editor.createDecorationsCollection();
   const sanitizeSemanticTokens = (data: number[]): number[] => {
     let inputCharacter = 0; let inputLine = 0; let outputCharacter = 0; let outputLine = 0;
     const sanitized: number[] = [];
@@ -152,33 +196,23 @@ defineEditor((host, initial) => {
       const lineLength = model.getLineLength(inputLine + 1);
       const safeLength = Math.min(length, lineLength - inputCharacter);
       if (safeLength <= 0) continue;
-      sanitized.push(inputLine - outputLine, inputLine === outputLine ? inputCharacter - outputCharacter : inputCharacter, safeLength, tokenType, modifiers);
+      // clangd distinguishes static methods and constructors through its
+      // internal token kind/modifier combination. Normalize those to Monaco's
+      // standard `function` token so one theme rule colors every function-like
+      // symbol without DOM decorations or CSS overrides.
+      const functionLike = CLANGD_TOKEN_TYPES[tokenType] === "function" ||
+        (tokenType === CLANGD_METHOD_TOKEN &&
+          (modifiers & (CLANGD_STATIC_MODIFIER | CLANGD_CONSTRUCTOR_OR_DESTRUCTOR_MODIFIER)) !== 0);
+      sanitized.push(
+        inputLine - outputLine,
+        inputLine === outputLine ? inputCharacter - outputCharacter : inputCharacter,
+        safeLength,
+        functionLike ? CLANGD_FUNCTION_TOKEN : tokenType,
+        modifiers,
+      );
       outputLine = inputLine; outputCharacter = inputCharacter;
     }
     return sanitized;
-  };
-  const applyMemberDecorations = (data: number[]) => {
-    let character = 0; let line = 0; const ranges: Monaco.editor.IModelDeltaDecoration[] = [];
-    for (let index = 0; index + 4 < data.length; index += 5) {
-      const lineDelta = data[index]; line += lineDelta;
-      character = lineDelta === 0 ? character + data[index + 1] : data[index + 1];
-      const tokenType = data[index + 3];
-      const inlineClassName = tokenType === CLANGD_PROPERTY_TOKEN
-        ? "agent-k-cpp-member"
-        : tokenType === CLANGD_CLASS_TOKEN
-          ? "agent-k-cpp-class"
-          : tokenType === CLANGD_ENUM_TOKEN || tokenType === CLANGD_ENUM_MEMBER_TOKEN
-            ? "agent-k-cpp-enum"
-          : tokenType === CLANGD_METHOD_TOKEN
-            ? "agent-k-cpp-method"
-            : tokenType === CLANGD_MACRO_TOKEN
-              ? "agent-k-cpp-macro"
-          : tokenType === CLANGD_NAMESPACE_TOKEN
-            ? "agent-k-cpp-namespace"
-            : undefined;
-      if (inlineClassName) ranges.push({ range: new monaco.Range(line + 1, character + 1, line + 1, character + data[index + 2] + 1), options: { inlineClassName } });
-    }
-    memberDecorations.set(ranges);
   };
   type LspRange = { start: { line: number; character: number }; end: { line: number; character: number } };
   type LspLocation = { uri?: string; range?: LspRange; targetUri?: string; targetRange?: LspRange; targetSelectionRange?: LspRange };
@@ -244,7 +278,7 @@ defineEditor((host, initial) => {
           try {
             const result = await host.languageRequest("textDocument/semanticTokens/full", { textDocument: { uri: model.uri.toString() } }) as { data?: number[] } | undefined;
             if (token?.isCancellationRequested || requestedVersion !== model.getVersionId()) return null;
-            const data = sanitizeSemanticTokens(result?.data ?? []); applyMemberDecorations(data); hideLanguageStatus();
+            const data = sanitizeSemanticTokens(result?.data ?? []); hideLanguageStatus();
             return { data: new Uint32Array(data) };
           } catch {
             // clangd cancels an in-flight request when didChange wins the race.
@@ -509,7 +543,6 @@ defineEditor((host, initial) => {
       languageFocus.dispose(); referenceBlur.dispose();
       hideReferences(); referencePanel.remove();
       languageStatus?.remove();
-      memberDecorations.clear();
       if (cpp) void host.languageRequest("textDocument/didClose", { textDocument: { uri: model.uri.toString() } }).catch(() => undefined);
       completion?.dispose(); hover?.dispose(); semantic?.dispose();
       editor.dispose();
@@ -563,6 +596,7 @@ defineEditor((host, initial) => {
         editor.layout({ width: host.root.clientWidth, height: host.root.clientHeight });
     },
     setTheme(theme) {
+      globalThis.document.documentElement.dataset.theme = theme;
       monaco.editor.setTheme(themeName(theme));
       if (languageStatus) languageStatus.dataset.theme = theme;
     },

@@ -38,7 +38,11 @@ const markdownHtmlSchema: RehypeSanitizeSchema = {
 };
 
 function themeName(theme: EditorTheme): string {
-  return theme === "dark" ? "agent-k-markdown-dark" : "agent-k-markdown-light";
+  return theme === "dark"
+    ? "agent-k-markdown-dark"
+    : theme === "soft-light"
+      ? "agent-k-markdown-soft-light"
+      : "agent-k-markdown-light";
 }
 
 function fileUrl(path: string): string {
@@ -86,6 +90,10 @@ defineEditor((host, initial) => {
   monaco.editor.defineTheme("agent-k-markdown-light", {
     base: "vs", inherit: true, rules: [],
     colors: { "editor.background": "#F6F4F1", "editorGutter.background": "#F6F4F1", "editor.selectionBackground": "#B6D7FF" },
+  });
+  monaco.editor.defineTheme("agent-k-markdown-soft-light", {
+    base: "vs", inherit: true, rules: [],
+    colors: { "editor.background": "#E2DED8", "editorGutter.background": "#E2DED8", "editor.selectionBackground": "#A8C9E8" },
   });
   monaco.editor.defineTheme("agent-k-markdown-dark", {
     base: "vs-dark", inherit: true, rules: [],
