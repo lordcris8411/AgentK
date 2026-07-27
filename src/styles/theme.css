@@ -18,6 +18,7 @@
   --info: #477da8;
   --success: #68965d;
   --warning: #a66c12;
+  --modal-overlay: rgb(28 25 22 / 36%);
   color: #272625;
   background: #f7f6f4;
   font-family: "Noto Sans SC Variable", "Noto Sans SC", sans-serif;
@@ -45,6 +46,7 @@
   --info: #7db5df;
   --success: #8fbd82;
   --warning: #e0b36d;
+  --modal-overlay: rgb(0 0 0 / 52%);
   color: var(--text-primary);
   background: var(--surface-app);
 }
@@ -72,7 +74,6 @@ body {
 /* Settings and dark-mode semantic surface overrides. */
 .settings-backdrop {
   align-items: center;
-  background: rgb(20 19 18 / 28%);
   display: flex;
   inset: 0;
   justify-content: center;
@@ -87,7 +88,9 @@ body {
 .session-dialog-backdrop,
 .permission-dialog-backdrop,
 .command-picker-backdrop,
-.extension-dialog-backdrop {
+.extension-dialog-backdrop,
+.settings-subdialog {
+  background: var(--modal-overlay);
   contain: layout paint;
   isolation: isolate;
   will-change: opacity;
@@ -163,7 +166,7 @@ body {
 .settings-title-row { align-items: center; display: flex; justify-content: space-between; }
 .settings-title-actions { display: flex; gap: 8px; transform: translateY(-4px); }
 .inspector-advanced-search { background: transparent; border: 0; color: var(--text-secondary); cursor: pointer; }
-.advanced-search-backdrop { align-items: flex-start; background: color-mix(in srgb, var(--surface-base) 72%, transparent); display: flex; inset: 0; justify-content: center; padding-top: 14vh; position: fixed; z-index: 1000; }
+.advanced-search-backdrop { align-items: flex-start; display: flex; inset: 0; justify-content: center; padding-top: 14vh; position: fixed; z-index: 1000; }
 .advanced-project-search { background: var(--surface-panel); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: 0 20px 55px #0008; box-sizing: border-box; display: grid; flex: 0 1 500px; gap: 10px; max-height: 68vh; min-width: 0; padding: 14px; width: min(500px, calc(100vw - 40px)); }
 .advanced-project-search > * { min-width: 0; }
 .advanced-project-search header { align-items: center; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; padding-bottom: 10px; }
@@ -187,8 +190,7 @@ body {
 .advanced-search-history button { background: transparent; border: 0; color: var(--text-primary); cursor: pointer; font: inherit; overflow: hidden; padding: 6px 8px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .advanced-search-history button:hover { background: var(--surface-hover); }
 .advanced-search-history small { color: var(--text-muted); font-size: 12px; padding: 7px 8px; }
-.directory-picker-backdrop { align-items: flex-start; background: color-mix(in srgb, var(--surface-base) 72%, transparent); display: flex; inset: 0; justify-content: center; padding-top: 14vh; position: fixed; z-index: 1100; }
-.directory-picker-backdrop.is-inspector { left: 50%; }
+.directory-picker-backdrop { align-items: flex-start; display: flex; inset: 0; justify-content: center; padding-top: 14vh; position: fixed; z-index: 1100; }
 .directory-picker { background: var(--surface-panel); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: 0 20px 55px #0008; display: grid; gap: 10px; padding: 14px; width: min(500px, calc(100vw - 40px)); }
 .directory-picker header, .directory-picker footer { align-items: center; display: flex; justify-content: space-between; }
 .directory-picker header { border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }.directory-picker button { background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text-primary); cursor: pointer; font-size: 12px; line-height: 1.2; padding: 5px 8px; }
@@ -338,7 +340,7 @@ body {
 .about-list dt { color: var(--text-secondary); }
 .about-list dd { margin: 0; }
 .about-actions { display: flex; gap: 8px; }
-.settings-subdialog { align-items: center; background: rgb(10 10 10 / 25%); display: flex; inset: 52px 0 0; justify-content: center; position: absolute; }
+.settings-subdialog { align-items: center; display: flex; inset: 52px 0 0; justify-content: center; position: absolute; }
 .settings-subdialog-card { background: var(--surface-raised); border: 1px solid var(--border-color); border-radius: 12px; box-shadow: 0 18px 50px rgb(0 0 0 / 20%); display: grid; gap: 12px; max-height: calc(100% - 48px); overflow: auto; padding: 22px; width: min(520px, calc(100% - 48px)); }
 .settings-subdialog-card { font-size: 13px; }
 .settings-subdialog-card h3 { font-size: 15px; margin: 0 0 4px; }
@@ -503,7 +505,7 @@ body {
 }
 .access-menu button { background: transparent; border: 0; border-radius: 6px; color: var(--text-primary); padding: 8px 9px; text-align: left; }
 .access-menu button:hover { background: var(--surface-hover); }
-.permission-dialog-backdrop { align-items: center; background: rgb(20 19 18 / 25%); display: flex; inset: 0; justify-content: center; position: absolute; z-index: 70; }
+.permission-dialog-backdrop { align-items: center; display: flex; inset: 0; justify-content: center; position: absolute; z-index: 70; }
 .permission-dialog { background: var(--surface-raised); border: 1px solid var(--border-color); border-radius: 12px; box-shadow: 0 18px 50px rgb(0 0 0 / 22%); color: var(--text-primary); padding: 18px; width: min(560px, calc(100% - 48px)); }
 .permission-dialog header { align-items: center; display: flex; gap: 11px; }
 .permission-dialog header > i { align-items: center; background: var(--surface-panel); border-radius: 8px; color: var(--text-secondary); display: inline-flex; height: 34px; justify-content: center; width: 34px; }
@@ -1981,7 +1983,7 @@ body.is-resizing-panels .composer {
   right: 0;
   z-index: 46;
 }
-.command-picker-backdrop { align-items: center; background: rgb(20 18 16 / 44%); display: flex; inset: 0; justify-content: center; position: absolute; z-index: 60; }
+.command-picker-backdrop { align-items: center; display: flex; inset: 0; justify-content: center; position: absolute; z-index: 60; }
 .command-picker { background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: 13px; box-shadow: 0 18px 52px rgb(0 0 0 / 22%); display: grid; max-height: min(620px, 72%); overflow: hidden; width: min(620px, calc(100% - 48px)); }
 .command-picker > header { align-items: center; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; padding: 12px 14px; }
 .command-picker > header button { background: transparent; border: 0; color: var(--text-secondary); font-size: 20px; }
@@ -2698,7 +2700,6 @@ body.is-resizing-panels .composer {
 }
 .inspector-dialog-backdrop {
   align-items: flex-start;
-  background: rgb(36 32 28 / 16%);
   display: flex;
   inset: 0;
   justify-content: center;
@@ -2985,7 +2986,6 @@ body.is-resizing-console::after {
 }
 .session-dialog-backdrop {
   align-items: center;
-  background: rgb(20 18 16 / 24%);
   display: flex;
   inset: 0;
   justify-content: center;
@@ -3051,9 +3051,6 @@ body.is-resizing-console::after {
 }
 .session-dialog-card footer .danger-button {
   color: var(--danger, #b14a38);
-}
-:root[data-theme="dark"] .session-dialog-backdrop {
-  background: rgb(0 0 0 / 44%);
 }
 :root[data-theme="dark"] .session-dialog-card {
   box-shadow: 0 22px 58px rgb(0 0 0 / 42%);
@@ -4212,7 +4209,6 @@ body.is-tree-dragging * {
    text, choices and keyed status/widget state. */
 .extension-dialog-backdrop {
   align-items: center;
-  background: rgb(20 19 18 / 24%);
   display: flex;
   inset: 0;
   justify-content: center;
@@ -4222,11 +4218,8 @@ body.is-tree-dragging * {
 }
 .extension-dialog-backdrop.is-select {
   align-items: initial;
-  backdrop-filter: none;
-  background: transparent;
   display: block;
   padding: 0;
-  pointer-events: none;
 }
 .extension-dialog {
   background: var(--surface-raised);

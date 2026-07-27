@@ -8,7 +8,7 @@ function normalizedPath(path: string): string {
   return path.replaceAll("\\", "/").replace(/\/$/, "").toLowerCase();
 }
 
-export function DirectoryPickerDialog({ initialPath, onCancel, onSelect, placement = "global", restrictedRoot, title }: { initialPath?: string; onCancel(): void; onSelect(path: string): void; placement?: "global" | "inspector"; restrictedRoot?: string; title: string }) {
+export function DirectoryPickerDialog({ initialPath, onCancel, onSelect, restrictedRoot, title }: { initialPath?: string; onCancel(): void; onSelect(path: string): void; restrictedRoot?: string; title: string }) {
   const [state, setState] = useState<DirectoryState>();
   const [pathInput, setPathInput] = useState(initialPath ?? "");
   const [error, setError] = useState<string>();
@@ -33,8 +33,8 @@ export function DirectoryPickerDialog({ initialPath, onCancel, onSelect, placeme
   useEffect(() => load(initialPath), [initialPath]);
   const atRestrictedRoot = !!state && !!restrictedRoot && normalizedPath(state.path) === normalizedPath(restrictedRoot);
   return createPortal(
-    <div className={`directory-picker-backdrop is-${placement}`}>
-      <section className="directory-picker" style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}>
+    <div className="directory-picker-backdrop">
+      <section aria-modal="true" className="directory-picker" role="dialog" style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}>
         <header onPointerDown={(event) => { if ((event.target as Element).closest("button")) return; drag.current = { x: event.clientX - offset.x, y: event.clientY - offset.y }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (drag.current) setOffset({ x: event.clientX - drag.current.x, y: event.clientY - drag.current.y }); }} onPointerUp={() => { drag.current = undefined; }}>
           <strong>{title}</strong><button onClick={onCancel} type="button"><i className="fa-solid fa-xmark" /></button>
         </header>
