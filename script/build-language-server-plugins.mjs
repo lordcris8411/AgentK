@@ -19,11 +19,7 @@ for (const entry of await readdir(packages, { withFileTypes: true })) {
   const source = join(directory, "worker.ts");
   const output = join(directory, manifest.worker);
   if (!existsSync(source)) throw new Error(`Language server '${manifest.id}' is missing worker.ts`);
-  if (checkOnly) {
-    if (!existsSync(output)) throw new Error(`Language server '${manifest.id}' has not been built`);
-    continue;
-  }
-  await rm(dirname(output), { recursive: true, force: true });
+  if (!checkOnly) await rm(dirname(output), { recursive: true, force: true });
   await build({
     configFile: false,
     logLevel: "warn",
@@ -38,7 +34,9 @@ for (const entry of await readdir(packages, { withFileTypes: true })) {
       rollupOptions: { output: { entryFileNames: "worker.js", inlineDynamicImports: true } },
       sourcemap: false,
       target: "node22",
+      write: !checkOnly,
     },
   });
-  if (!existsSync(output)) throw new Error(`Language server '${manifest.id}' did not produce ${manifest.worker}`);
+  if (!checkOnly && !existsSync(output))
+    throw new Error(`Language server '${manifest.id}' did not produce ${manifest.worker}`);
 }
