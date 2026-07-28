@@ -1,0 +1,23 @@
+{
+  "id": "retro-terminal",
+  "name": "Retro Terminal",
+  "base": "dark",
+  "colors": {
+    "surface-app": "#0C0E0A", "surface-panel": "#11140F", "surface-raised": "#181C15", "surface-hover": "#1F241C", "surface-active": "#262D22",
+    "border-color": "#2A3326", "border-strong": "#3D4A36", "text-primary": "#B8D9A5", "text-secondary": "#88B572", "text-muted": "#5A7A4A",
+    "accent": "#C4E8B0", "selection-background": "#3A5A2E", "selection-foreground": "#E0F5D0", "scrollbar-thumb": "#3D4A36", "scrollbar-thumb-hover": "#4F6048",
+    "danger": "#E06C6C", "info": "#6CB5E0", "success": "#8FBD82", "warning": "#D9B36A", "modal-overlay": "#000000B0"
+  },
+  "fonts": { "ui": "JetBrains Mono, Iosevka Term, Fira Code, Consolas, monospace", "code": "JetBrains Mono, Iosevka Term, Fira Code, Consolas, monospace" },
+  "monaco": {
+    "editor.background": "#0E110C", "editorGutter.background": "#0C0E0A", "editor.lineHighlightBackground": "#1A2616",
+    "editor.selectionBackground": "#2E4A22", "editor.inactiveSelectionBackground": "#1E3A14", "editor.selectionHighlightBackground": "#3A5A2E66",
+    "editorCursor.foreground": "#B8D9A5", "editorLineNumber.foreground": "#3D5A30", "editorLineNumber.activeForeground": "#8FBD82"
+  },
+  "monacoSyntax": { "comment": "#5A7A4A", "keyword": "#7DD06A", "string": "#C9B86A", "number": "#7DBF5A", "type": "#6AE0B0", "function": "#A0DC80", "variable": "#B8D9A5", "parameter": "#88B572", "macro": "#D0B060", "namespace": "#60C090", "property": "#90D070" },
+  "terminal": {
+    "background": "#0C0E0A", "foreground": "#B8D9A5", "cursor": "#B8D9A5", "cursorAccent": "#0C0E0A", "selectionBackground": "#3A5A2E",
+    "black": "#0E110C", "red": "#E06C6C", "green": "#8FBD82", "yellow": "#D9B36A", "blue": "#6CB5E0", "magenta": "#C080D0", "cyan": "#6AD0B0", "white": "#B8D9A5",
+    "brightBlack": "#3D4A36", "brightRed": "#F08080", "brightGreen": "#A0D890", "brightYellow": "#E8C878", "brightBlue": "#80C8E8", "brightMagenta": "#D090E0", "brightCyan": "#80E0C0", "brightWhite": "#E0F5D0"
+  }
+}
