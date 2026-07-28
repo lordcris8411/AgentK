@@ -29,7 +29,7 @@
     "check:language-servers": "node script/build-language-server-plugins.mjs --check",
     "check:editors": "tsc -p editor/tsconfig.json",
     "prepare:native": "node script/prepare-native.mjs",
-    "test": "npm run build:desktop && node --test extensions/k-plan/index.test.ts electron/file-formats.test.mjs electron/language-server-registry.test.mjs electron/skill-hub.test.mjs electron/terminal-profile.test.mjs language-servers/cpp-clangd/worker.test.ts test/messageContent.test.ts test/projectActivity.test.ts test/terminalPalette.test.ts",
+    "test": "npm run build:desktop && node --test extensions/k-plan/index.test.ts electron/file-formats.test.mjs electron/language-server-registry.test.mjs electron/skill-hub.test.mjs electron/terminal-profile.test.mjs language-servers/cpp-clangd/worker.test.ts test/messageContent.test.ts test/modelAvailability.test.ts test/projectActivity.test.ts test/terminalPalette.test.ts",
     "preview": "vite preview",
     "electron": "electron ."
   },

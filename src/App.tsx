@@ -16,6 +16,7 @@ import {
 import { SettingsDialog, type SettingsPage } from "./features/settings/SettingsDialog";
 import { useSettings } from "./features/settings/SettingsContext";
 import { useExtensionUi } from "./features/extensions/ExtensionUiContext";
+import { modelIsEnabled } from "./lib/modelAvailability";
 
 const DRAFT_SESSION_PATH = "__new__";
 
@@ -661,7 +662,7 @@ export function App() {
       if (settings.defaultModel) {
         const [provider, ...modelParts] = settings.defaultModel.split("/");
         const modelId = modelParts.join("/");
-        if (provider && modelId) {
+        if (provider && modelId && modelIsEnabled(settings, provider, modelId)) {
           await desktop.command({ type: "set_model", provider, modelId }, runtimeId);
           await updateSettings({
             sessionModels: { ...settings.sessionModels, [created.path]: settings.defaultModel },

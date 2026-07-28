@@ -68,6 +68,9 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
   const unreadNotifications = notificationHistory.filter(
     (notification) => !notification.read,
   ).length;
+  const hasUnreadError = notificationHistory.some(
+    (notification) => !notification.read && notification.type === "error",
+  );
   const [notificationHistoryOpen, setNotificationHistoryOpen] = useState(false);
   const [leftWidth, setLeftWidth] = useState(settings.leftPanelWidth);
   const [rightWidth, setRightWidth] = useState(settings.rightPanelWidth);
@@ -594,7 +597,9 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
             >
               <Bell aria-hidden="true" size={16} strokeWidth={1.8} />
               {unreadNotifications > 0 ? (
-                <span className="notification-count">
+                <span
+                  className={`notification-count${hasUnreadError ? " has-error" : ""}`}
+                >
                   {unreadNotifications > 99
                     ? "99+"
                     : unreadNotifications}

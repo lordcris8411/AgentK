@@ -15,6 +15,7 @@ import {
 import { useSettings } from "./SettingsContext";
 import { platform } from "../../lib/platform";
 import type { ThemeDefinition } from "../../lib/themes";
+import { modelIsEnabled, modelKey } from "../../lib/modelAvailability";
 import { DirectoryPickerDialog } from "../../components/DirectoryPickerDialog";
 
 export type SettingsPage = "models" | "appearance" | "agentSettings" | "skills" | "extensions" | "editors" | "permissions" | "about";
@@ -137,7 +138,6 @@ export function SettingsDialog({
   const [languageServerPlugins, setLanguageServerPlugins] = useState<LanguageServerPlugin[]>([]);
   const [providers, setProviders] = useState<ProviderCatalogItem[]>([]);
   const [models, setModels] = useState<Array<{ provider: string; id: string; name?: string }>>([]);
-  const [state, setState] = useState<{ model?: { provider: string; id: string }; thinkingLevel?: string }>({});
   const [busy, setBusy] = useState(false);
   const [poolBusy, setPoolBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -153,6 +153,9 @@ export function SettingsDialog({
   });
   const [manualModel, setManualModel] = useState("");
   const [pendingDelete, setPendingDelete] = useState<ProviderCatalogItem>();
+  const [expandedProviders, setExpandedProviders] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [skillHubUrl, setSkillHubUrl] = useState("");
   const [skillHubPreview, setSkillHubPreview] = useState<SkillHubPreview>();
   const [skillHubScope, setSkillHubScope] = useState<SkillHubScope>(cwd ? "project" : "user");
@@ -252,12 +255,9 @@ export function SettingsDialog({
       const refreshCatalog = forceCatalog
         || providersRef.current.length === 0
         || Date.now() - lastCatalogRefreshRef.current > 30_000;
-      const [catalog, current] = await Promise.all([
-        refreshCatalog
-          ? desktop.providerCatalog()
-          : Promise.resolve(providersRef.current),
-        desktop.command({ type: "get_state" }) as Promise<typeof state>,
-      ]);
+      const catalog = refreshCatalog
+        ? await desktop.providerCatalog()
+        : providersRef.current;
       if (refreshCatalog) {
         providersRef.current = catalog;
         lastCatalogRefreshRef.current = Date.now();
@@ -272,12 +272,16 @@ export function SettingsDialog({
           return true;
         })
         .map((model) => ({ ...model, provider: provider.id }))));
-      setState(current);
     } catch (cause) {
       setError(String(cause));
     } finally {
       setBusy(false);
     }
+  };
+  const reloadModelConfiguration = async () => {
+    await desktop.reloadPiRuntimes();
+    await refresh();
+    window.dispatchEvent(new Event("agent-k-model-changed"));
   };
   const installEditorPlugin = async (sourceDirectory: string) => {
     setBusy(true);
@@ -498,6 +502,10 @@ export function SettingsDialog({
     const builtIn = providers.filter((item) => item.source !== "custom");
     return { custom, builtIn };
   }, [providers]);
+  const enabledModels = useMemo(
+    () => models.filter((model) => modelIsEnabled(settings, model.provider, model.id)),
+    [models, settings.disabledModelProviders, settings.disabledModels],
+  );
   if (!open) return null;
 
   const authenticate = async (provider: ProviderCatalogItem, authType: "api_key" | "oauth") => {
@@ -532,10 +540,9 @@ export function SettingsDialog({
     setError(undefined);
     try {
       await desktop.saveProviderApiKey(authTarget.id, authKey);
-      await desktop.reloadPiRuntimes();
+      await reloadModelConfiguration();
       setAuthTarget(undefined);
       setAuthKey("");
-      await refresh();
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -546,8 +553,7 @@ export function SettingsDialog({
     setBusy(true);
     setError(undefined);
     try {
-      await desktop.reloadPiRuntimes();
-      await refresh();
+      await reloadModelConfiguration();
     } catch (cause) {
       setError(String(cause));
       setBusy(false);
@@ -558,8 +564,7 @@ export function SettingsDialog({
     setError(undefined);
     try {
       await desktop.logoutProvider(provider.id);
-      await desktop.reloadPiRuntimes();
-      await refresh();
+      await reloadModelConfiguration();
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -578,15 +583,81 @@ export function SettingsDialog({
       if (draft.apiKey) {
         await desktop.saveProviderApiKey(draft.id, draft.apiKey);
       }
-      await desktop.reloadPiRuntimes();
+      await reloadModelConfiguration();
       setEditor(undefined);
       setManualModel("");
-      await refresh();
     } catch (cause) {
       setError(String(cause));
     } finally {
       setBusy(false);
     }
+  };
+  const deleteProvider = async (provider: ProviderCatalogItem) => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await desktop.deleteProvider(provider.id);
+      await update({
+        disabledModelProviders: settings.disabledModelProviders.filter(
+          (id) => id !== provider.id,
+        ),
+        disabledModels: settings.disabledModels.filter(
+          (key) => !key.startsWith(`${provider.id}/`),
+        ),
+      });
+      await reloadModelConfiguration();
+      setPendingDelete(undefined);
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const toggleProviderAvailability = async (providerId: string) => {
+    const disabling = !settings.disabledModelProviders.includes(providerId);
+    setBusy(true);
+    setError(undefined);
+    try {
+      await update({
+        disabledModelProviders: disabling
+          ? [...settings.disabledModelProviders, providerId]
+          : settings.disabledModelProviders.filter((id) => id !== providerId),
+        ...(disabling && settings.defaultModel.startsWith(`${providerId}/`)
+          ? { defaultModel: "" }
+          : {}),
+      });
+      window.dispatchEvent(new Event("agent-k-model-changed"));
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const toggleModelAvailability = async (key: string) => {
+    const disabling = !settings.disabledModels.includes(key);
+    setBusy(true);
+    setError(undefined);
+    try {
+      await update({
+        disabledModels: disabling
+          ? [...settings.disabledModels, key]
+          : settings.disabledModels.filter((entry) => entry !== key),
+        ...(disabling && settings.defaultModel === key ? { defaultModel: "" } : {}),
+      });
+      window.dispatchEvent(new Event("agent-k-model-changed"));
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const toggleProviderModels = (providerId: string) => {
+    setExpandedProviders((current) => {
+      const next = new Set(current);
+      if (next.has(providerId)) next.delete(providerId);
+      else next.add(providerId);
+      return next;
+    });
   };
   const setResourceState = (
     resource: PiResource,
@@ -1120,13 +1191,81 @@ export function SettingsDialog({
               <>
                 <div className="settings-title-row"><h2>{t("models")}</h2><button disabled={busy} onClick={() => void reloadProviders()} type="button"><i className="fa-solid fa-rotate" /> {t("refresh")}</button></div>
                 <div className="model-current-row">
-                  <label>{t("defaultModel")}<select value={settings.defaultModel} onChange={(event) => void update({ defaultModel: event.target.value })}><option value="">—</option>{models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name ?? model.id} · {model.provider === "ollama" ? "Ollama" : model.provider === "vllm" ? "vLLM" : model.provider}</option>)}</select></label>
-                  <label>{t("thinking")}<select value={state.thinkingLevel ?? "off"} onChange={(event) => void desktop.command({ type: "set_thinking_level", level: event.target.value }).then(() => refresh())}>{["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => <option key={level}>{level}</option>)}</select></label>
+                  <label>{t("defaultModel")}<select value={settings.defaultModel} onChange={(event) => void update({ defaultModel: event.target.value })}><option value="">—</option>{enabledModels.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name ?? model.id} · {model.provider === "ollama" ? "Ollama" : model.provider === "vllm" ? "vLLM" : model.provider}</option>)}</select></label>
                 </div>
                 {providers.length > 0 && <div className="provider-actions"><button onClick={() => { setDraft({ id: "", name: "", baseUrl: "https://", api: "openai-completions", apiKey: "", models: [], local: false }); setEditor("provider"); }} type="button"><i className="fa-solid fa-plus" /> {t("providerAdd")}</button><button onClick={() => { setDraft({ id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKey: "ollama", models: [], local: true }); setEditor("local"); }} type="button"><i className="fa-solid fa-desktop" /> {t("localAdd")}</button></div>}
-                {[...grouped.custom, ...grouped.builtIn].map((provider) => (
-                  <article className="provider-card" key={provider.id}><div><strong>{providerDisplayName(provider)}</strong><small>{provider.id} · {provider.models.length} models</small></div><span className={provider.configured ? "provider-status is-ready" : "provider-status"}>{provider.configured ? t("configured") : t("notConfigured")}</span><div className="provider-card-actions">{provider.source === "custom" && <button aria-label="Edit" onClick={() => { setDraft({ id: provider.id, name: providerDisplayName(provider), baseUrl: provider.baseUrl ?? "", api: provider.api ?? "openai-completions", apiKey: "", models: provider.models.map((model) => model.id), local: provider.baseUrl?.includes("localhost") ?? false }); setManualModel(provider.models[0]?.id ?? ""); setEditor("provider"); }} type="button"><i className="fa-regular fa-pen-to-square" /></button>}{provider.authMethods.includes("api_key") && <button disabled={busy} onClick={() => void authenticate(provider, "api_key")} type="button">{t("apiKey")}</button>}{provider.authMethods.includes("oauth") && <button disabled={busy} onClick={() => void authenticate(provider, "oauth")} type="button">{t("oauth")}</button>}{provider.configured && <button disabled={busy} onClick={() => void logout(provider)} type="button">{t("logout")}</button>}{provider.source === "custom" && <button aria-label={t("delete")} onClick={() => setPendingDelete(provider)} type="button"><i className="fa-regular fa-trash-can" /></button>}</div></article>
-                ))}
+                {[...grouped.custom, ...grouped.builtIn].map((provider) => {
+                  const providerEnabled = !settings.disabledModelProviders.includes(provider.id);
+                  const expanded = expandedProviders.has(provider.id);
+                  return (
+                    <article className={providerEnabled ? "provider-card" : "provider-card is-disabled"} key={provider.id}>
+                      <div>
+                        <strong>{providerDisplayName(provider)}</strong>
+                        <small>{provider.id} · {provider.models.length} models</small>
+                      </div>
+                      <span className={providerEnabled && provider.configured ? "provider-status is-ready" : "provider-status"}>
+                        {providerEnabled ? (provider.configured ? t("configured") : t("notConfigured")) : t("disabled")}
+                      </span>
+                      <div className="provider-card-actions">
+                        {provider.models.length > 0 && (
+                          <button
+                            aria-expanded={expanded}
+                            aria-label={`${t("manageModels")} · ${providerDisplayName(provider)}`}
+                            onClick={() => toggleProviderModels(provider.id)}
+                            title={t("manageModels")}
+                            type="button"
+                          >
+                            <i className={`fa-solid fa-chevron-${expanded ? "up" : "down"}`} />
+                          </button>
+                        )}
+                        {provider.source === "custom" && <button aria-label="Edit" onClick={() => { setDraft({ id: provider.id, name: providerDisplayName(provider), baseUrl: provider.baseUrl ?? "", api: provider.api ?? "openai-completions", apiKey: "", models: provider.models.map((model) => model.id), local: provider.baseUrl?.includes("localhost") ?? false }); setManualModel(provider.models[0]?.id ?? ""); setEditor("provider"); }} type="button"><i className="fa-regular fa-pen-to-square" /></button>}
+                        {provider.authMethods.includes("api_key") && <button disabled={busy} onClick={() => void authenticate(provider, "api_key")} type="button">{t("apiKey")}</button>}
+                        {provider.authMethods.includes("oauth") && <button disabled={busy} onClick={() => void authenticate(provider, "oauth")} type="button">{t("oauth")}</button>}
+                        {provider.configured && <button disabled={busy} onClick={() => void logout(provider)} type="button">{t("logout")}</button>}
+                        {provider.source === "custom" && <button aria-label={t("delete")} onClick={() => setPendingDelete(provider)} type="button"><i className="fa-regular fa-trash-can" /></button>}
+                        <div className="resource-switch">
+                          <span>{t("providerAvailability")}</span>
+                          <button
+                            aria-checked={providerEnabled}
+                            aria-label={`${providerDisplayName(provider)} · ${providerEnabled ? t("enabled") : t("disabled")}`}
+                            className={providerEnabled ? "resource-toggle is-active" : "resource-toggle"}
+                            disabled={busy}
+                            onClick={() => void toggleProviderAvailability(provider.id)}
+                            role="switch"
+                            type="button"
+                          ><span /></button>
+                        </div>
+                      </div>
+                      {expanded && provider.models.length > 0 && (
+                        <div className="provider-model-list">
+                          {provider.models.map((model) => {
+                            const scopedModelKey = modelKey(provider.id, model.id);
+                            const individuallyEnabled = !settings.disabledModels.includes(scopedModelKey);
+                            const enabled = providerEnabled && individuallyEnabled;
+                            return (
+                              <div className={enabled ? "provider-model-row" : "provider-model-row is-disabled"} key={scopedModelKey}>
+                                <span><strong>{model.name ?? model.id}</strong>{model.name && model.name !== model.id ? <small>{model.id}</small> : null}</span>
+                                <div className="resource-switch">
+                                  <span>{t("modelAvailability")}</span>
+                                  <button
+                                    aria-checked={enabled}
+                                    aria-label={`${model.name ?? model.id} · ${enabled ? t("enabled") : t("disabled")}`}
+                                    className={enabled ? "resource-toggle is-active" : "resource-toggle"}
+                                    disabled={busy || !providerEnabled}
+                                    onClick={() => void toggleModelAvailability(scopedModelKey)}
+                                    role="switch"
+                                    title={!providerEnabled ? `${providerDisplayName(provider)} · ${t("disabled")}` : undefined}
+                                    type="button"
+                                  ><span /></button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
                 {!busy && providers.length === 0 && <p className="empty-settings">{t("noProviders")}</p>}
               </>
             )}
@@ -1137,7 +1276,7 @@ export function SettingsDialog({
         </div>
         {editor && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{editor === "local" ? t("localAdd") : t("providerAdd")}</h3><label>{t("providerId")}<input value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} /></label><label>{t("displayName")}<input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label><label>{t("baseUrl")}<input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} /></label><label>{t("apiProtocol")}<select value={draft.api} onChange={(e) => setDraft({ ...draft, api: e.target.value })}><option value="openai-completions">OpenAI Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option></select></label><label>{t("apiKey")}<input autoComplete="off" type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} /></label><label>{t("modelId")}<div className="inline-field"><input value={manualModel} onChange={(e) => setManualModel(e.target.value)} /><button disabled={!draft.baseUrl || busy} onClick={() => void discoverLocal()} type="button">{t("discover")}</button></div></label>{draft.models.length > 0 && <div className="discovered-models">{draft.models.map((id) => <button key={id} onClick={() => setManualModel(id)} type="button">{id}</button>)}</div>}<footer><button onClick={() => setEditor(undefined)} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy} onClick={() => void saveDraft()} type="button">{t("save")}</button></footer></div></div>}
         {authTarget && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{providerDisplayName(authTarget)} · {t("apiKey")}</h3><label>{t("apiKey")}<input autoComplete="off" autoFocus type="password" value={authKey} onChange={(event) => setAuthKey(event.target.value)} /></label><footer><button onClick={() => { setAuthTarget(undefined); setAuthKey(""); }} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy || !authKey.trim()} onClick={() => void saveAuthKey()} type="button">{t("save")}</button></footer></div></div>}
-        {pendingDelete && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{t("delete")} {pendingDelete.name}?</h3><p className="settings-description">{pendingDelete.id} will be removed from models.json.</p><footer><button onClick={() => setPendingDelete(undefined)} type="button">{t("cancel")}</button><button className="danger-button" onClick={() => { setBusy(true); void desktop.deleteProvider(pendingDelete.id).then(() => desktop.reloadPiRuntimes()).then(() => refresh()).catch((cause) => setError(String(cause))).finally(() => { setPendingDelete(undefined); setBusy(false); }); }} type="button">{t("delete")}</button></footer></div></div>}
+        {pendingDelete && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{t("delete")} {pendingDelete.name}?</h3><p className="settings-description">{pendingDelete.id} will be removed from models.json.</p><footer><button onClick={() => setPendingDelete(undefined)} type="button">{t("cancel")}</button><button className="danger-button" disabled={busy} onClick={() => void deleteProvider(pendingDelete)} type="button">{t("delete")}</button></footer></div></div>}
         {selectedSkill && <div className="settings-subdialog"><div className="settings-subdialog-card skill-details"><h3>{t("skillDetails")}</h3><dl><div><dt>{t("displayName")}</dt><dd>{selectedSkill.name}</dd></div><div><dt>{t("skillDescriptionLabel")}</dt><dd>{selectedSkill.description || t("noSkillDescription")}</dd></div><div><dt>{t("skillScopeLabel")}</dt><dd>{selectedSkill.scope === "project" ? t("projectScope") : t("userScope")}</dd></div><div><dt>{t("skillPathLabel")}</dt><dd>{selectedSkill.path}</dd></div></dl><footer><button className="primary-button" onClick={() => setSelectedSkill(undefined)} type="button">{t("close")}</button></footer></div></div>}
         {editorSkillViewer && <div className="settings-subdialog"><div className="settings-subdialog-card skill-hub-preview"><h3>{editorSkillViewer.name} · Editor Skill</h3><label>SKILL.md<textarea readOnly value={editorSkillViewer.source} /></label><footer><button className="primary-button" onClick={() => setEditorSkillViewer(undefined)} type="button">{t("close")}</button></footer></div></div>}
         {skillHubPreview && <div className="settings-subdialog"><div className="settings-subdialog-card skill-hub-preview"><h3>{t("skillHubReview")}</h3><div className="skill-hub-preview-meta"><strong>{skillHubPreview.name}</strong>{skillHubPreview.description && <span>{skillHubPreview.description}</span>}<small>{skillHubPreview.source} · {skillHubPreview.files.length} {t("skillHubFiles")}</small></div><label>{t("skillHubInstallScope")}<select disabled={!cwd} onChange={(event) => setSkillHubScope(event.target.value as SkillHubScope)} value={skillHubScope}><option value="project">{t("projectScope")}</option><option value="user">{t("userScope")}</option></select></label><div className="skill-hub-file-list">{skillHubPreview.files.map((file) => <span key={file.path}>{file.path}<small>{Math.ceil(file.bytes / 1024)} KB</small></span>)}</div><label>{t("skillHubContent")}<textarea readOnly value={skillHubPreview.skillMarkdown} /></label><footer><button onClick={() => setSkillHubPreview(undefined)} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy || !cwd} onClick={() => void installSkill()} type="button">{t("skillHubInstall")}</button></footer></div></div>}

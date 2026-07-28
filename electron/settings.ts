@@ -26,7 +26,7 @@ export interface ProviderDraft {
 }
 
 const DEFAULT_SETTINGS: ClientSettings = {
-  version: 10,
+  version: 11,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
@@ -42,6 +42,8 @@ const DEFAULT_SETTINGS: ClientSettings = {
   disabledFileEditorSkills: [],
   disabledLanguageServers: [],
   disabledLanguageServerSkills: [],
+  disabledModelProviders: [],
+  disabledModels: [],
   pinnedWorkspaces: [],
   defaultModel: "",
   sessionModels: {},
@@ -73,6 +75,34 @@ function editorSettingIds(value: unknown): string[] {
           entry.length <= 128 &&
           /^[a-z0-9][a-z0-9._-]+$/i.test(entry),
       ),
+    ),
+  ];
+}
+
+function modelProviderIds(value: unknown): string[] {
+  return [
+    ...new Set(
+      asArray(value).filter(
+        (entry): entry is string =>
+          typeof entry === "string" &&
+          entry.length > 0 &&
+          entry.length <= 80 &&
+          /^[A-Za-z0-9_-]+$/.test(entry),
+      ),
+    ),
+  ];
+}
+
+function modelSettingKeys(value: unknown): string[] {
+  return [
+    ...new Set(
+      asArray(value).filter((entry): entry is string => {
+        if (typeof entry !== "string" || entry.length > 512) return false;
+        const separator = entry.indexOf("/");
+        return separator > 0 &&
+          separator < entry.length - 1 &&
+          /^[A-Za-z0-9_-]+$/.test(entry.slice(0, separator));
+      }),
     ),
   ];
 }
@@ -121,6 +151,8 @@ export function parseClientSettings(value: unknown): ClientSettings {
   ];
   settings.disabledLanguageServers = editorSettingIds(source.disabledLanguageServers);
   settings.disabledLanguageServerSkills = [...new Set([...editorSettingIds(source.disabledLanguageServerSkills), ...settings.disabledLanguageServers])];
+  settings.disabledModelProviders = modelProviderIds(source.disabledModelProviders);
+  settings.disabledModels = modelSettingKeys(source.disabledModels);
   settings.pinnedWorkspaces = [
     ...new Set(
       asArray(source.pinnedWorkspaces).filter(
@@ -150,7 +182,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.windowHeight = Number(source.windowHeight);
   if (typeof source.windowMaximized === "boolean")
     settings.windowMaximized = source.windowMaximized;
-  settings.version = Math.max(10, Number(source.version) || 10);
+  settings.version = Math.max(11, Number(source.version) || 11);
   return settings;
 }
 
@@ -182,6 +214,8 @@ export async function saveClientSettings(
     sameStringArray(original.disabledFileEditorSkills, settings.disabledFileEditorSkills) &&
     sameStringArray(original.disabledLanguageServers, settings.disabledLanguageServers) &&
     sameStringArray(original.disabledLanguageServerSkills, settings.disabledLanguageServerSkills) &&
+    sameStringArray(original.disabledModelProviders, settings.disabledModelProviders) &&
+    sameStringArray(original.disabledModels, settings.disabledModels) &&
     sameStringArray(original.pinnedWorkspaces, settings.pinnedWorkspaces) &&
     settings.defaultModel === original.defaultModel &&
     JSON.stringify(settings.sessionModels) === JSON.stringify(original.sessionModels) &&

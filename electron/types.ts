@@ -17,6 +17,8 @@ export interface ClientSettings {
   disabledFileEditorSkills: string[];
   disabledLanguageServers: string[];
   disabledLanguageServerSkills: string[];
+  disabledModelProviders: string[];
+  disabledModels: string[];
   pinnedWorkspaces: string[];
   defaultModel: string;
   sessionModels: Record<string, string>;

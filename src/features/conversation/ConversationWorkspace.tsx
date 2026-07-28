@@ -18,6 +18,7 @@ import type { LanguageServerProject, SessionSummary } from "../../lib/desktop";
 import { desktop } from "../../lib/desktop";
 import { stopDampedScrolling } from "../../lib/dampedScrolling";
 import { desktopWindow, platform } from "../../lib/platform";
+import { modelIsEnabled, modelKey } from "../../lib/modelAvailability";
 import type { ReviewCall } from "./ReviewPanel";
 import { highlightCode } from "./codeHighlight";
 import { displayUserContent } from "./messageContent";
@@ -116,13 +117,44 @@ const CODE_LANGUAGE_LABELS: Record<string, string> = {
   xml: "HTML / XML",
   yaml: "YAML",
 };
+const THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 type ModelOption = {
   provider: string;
   id: string;
   name?: string;
   input?: string[];
   contextWindow?: number;
+  reasoning?: boolean;
+  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
 };
+
+function isThinkingLevel(value: unknown): value is ThinkingLevel {
+  return (
+    typeof value === "string" &&
+    THINKING_LEVELS.some((level) => level === value)
+  );
+}
+
+function supportedThinkingLevels(
+  model?: Pick<ModelOption, "reasoning" | "thinkingLevelMap">,
+): ThinkingLevel[] {
+  if (!model?.reasoning) return ["off"];
+  return THINKING_LEVELS.filter((level) => {
+    const mapped = model.thinkingLevelMap?.[level];
+    if (mapped === null) return false;
+    if (level === "xhigh" || level === "max") return mapped !== undefined;
+    return true;
+  });
+}
 type SlashCommand = {
   name: string;
   description?: string;
@@ -1562,16 +1594,27 @@ export function ConversationWorkspace({
   const en = settings.locale === "en-US";
   const dismissError = () => {
     if (!error) return;
-    pushNotification(error, "error", { read: true, showToast: false });
     onError(undefined);
   };
   const [items, setItems] = useState<Item[]>([]);
+  const notifiedErrorRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!error) {
+      notifiedErrorRef.current = undefined;
+      return;
+    }
+    if (notifiedErrorRef.current === error) return;
+    notifiedErrorRef.current = error;
+    pushNotification(error, "error");
+  }, [error, pushNotification]);
   // The RPC listener is intentionally installed once, but the active session
   // changes without remounting this workspace. Keep its routing key live;
   // capturing `session` in the [] effect would permanently retain the first
   // (usually runtime-less draft) session and accept events from every worker.
   const activeRuntimeIdRef = useRef(session?.runtimeId);
   activeRuntimeIdRef.current = session?.runtimeId;
+  const englishLocaleRef = useRef(en);
+  englishLocaleRef.current = en;
   const [draft, setDraftState] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [pendingSteer, setPendingSteer] = useState<{
@@ -1594,6 +1637,12 @@ export function ConversationWorkspace({
   const [contextWindow, setContextWindow] = useState<number>();
   const [reportedContextTokens, setReportedContextTokens] = useState<number>();
   const [modelMenu, setModelMenu] = useState(false);
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>("off");
+  const [availableThinkingLevels, setAvailableThinkingLevels] = useState<
+    ThinkingLevel[]
+  >(["off"]);
+  const [thinkingMenu, setThinkingMenu] = useState(false);
+  const [switchingThinking, setSwitchingThinking] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   const [languageServerPlugins, setLanguageServerPlugins] = useState<Awaited<ReturnType<typeof desktop.listLanguageServerPlugins>>>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
@@ -1616,6 +1665,10 @@ export function ConversationWorkspace({
   }>();
   useEffect(() => { void desktop.listLanguageServerPlugins().then(setLanguageServerPlugins).catch(() => setLanguageServerPlugins([])); }, []);
   const streamingId = useRef<string | undefined>(undefined);
+  const pendingModelError = useRef<{
+    message?: string;
+    runtimeId: string;
+  } | undefined>(undefined);
   const pendingAssistantUpdate = useRef<{
     id: string;
     message: Record<string, unknown>;
@@ -1635,6 +1688,7 @@ export function ConversationWorkspace({
   const composerHistoryIndexRef = useRef(-1);
   const slashMenuRef = useRef<HTMLDivElement | null>(null);
   const modelControlRef = useRef<HTMLDivElement | null>(null);
+  const thinkingControlRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
   const autoScrollFrame = useRef<number | undefined>(undefined);
   const scrollMetricsFrame = useRef<number | undefined>(undefined);
@@ -1938,6 +1992,8 @@ export function ConversationWorkspace({
       setAvailableModels([]);
       setCurrentModelKey("");
       setContextWindow(undefined);
+      setThinkingLevel("off");
+      setAvailableThinkingLevels(["off"]);
       return;
     }
     const refreshModelName = () => {
@@ -1948,16 +2004,23 @@ export function ConversationWorkspace({
         .then(([state, available]) => {
           const model = (
             state as {
-              model?: { provider?: string; id?: string; name?: string; contextWindow?: number };
+              model?: Partial<ModelOption>;
               isStreaming?: boolean;
+              thinkingLevel?: unknown;
             }
           ).model;
-          const isStreaming = (state as { isStreaming?: boolean }).isStreaming;
+          const sessionState = state as {
+            isStreaming?: boolean;
+            thinkingLevel?: unknown;
+          };
+          const isStreaming = sessionState.isStreaming;
           const models = (
             available as {
               models?: ModelOption[];
             }
-          ).models ?? [];
+          ).models?.filter((entry) =>
+            modelIsEnabled(settings, entry.provider, entry.id),
+          ) ?? [];
           const listed = models?.find(
             (entry) =>
               entry.provider === model?.provider && entry.id === model?.id,
@@ -1974,6 +2037,14 @@ export function ConversationWorkspace({
               typeof model?.contextWindow === "number" && model.contextWindow > 0
                 ? model.contextWindow
                 : listed?.contextWindow,
+            );
+            setAvailableThinkingLevels(
+              supportedThinkingLevels(listed ?? model),
+            );
+            setThinkingLevel(
+              isThinkingLevel(sessionState.thinkingLevel)
+                ? sessionState.thinkingLevel
+                : "off",
             );
             setModelName(
               listed?.name ??
@@ -1995,16 +2066,22 @@ export function ConversationWorkspace({
       cancelled = true;
       window.removeEventListener("agent-k-model-changed", refreshModelName);
     };
-  }, [connected, en, session?.runtimeId]);
+  }, [connected, en, session?.runtimeId, settings.disabledModelProviders, settings.disabledModels]);
   useEffect(() => {
     const saved = session?.path ? settings.sessionModels[session.path] : undefined;
     const [provider, ...modelParts] = saved?.split("/") ?? [];
     const modelId = modelParts.join("/");
-    if (!connected || !session?.runtimeId || !provider || !modelId) return;
+    if (
+      !connected ||
+      !session?.runtimeId ||
+      !provider ||
+      !modelId ||
+      !modelIsEnabled(settings, provider, modelId)
+    ) return;
     void desktop.command({ type: "set_model", provider, modelId }, session.runtimeId)
       .then(() => window.dispatchEvent(new Event("agent-k-model-changed")))
       .catch((cause) => onError(String(cause)));
-  }, [connected, onError, session?.path, session?.runtimeId, settings.sessionModels]);
+  }, [connected, onError, session?.path, session?.runtimeId, settings.disabledModelProviders, settings.disabledModels, settings.sessionModels]);
   useEffect(() => {
     if (!modelMenu) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
@@ -2016,8 +2093,19 @@ export function ConversationWorkspace({
       document.removeEventListener("pointerdown", closeOnOutsideClick);
   }, [modelMenu]);
 
+  useEffect(() => {
+    if (!thinkingMenu) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!thinkingControlRef.current?.contains(event.target as Node))
+        setThinkingMenu(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () =>
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [thinkingMenu]);
+
   const selectModel = async (model: ModelOption) => {
-    if (switchingModel || running) return;
+    if (switchingModel || running || !modelIsEnabled(settings, model.provider, model.id)) return;
     setSwitchingModel(true);
     try {
       await desktop.command(
@@ -2028,13 +2116,13 @@ export function ConversationWorkspace({
         },
         session?.runtimeId,
       );
-      setCurrentModelKey(`${model.provider}/${model.id}`);
+      setCurrentModelKey(modelKey(model.provider, model.id));
       setModelName(model.name ?? model.id);
       if (session?.path)
         void updateSettings({
           sessionModels: {
             ...settings.sessionModels,
-            [session.path]: `${model.provider}/${model.id}`,
+            [session.path]: modelKey(model.provider, model.id),
           },
         });
       setModelMenu(false);
@@ -2045,10 +2133,54 @@ export function ConversationWorkspace({
       setSwitchingModel(false);
     }
   };
+  const selectThinkingLevel = async (level: ThinkingLevel) => {
+    if (
+      switchingThinking ||
+      running ||
+      !session?.runtimeId ||
+      !availableThinkingLevels.includes(level)
+    )
+      return;
+    setSwitchingThinking(true);
+    try {
+      await desktop.command(
+        { type: "set_thinking_level", level },
+        session.runtimeId,
+      );
+      setThinkingLevel(level);
+      setThinkingMenu(false);
+    } catch (cause) {
+      onError(String(cause));
+    } finally {
+      setSwitchingThinking(false);
+    }
+  };
   const selectedModel = availableModels.find(
-    (model) => `${model.provider}/${model.id}` === currentModelKey,
+    (model) => modelKey(model.provider, model.id) === currentModelKey,
   );
+  const [currentModelProvider, ...currentModelParts] = currentModelKey.split("/");
+  const currentModelId = currentModelParts.join("/");
+  const currentModelDisabled = Boolean(
+    currentModelProvider &&
+    currentModelId &&
+    !modelIsEnabled(settings, currentModelProvider, currentModelId),
+  );
+  useEffect(() => {
+    if (
+      !connected ||
+      !session?.runtimeId ||
+      running ||
+      switchingModel ||
+      !currentModelDisabled
+    ) return;
+    const fallback = availableModels.find((model) =>
+      modelIsEnabled(settings, model.provider, model.id),
+    );
+    if (fallback) void selectModel(fallback);
+    else setModelName(en ? "No enabled model" : "没有已启用的模型");
+  }, [availableModels, connected, currentModelDisabled, en, running, session?.runtimeId, settings.disabledModelProviders, settings.disabledModels, switchingModel]);
   const contextStatus = statuses.find((status) => status.key === "agent-k-context");
+  const composerStatuses = statuses.filter((status) => status.key !== "agent-k-context");
   const contextUsageLabel = reportedContextTokens !== undefined
     ? contextWindow
       ? (en
@@ -2273,6 +2405,7 @@ export function ConversationWorkspace({
         if (!activeRuntimeId || event.runtimeId !== activeRuntimeId) return;
         const type = String(event.type ?? "");
         if (type === "agent_start") {
+          pendingModelError.current = undefined;
           setRunning(true);
           setRunStartedAt(Date.now());
         }
@@ -2289,6 +2422,17 @@ export function ConversationWorkspace({
           setRunStartedAt(undefined);
           setSubmitting(false);
           streamingId.current = undefined;
+          const modelError = pendingModelError.current;
+          pendingModelError.current = undefined;
+          if (modelError?.runtimeId === activeRuntimeId) {
+            const prefix = englishLocaleRef.current
+              ? "Model response failed"
+              : "模型回答失败";
+            pushNotification(
+              modelError.message ? `${prefix}: ${modelError.message}` : prefix,
+              "error",
+            );
+          }
         }
         if (type === "session_info_changed" && typeof event.name === "string") {
           window.dispatchEvent(new CustomEvent("agent-k-session-name", {
@@ -2339,6 +2483,17 @@ export function ConversationWorkspace({
           const message = event.message as Record<string, unknown>;
           if (message.role === "user") return;
           if (message.role === "assistant") {
+            if (message.stopReason === "error") {
+              const detail = typeof message.errorMessage === "string"
+                ? message.errorMessage.trim()
+                : "";
+              pendingModelError.current = {
+                ...(detail ? { message: detail } : {}),
+                runtimeId: activeRuntimeId,
+              };
+            } else if (message.stopReason !== "aborted") {
+              pendingModelError.current = undefined;
+            }
             const tokens = contextTokens(message);
             if (tokens !== undefined) setReportedContextTokens(tokens);
           }
@@ -2674,6 +2829,8 @@ export function ConversationWorkspace({
       const modelId = modelParts.join("/");
       if (!provider || !modelId)
         throw new Error(en ? "Use /model provider/model" : "请使用 /model provider/model");
+      if (!modelIsEnabled(settings, provider, modelId))
+        throw new Error(en ? "This model is disabled in Agent K settings" : "该模型已在 Agent K 设置中停用");
       await desktop.command({ type: "set_model", provider, modelId }, session?.runtimeId);
       window.dispatchEvent(new Event("agent-k-model-changed"));
       return true;
@@ -2900,6 +3057,14 @@ export function ConversationWorkspace({
         en
           ? "The current model does not support image input."
           : "当前模型不支持图片输入。",
+      );
+      return;
+    }
+    if (currentModelDisabled) {
+      onError(
+        en
+          ? "The current model is disabled. Enable it in Settings or select another model."
+          : "当前模型已停用，请在设置中重新启用或选择其他模型。",
       );
       return;
     }
@@ -4020,17 +4185,55 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
             <i aria-hidden="true" className="fa-solid fa-plus" />
           </button>
           <div className="access-control">
-            <button className="access-level" onClick={() => setAccessMenu((current) => !current)} type="button">◈ {accessLabel} <i className="fa-solid fa-chevron-up" /></button>
+            <button className="access-level" onClick={() => {
+              setThinkingMenu(false);
+              setModelMenu(false);
+              setAccessMenu((current) => !current);
+            }} type="button">◈ {accessLabel} <i className="fa-solid fa-chevron-up" /></button>
             {accessMenu && <div className="access-menu"><button onClick={() => void setAccess("ask")} type="button">{t("permissionAsk")}</button><button disabled={!session?.id} onClick={() => void setAccess("session")} type="button">{t("permissionSession")}</button><button onClick={() => void setAccess("full")} type="button">{t("permissionFull")}</button></div>}
           </div>
-          <span className="composer-hint">
-            {running
-              ? (en ? "Enter steer · Ctrl + Enter queue" : "Enter 跟进 · Ctrl + Enter 排队")
-              : (en ? "Enter send · Shift + Enter newline" : "Enter 发送 · Shift + Enter 换行")}
-          </span>
-          {statuses.length > 0 && (
+          <div className="thinking-control" ref={thinkingControlRef}>
+            <button
+              aria-expanded={thinkingMenu}
+              aria-haspopup="listbox"
+              className="composer-thinking"
+              disabled={!connected || running || switchingThinking}
+              onClick={() => {
+                setAccessMenu(false);
+                setModelMenu(false);
+                setThinkingMenu((current) => !current);
+              }}
+              title={en ? "Thinking level" : "思考级别"}
+              type="button"
+            >
+              <i aria-hidden="true" className="fa-solid fa-brain" />
+              <span>{en ? "Thinking" : "思考"}: {thinkingLevel}</span>
+              <i aria-hidden="true" className="fa-solid fa-chevron-up" />
+            </button>
+            {thinkingMenu ? (
+              <div className="thinking-menu" role="listbox">
+                {availableThinkingLevels.map((level) => (
+                  <button
+                    aria-selected={level === thinkingLevel}
+                    className={level === thinkingLevel ? "is-active" : undefined}
+                    disabled={switchingThinking || running}
+                    key={level}
+                    onClick={() => void selectThinkingLevel(level)}
+                    role="option"
+                    type="button"
+                  >
+                    <span>{level}</span>
+                    {level === thinkingLevel ? (
+                      <i aria-hidden="true" className="fa-solid fa-check" />
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          {composerStatuses.length > 0 && (
             <div className="extension-statuses" aria-live="polite">
-              {statuses.map((status) => (
+              {composerStatuses.map((status) => (
                 <span key={status.key} title={plainUiText(status.text)}>
                   {status.key === "agent-k-plan" && status.text.includes("executing") && (
                     <i aria-hidden="true" className="fa-solid fa-spinner session-running-spinner" />
@@ -4046,7 +4249,11 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
               aria-haspopup="listbox"
               className="composer-model"
               disabled={!connected || availableModels.length === 0}
-              onClick={() => setModelMenu((current) => !current)}
+              onClick={() => {
+                setAccessMenu(false);
+                setThinkingMenu(false);
+                setModelMenu((current) => !current);
+              }}
               title={en ? "Switch model" : "切换模型"}
               type="button"
             >
@@ -4104,6 +4311,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
                   !session ||
                   !connected ||
                   submitting ||
+                  currentModelDisabled ||
                   (attachments.some((attachment) => attachment.kind === "image") &&
                     !modelSupportsImages)
             }
