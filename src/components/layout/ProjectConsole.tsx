@@ -11,6 +11,7 @@ import {
   type ResolvedTheme,
 } from "../../features/settings/SettingsContext";
 import type { ThemeDefinition } from "../../lib/themes";
+import { terminalAccentSequence } from "../../lib/terminalPalette";
 
 const defaultTerminalFont = 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace';
 
@@ -79,6 +80,10 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   const { resolvedTheme, activeTheme, settings } = useSettings();
   const currentTerminalTheme = terminalTheme(resolvedTheme, activeTheme);
   const currentTerminalFont = activeTheme?.fonts?.code ?? defaultTerminalFont;
+  const currentTerminalAccentSequence = terminalAccentSequence(
+    activeTheme?.colors.accent ?? (resolvedTheme === "dark" ? "#f0ede8" : "#302d2a"),
+    activeTheme?.components["primary-action-foreground"] ?? (resolvedTheme === "dark" ? "#1f1f1f" : "#ffffff"),
+  ) ?? terminalAccentSequence("#ffffff", "#000000")!;
   const en = settings.locale === "en-US";
   const [collapsed, setCollapsed] = useState(false);
   const [height, setHeight] = useState(220);
@@ -216,10 +221,12 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
     if (!terminal) return;
     terminal.options.theme = currentTerminalTheme;
     terminal.options.fontFamily = currentTerminalFont;
-    terminal.clearTextureAtlas();
-    terminal.refresh(0, terminal.rows - 1);
-    fitTerminal();
-  }, [activeTheme, fitTerminal, resolvedTheme]);
+    terminal.write(currentTerminalAccentSequence, () => {
+      terminal.clearTextureAtlas();
+      terminal.refresh(0, terminal.rows - 1);
+      fitTerminal();
+    });
+  }, [activeTheme, currentTerminalAccentSequence, fitTerminal, resolvedTheme]);
 
   useEffect(() => {
     const stop = desktop.onProjectConsoleEvent((event) => {

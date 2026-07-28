@@ -2661,8 +2661,8 @@ export function ConversationWorkspace({
     const [, name, rawArguments = ""] = match;
     const argumentsText = rawArguments.trim();
     if (["settings", "skills", "extensions", "editors"].includes(name)) {
-      const page = name === "skills" || name === "extensions" || name === "editors" ? name : "models";
-      window.dispatchEvent(new CustomEvent("agent-k-open-settings", { detail: { page } }));
+      if (name === "settings") window.dispatchEvent(new Event("agent-k-open-settings"));
+      else window.dispatchEvent(new CustomEvent("agent-k-open-settings", { detail: { page: name } }));
       return true;
     }
     if (name === "model") {

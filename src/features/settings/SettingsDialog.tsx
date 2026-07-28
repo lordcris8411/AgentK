@@ -101,6 +101,7 @@ function loadBrowserData() {
 export function SettingsDialog({
   open,
   onClose,
+  onPageChange,
   initialPage = "models",
   cwd,
   runtimeId,
@@ -108,6 +109,7 @@ export function SettingsDialog({
 }: {
   open: boolean;
   onClose(changes: PiResourceChange[], editorSettingsChanged: boolean): void;
+  onPageChange?(page: SettingsPage): void;
   initialPage?: SettingsPage;
   cwd?: string;
   runtimeId?: string;
@@ -703,7 +705,7 @@ export function SettingsDialog({
         <div className="settings-body">
           <nav className="settings-nav">
             {(["models", "appearance", "agentSettings", "skills", "extensions", "editors", "permissions", "about"] as SettingsPage[]).map((item) => (
-              <button className={page === item ? "is-active" : ""} key={item} onClick={() => setPage(item)} type="button">
+              <button className={page === item ? "is-active" : ""} key={item} onClick={() => { setPage(item); onPageChange?.(item); }} type="button">
                 <i className={`fa-solid ${item === "models" ? "fa-microchip" : item === "appearance" ? "fa-circle-half-stroke" : item === "agentSettings" ? "fa-sliders" : item === "skills" ? "fa-wand-magic-sparkles" : item === "extensions" ? "fa-puzzle-piece" : item === "editors" ? "fa-pen-ruler" : item === "permissions" ? "fa-shield-halved" : "fa-circle-info"}`} />
                 {t(item)}
               </button>

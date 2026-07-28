@@ -47,6 +47,7 @@ function SettingsOverlay({
       setOpen(false);
       onClose(changes, editorSettingsChanged);
     }}
+    onPageChange={setPage}
     open={open}
     runtimeId={active?.runtimeId}
     sessionId={active?.path === DRAFT_SESSION_PATH ? undefined : active?.id}

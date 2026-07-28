@@ -1,14 +1,13 @@
 /**
- * Agent K's Starship profile intentionally uses ANSI color names rather than
- * literal RGB values. xterm can then map every prompt segment through the
- * active Agent K theme instead of inheriting a host terminal's fixed palette.
+ * Agent K's Starship profile uses an Agent K-reserved indexed accent and ANSI
+ * color names rather than literal RGB values. xterm can then map every prompt
+ * segment through the active theme instead of inheriting fixed host colors.
  */
 export const agentKStarshipConfig = `format = """
-[░▒▓](black)\\
+[░▒▓](fg:16)\\
 $os\\
-[](bg:bright-green fg:black)\\
 $directory\\
-[](fg:bright-green bg:bright-black)\\
+[](fg:16 bg:bright-black)\\
 $git_branch\\
 $git_status\\
 [](fg:bright-black)\\
@@ -21,14 +20,14 @@ $character"""
 symbol = " "
 
 [directory]
-style = "fg:black bg:bright-green"
+style = "fg:17 bg:16"
 format = "[ $path ]($style)"
 truncation_length = 4
 truncation_symbol = "…/"
 
 [git_branch]
 symbol = " "
-style = "fg:bright-green bg:bright-black"
+style = "fg:16 bg:bright-black"
 format = "[ $symbol$branch ]($style)"
 
 [git_status]
@@ -53,12 +52,12 @@ style = "fg:bright-white bg:black"
 format = "[ $duration ]($style)"
 
 [character]
-success_symbol = "[ ](bold bright-green)"
+success_symbol = "[ ](bold fg:16)"
 error_symbol = "[ ](bold bright-red)"
 
 [os]
 disabled = false
-style = "fg:bright-green bg:black"
+style = "fg:17 bg:16"
 format = "[ $symbol]($style)"
 
 [os.symbols]
@@ -91,14 +90,14 @@ for _agent_k_color_entry in "\${_agent_k_color_entries[@]}"; do
   [ -n "\${_agent_k_color_entry}" ] || continue
   case "\${_agent_k_color_entry}" in
     di=*)
-      _agent_k_color_entry="di=01;32"
+      _agent_k_color_entry="di=01;38;5;16"
       _agent_k_has_directory_color=1
       ;;
   esac
   _agent_k_ls_colors="\${_agent_k_ls_colors:+\${_agent_k_ls_colors}:}\${_agent_k_color_entry}"
 done
 if [ -z "\${_agent_k_has_directory_color}" ]; then
-  _agent_k_ls_colors="\${_agent_k_ls_colors:+\${_agent_k_ls_colors}:}di=01;32"
+  _agent_k_ls_colors="\${_agent_k_ls_colors:+\${_agent_k_ls_colors}:}di=01;38;5;16"
 fi
 export LS_COLORS="\${_agent_k_ls_colors}"
 export USER_LS_COLORS=1
