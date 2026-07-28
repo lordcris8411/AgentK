@@ -289,6 +289,7 @@ export const desktop = {
     invoke<string[]>("discover_local_models", { baseUrl, ollama }),
   listProjects: () => invoke<ProjectSummary[]>("list_projects"),
   addWorkspace: (cwd: string) => invoke<string>("add_workspace", { cwd }),
+  removeWorkspace: (cwd: string) => invoke<void>("remove_workspace", { cwd }),
   updateStartupProgress: (
     message: string,
     current: number,

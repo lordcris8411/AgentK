@@ -332,6 +332,8 @@ export class DesktopBackend {
         return this.files.listProjects();
       case "add_workspace":
         return this.files.addWorkspace(requiredString(args.cwd, "cwd"));
+      case "remove_workspace":
+        return this.files.removeWorkspace(requiredString(args.cwd, "cwd"));
       case "session_messages":
         return this.files.sessionMessages(requiredString(args.path, "path"));
       case "hide_session":

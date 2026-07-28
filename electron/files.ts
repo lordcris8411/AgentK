@@ -64,6 +64,11 @@ async function canonicalRoot(root: string): Promise<string> {
   return path;
 }
 
+function workspaceIdentity(value: string): string {
+  const normalized = resolve(value);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
 async function workspacePath(rootInput: string, requested: string): Promise<string> {
   const root = await canonicalRoot(rootInput);
   const candidate = isAbsolute(requested) ? requested : join(root, requested);
@@ -245,22 +250,54 @@ export class FileService {
   async addWorkspace(cwd: string): Promise<string> {
     const selected = await canonicalRoot(cwd);
     const path = join(this.appDataPath, "known-projects.json");
+    const removedPath = join(this.appDataPath, "removed-projects.json");
     const projects = new Set(await readJson<string[]>(path, []));
+    const removed = new Set(await readJson<string[]>(removedPath, []));
+    const selectedKey = workspaceIdentity(selected);
+    const nextRemoved = [...removed].filter((entry) => workspaceIdentity(entry) !== selectedKey);
     for (const existing of projects) {
       try {
-        if ((await realpath(existing)) === selected) return existing;
+        if (workspaceIdentity(await realpath(existing)) === selectedKey) {
+          if (nextRemoved.length !== removed.size)
+            await atomicWrite(removedPath, JSON.stringify(nextRemoved.sort()));
+          return existing;
+        }
       } catch {
         // Preserve missing projects in the user's list.
       }
     }
     projects.add(selected);
-    await atomicWrite(path, JSON.stringify([...projects].sort()));
+    await Promise.all([
+      atomicWrite(path, JSON.stringify([...projects].sort())),
+      atomicWrite(removedPath, JSON.stringify(nextRemoved.sort())),
+    ]);
     return selected;
+  }
+
+  async removeWorkspace(cwd: string): Promise<void> {
+    const selected = await realpath(cwd).catch(() => resolve(cwd));
+    const selectedKey = workspaceIdentity(selected);
+    const knownPath = join(this.appDataPath, "known-projects.json");
+    const removedPath = join(this.appDataPath, "removed-projects.json");
+    const known = await readJson<string[]>(knownPath, []);
+    const removed = new Map(
+      (await readJson<string[]>(removedPath, [])).map((entry) => [workspaceIdentity(entry), entry]),
+    );
+    removed.set(selectedKey, selected);
+    await Promise.all([
+      atomicWrite(knownPath, JSON.stringify(known.filter((entry) => workspaceIdentity(entry) !== selectedKey).sort())),
+      atomicWrite(removedPath, JSON.stringify([...removed.values()].sort())),
+    ]);
   }
 
   async listProjects(): Promise<ProjectSummary[]> {
     const knownPath = join(this.appDataPath, "known-projects.json");
     const known = new Set(await readJson<string[]>(knownPath, []));
+    const removed = new Set(
+      (await readJson<string[]>(join(this.appDataPath, "removed-projects.json"), []))
+        .map(workspaceIdentity),
+    );
+    const isRemoved = (cwd: string) => removed.has(workspaceIdentity(cwd));
     const sessions: SessionSummary[] = [];
     const root = join(piAgentDirectory(), "sessions");
     try {
@@ -270,6 +307,7 @@ export class FileService {
           if (!file.isFile() || extname(file.name) !== ".jsonl") continue;
           const summary = await sessionSummary(join(root, project.name, file.name));
           if (!summary) continue;
+          if (isRemoved(summary.cwd)) continue;
           known.add(summary.cwd);
           if (!this.hidden.has(summary.path)) sessions.push(summary);
         }
@@ -277,9 +315,10 @@ export class FileService {
     } catch {
       // Pi may not have created its sessions directory yet.
     }
-    await atomicWrite(knownPath, JSON.stringify([...known].sort()));
+    const visible = [...known].filter((cwd) => !isRemoved(cwd));
+    await atomicWrite(knownPath, JSON.stringify(visible.sort()));
     const home = await realpath(homeDirectory()).catch(() => resolve(homeDirectory()));
-    const projects = await Promise.all([...known].map(async (cwd) => {
+    const projects = await Promise.all(visible.map(async (cwd) => {
       const projectSessions = sessions
         .filter((session) => session.cwd === cwd)
         .sort((left, right) => right.updatedAt - left.updatedAt);

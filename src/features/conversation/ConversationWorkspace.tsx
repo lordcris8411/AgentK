@@ -1674,6 +1674,12 @@ export function ConversationWorkspace({
   const [composerDragActive, setComposerDragActive] = useState(false);
   const [running, setRunning] = useState(false);
   const [runStartedAt, setRunStartedAt] = useState<number>();
+  const [compaction, setCompaction] = useState<{
+    reason: "manual" | "threshold" | "overflow";
+    startedAt: number;
+  }>();
+  const manualCompactionRef = useRef(false);
+  const compactionAbortRequestedRef = useRef(false);
   const [stopping, setStopping] = useState(false);
   const [liveNow, setLiveNow] = useState(() => Date.now());
   const [submitting, setSubmitting] = useState(false);
@@ -1845,11 +1851,11 @@ export function ConversationWorkspace({
     [],
   );
   useEffect(() => {
-    if (!running) return;
+    if (!running && !compaction) return;
     setLiveNow(Date.now());
     const timer = window.setInterval(() => setLiveNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [running]);
+  }, [compaction, running]);
   useEffect(() => {
     const refresh = () => setCommandRevision((revision) => revision + 1);
     window.addEventListener("agent-k-resources-changed", refresh);
@@ -1960,6 +1966,9 @@ export function ConversationWorkspace({
     let cancelled = false;
     discardAssistantUpdate();
     streamingId.current = undefined;
+    manualCompactionRef.current = false;
+    compactionAbortRequestedRef.current = false;
+    setCompaction(undefined);
     setAttachments([]);
     setPendingSteer(undefined);
     if (!session || session.path === "__new__") {
@@ -2159,7 +2168,7 @@ export function ConversationWorkspace({
   }, [thinkingMenu]);
 
   const selectModel = async (model: ModelOption) => {
-    if (switchingModel || running || !modelIsEnabled(settings, model.provider, model.id)) return;
+    if (switchingModel || running || compaction || !modelIsEnabled(settings, model.provider, model.id)) return;
     setSwitchingModel(true);
     try {
       await desktop.command(
@@ -2191,6 +2200,7 @@ export function ConversationWorkspace({
     if (
       switchingThinking ||
       running ||
+      compaction ||
       !session?.runtimeId ||
       !availableThinkingLevels.includes(level)
     )
@@ -2224,6 +2234,7 @@ export function ConversationWorkspace({
       !connected ||
       !session?.runtimeId ||
       running ||
+      compaction ||
       switchingModel ||
       !currentModelDisabled
     ) return;
@@ -2232,7 +2243,7 @@ export function ConversationWorkspace({
     );
     if (fallback) void selectModel(fallback);
     else setModelName(en ? "No enabled model" : "没有已启用的模型");
-  }, [availableModels, connected, currentModelDisabled, en, running, session?.runtimeId, settings.disabledModelProviders, settings.disabledModels, switchingModel]);
+  }, [availableModels, compaction, connected, currentModelDisabled, en, running, session?.runtimeId, settings.disabledModelProviders, settings.disabledModels, switchingModel]);
   const contextStatus = statuses.find((status) => status.key === "agent-k-context");
   const composerStatuses = statuses.filter((status) => status.key !== "agent-k-context");
   const contextUsageLabel = reportedContextTokens !== undefined
@@ -2500,12 +2511,61 @@ export function ConversationWorkspace({
             : "";
           onError(`${en ? "Extension failed" : "扩展执行失败"}${source}: ${detail}`);
         }
+        if (type === "compaction_start") {
+          const reason = event.reason === "threshold" || event.reason === "overflow"
+            ? event.reason
+            : "manual";
+          const startedAt = Date.now();
+          setLiveNow(startedAt);
+          setCompaction({ reason, startedAt });
+        }
+        if (type === "compaction_end") {
+          if (!manualCompactionRef.current) setCompaction(undefined);
+          const result = event.result && typeof event.result === "object"
+            ? event.result as Record<string, unknown>
+            : undefined;
+          const tokensAfter = result?.estimatedTokensAfter;
+          if (typeof tokensAfter === "number" && Number.isFinite(tokensAfter))
+            setReportedContextTokens(Math.max(0, tokensAfter));
+          if (result) {
+            void desktop.command({ type: "get_messages" }, activeRuntimeId)
+              .then((page) => {
+                const messages = (page as { messages?: Array<Record<string, unknown>> }).messages;
+                if (messages) setItems(toItems(messages));
+              })
+              .catch((cause) => onError(String(cause)));
+          }
+          const manual = event.reason === "manual" || manualCompactionRef.current;
+          if (!manual) {
+            const errorMessage = typeof event.errorMessage === "string"
+              ? event.errorMessage.trim()
+              : "";
+            if (errorMessage) {
+              onError(`${englishLocaleRef.current ? "Context compaction failed" : "上下文压缩失败"}：${errorMessage}`);
+            } else if (event.aborted === true) {
+              pushNotification(
+                englishLocaleRef.current ? "Automatic context compaction was cancelled" : "自动上下文压缩已取消",
+                "warning",
+              );
+            } else if (result) {
+              const before = result.tokensBefore;
+              const after = result.estimatedTokensAfter;
+              const reduction = typeof before === "number" && typeof after === "number"
+                ? `：${formatContextTokens(before)} → ${formatContextTokens(after)}`
+                : "";
+              pushNotification(
+                `${englishLocaleRef.current ? "Automatic context compaction completed" : "自动上下文压缩完成"}${reduction}`,
+              );
+            }
+          }
+        }
         if (type === "bridge_closed") {
           flushAssistantUpdate();
           setRunning(false);
           setRunStartedAt(undefined);
           setSubmitting(false);
           setStopping(false);
+          setCompaction(undefined);
           streamingId.current = undefined;
           setItems((current) =>
             current.map((item) => ({
@@ -2907,12 +2967,48 @@ export function ConversationWorkspace({
     }
     if (name === "compact") {
       const customInstructions = argumentsText || settings.autoCompactPrompt.trim();
-      await desktop.command({
-        type: "compact",
-        ...(customInstructions ? { customInstructions } : {}),
-      }, session?.runtimeId);
-      pushNotification(en ? "Session context compacted" : "会话上下文已压缩");
-      return true;
+      const startedAt = Date.now();
+      manualCompactionRef.current = true;
+      compactionAbortRequestedRef.current = false;
+      setLiveNow(startedAt);
+      setCompaction({ reason: "manual", startedAt });
+      try {
+        const rawResult = await desktop.command({
+          type: "compact",
+          ...(customInstructions ? { customInstructions } : {}),
+        }, session?.runtimeId);
+        const result = rawResult && typeof rawResult === "object"
+          ? rawResult as {
+          estimatedTokensAfter?: number;
+          tokensBefore?: number;
+          }
+          : {};
+        if (typeof result.estimatedTokensAfter === "number")
+          setReportedContextTokens(Math.max(0, result.estimatedTokensAfter));
+        const page = await desktop.command(
+          { type: "get_messages" },
+          session?.runtimeId,
+        ) as { messages?: Array<Record<string, unknown>> };
+        if (page.messages) setItems(toItems(page.messages));
+        const reduction = typeof result.tokensBefore === "number" &&
+            typeof result.estimatedTokensAfter === "number"
+          ? `：${formatContextTokens(result.tokensBefore)} → ${formatContextTokens(result.estimatedTokensAfter)}`
+          : "";
+        pushNotification(
+          `${en ? "Session context compacted" : "会话上下文压缩完成"}${reduction}`,
+        );
+        return true;
+      } catch (cause) {
+        if (compactionAbortRequestedRef.current) {
+          pushNotification(en ? "Context compaction cancelled" : "上下文压缩已取消", "warning");
+          return true;
+        }
+        throw new Error(`${en ? "Context compaction failed" : "上下文压缩失败"}：${String(cause)}`);
+      } finally {
+        manualCompactionRef.current = false;
+        compactionAbortRequestedRef.current = false;
+        setCompaction(undefined);
+      }
     }
     if (name === "new") {
       await cancelExtensionUi();
@@ -3065,7 +3161,7 @@ export function ConversationWorkspace({
       throw new Error(en ? "Pi did not change the session tree position" : "Pi 未能切换会话树位置");
   };
   const selectCommandBranch = async (entryId: string) => {
-    if (!session || running) return;
+    if (!session || running || compaction) return;
     const kind = commandPicker?.kind;
     setCommandPicker(undefined);
     try {
@@ -3102,7 +3198,8 @@ export function ConversationWorkspace({
       (!input.trim() && activeAttachments.length === 0) ||
       !session ||
       !connected ||
-      submitting
+      submitting ||
+      compaction
     )
       return;
     // Keep the exact composer value before built-in slash commands consume it,
@@ -3229,11 +3326,13 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
     }
   };
   const stopGeneration = async () => {
-    if (!session || !connected || stopping) return;
+    if (!session || !connected || stopping || (!running && !compaction)) return;
+    if (compaction) compactionAbortRequestedRef.current = true;
     setStopping(true);
     // Reflect the user's intent immediately. Pi lifecycle events remain the
     // authority and can set running=true again if another queued turn starts.
     setRunning(false);
+    setCompaction(undefined);
     setSubmitting(false);
     discardAssistantUpdate();
     streamingId.current = undefined;
@@ -3255,7 +3354,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
     }
   };
   const revertTurn = async (id: string, query: string, calls: ToolCall[]) => {
-    if (!session?.cwd || running || reverting) return;
+    if (!session?.cwd || running || compaction || reverting) return;
     setReverting(id);
     try {
       for (const call of [...calls].reverse()) {
@@ -3317,7 +3416,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
   };
   const deleteUserMessage = async () => {
     const targetItem = pendingMessageDelete;
-    if (!targetItem || !session || running || submitting || deletingMessage) return;
+    if (!targetItem || !session || running || compaction || submitting || deletingMessage) return;
     setDeletingMessage(true);
     try {
       const result = await desktop.command(
@@ -3377,7 +3476,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
     }
   };
   const continueInNewSession = async (id: string, query: string) => {
-    if (running || branching) return;
+    if (running || compaction || branching) return;
     setBranching(id);
     try {
       const restoredQuery = await onContinueInNewSession(query);
@@ -3406,7 +3505,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
     () => conversationNavigation(visibleItems),
     [visibleItems],
   );
-  const stopInsteadOfSend = running && !draft.trim() && attachments.length === 0;
+  const stopInsteadOfSend = (running || Boolean(compaction)) && !draft.trim() && attachments.length === 0;
   const accessLabel =
     settings.permissionMode === "full"
       ? t("permissionFull")
@@ -3610,13 +3709,19 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
           )}
         </div>
         <button
-          className={running ? "header-action is-running" : "header-action"}
+          className={running || compaction ? "header-action is-running" : "header-action"}
           disabled={!connected}
           onClick={() => void stopGeneration()}
           type="button"
         >
           <span className="status-dot" />
-          {connecting ? (en ? "Loading" : "正在加载") : running ? (en ? "Stop" : "停止生成") : (en ? "Ready" : "已就绪")}
+          {connecting
+            ? (en ? "Loading" : "正在加载")
+            : compaction
+              ? (en ? "Compacting (stop)" : "正在压缩（停止）")
+              : running
+                ? (en ? "Stop" : "停止生成")
+                : (en ? "Ready" : "已就绪")}
         </button>
       </header>
       {error && (
@@ -3955,7 +4060,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
       )}
       <form
         className={`composer${composerDragActive ? " is-dragging" : ""}${
-          running || submitting ? " is-working" : ""
+          running || submitting || compaction ? " is-working" : ""
         }${showBilling && !billingHidden ? " has-billing" : ""}`}
         onDragEnter={(event) => {
           if (
@@ -3991,7 +4096,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
         }}
         ref={composerShellRef}
       >
-        {(running || submitting) && (
+        {(running || submitting || compaction) && (
           <div
             aria-live="polite"
             className="composer-working-indicator"
@@ -4001,7 +4106,11 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
               aria-hidden="true"
               className="fa-solid fa-circle-notch fa-spin"
             />
-            <span>Agent K Working</span>
+            <span>
+              {compaction
+                ? `${en ? "Compacting context" : "正在压缩上下文"} · ${formatDuration(liveNow - compaction.startedAt)}`
+                : "Agent K Working"}
+            </span>
           </div>
         )}
         {slashMenuVisible && (
@@ -4138,15 +4247,17 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
           </section>
         ) : null}
         <div
-          aria-disabled={!session || !connected || submitting}
+          aria-disabled={!session || !connected || submitting || Boolean(compaction)}
           aria-multiline="true"
           className="composer-editor"
-          contentEditable={Boolean(session && connected && !submitting)}
+          contentEditable={Boolean(session && connected && !submitting && !compaction)}
           data-placeholder={
             !session
               ? (en ? "Select a session first" : "先选择一个 session")
               : connecting
                 ? (en ? "Connecting to Pi and loading session…" : "正在连接 Pi 并加载会话…")
+                : compaction
+                  ? (en ? "Compacting conversation context…" : "正在压缩会话上下文…")
                 : running
                   ? (en ? "Send a follow-up instruction…" : "向 Pi 发送跟进指令…")
                   : (en ? "Agent K standing by…" : "Agent K 待命中...")
@@ -4347,7 +4458,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
           <button
             aria-label={en ? "Attach images" : "添加图片"}
             className="composer-attach"
-            disabled={!session || !connected || submitting || !modelSupportsImages}
+            disabled={!session || !connected || submitting || Boolean(compaction) || !modelSupportsImages}
             onClick={() => void chooseImages()}
             title={
               modelSupportsImages
@@ -4371,7 +4482,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
               aria-expanded={thinkingMenu}
               aria-haspopup="listbox"
               className="composer-thinking"
-              disabled={!connected || running || switchingThinking}
+              disabled={!connected || running || Boolean(compaction) || switchingThinking}
               onClick={() => {
                 setAccessMenu(false);
                 setModelMenu(false);
@@ -4390,7 +4501,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
                   <button
                     aria-selected={level === thinkingLevel}
                     className={level === thinkingLevel ? "is-active" : undefined}
-                    disabled={switchingThinking || running}
+                    disabled={switchingThinking || running || Boolean(compaction)}
                     key={level}
                     onClick={() => void selectThinkingLevel(level)}
                     role="option"
@@ -4422,7 +4533,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
               aria-expanded={modelMenu}
               aria-haspopup="listbox"
               className="composer-model"
-              disabled={!connected || availableModels.length === 0}
+              disabled={!connected || Boolean(compaction) || availableModels.length === 0}
               onClick={() => {
                 setAccessMenu(false);
                 setThinkingMenu(false);
@@ -4444,7 +4555,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
                       <button
                         aria-selected={key === currentModelKey}
                         className={key === currentModelKey ? "is-active" : undefined}
-                        disabled={switchingModel || running}
+                        disabled={switchingModel || running || Boolean(compaction)}
                         key={key}
                         onClick={() => void selectModel(model)}
                         role="option"
@@ -4485,6 +4596,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
                   !session ||
                   !connected ||
                   submitting ||
+                  Boolean(compaction) ||
                   currentModelDisabled ||
                   (attachments.some((attachment) => attachment.kind === "image") &&
                     !modelSupportsImages)

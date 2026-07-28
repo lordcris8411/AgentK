@@ -1,4 +1,4 @@
-import { defineEditor } from "../../sdk";
+import { defineEditor, type EditorThemeConfig } from "../../sdk";
 import "./editor.css";
 
 function displayBytes(value?: number): string {
@@ -8,9 +8,26 @@ function displayBytes(value?: number): string {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function applyThemeConfig(config?: EditorThemeConfig): void {
+  const style = document.documentElement.style;
+  const set = (name: string, value?: string) => value
+    ? style.setProperty(name, value)
+    : style.removeProperty(name);
+  set("--image-background", config?.colors["surface-panel"]);
+  set("--image-border", config?.colors["border-color"]);
+  set("--image-text", config?.colors["text-primary"]);
+  set("--image-muted", config?.colors["text-secondary"]);
+  set("--image-raised", config?.colors["surface-raised"]);
+  set("--image-active", config?.components["active-item"]);
+  set("--image-active-text", config?.components["active-item-foreground"]);
+  set("--image-accent", config?.colors.accent);
+  set("--image-ui-font", config?.fonts?.ui);
+}
+
 defineEditor((host, initial) => {
   if (!initial.binary) throw new Error("The image plugin requires binary file data");
   document.documentElement.dataset.theme = initial.theme;
+  applyThemeConfig(initial.themeConfig);
   const url = URL.createObjectURL(new Blob([initial.binary], { type: initial.mimeType }));
   host.root.className = "image-editor";
 
@@ -131,5 +148,6 @@ defineEditor((host, initial) => {
     setTheme(theme) {
       document.documentElement.dataset.theme = theme;
     },
+    setThemeConfig: applyThemeConfig,
   };
 });

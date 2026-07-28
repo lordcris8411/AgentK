@@ -1,3 +1,21 @@
+:root {
+  --text-background: #f6f4f1;
+  --text-raised: #fff;
+  --text-hover: #ebe8e4;
+  --text-hover-foreground: #272625;
+  --text-border: #dcd7d1;
+  --text-primary: #272625;
+  --text-secondary: #6f6a64;
+  --text-muted: #98928a;
+  --text-accent: #302d2a;
+  --text-scrollbar: #c9c4bd;
+  --text-scrollbar-hover: #a9a39b;
+  --text-ui-font: "Noto Sans SC", "Segoe UI", sans-serif;
+  --text-code-font: "Cascadia Code", Consolas, monospace;
+}
+:root[data-theme="soft-light"] { --text-background: #e2ded8; --text-raised: #ece9e4; --text-hover: #d3cec7; --text-border: #b8b0a7; --text-primary: #272523; --text-secondary: #5e5953; --text-muted: #777069; --text-scrollbar: #aaa39b; --text-scrollbar-hover: #817a72; }
+:root[data-theme="dark"] { --text-background: #252422; --text-raised: #2c2b29; --text-hover: #353330; --text-hover-foreground: #ece9e4; --text-border: #4b4844; --text-primary: #ece9e4; --text-secondary: #b9b3ac; --text-muted: #8d8780; --text-accent: #f0ede8; --text-scrollbar: #625e59; --text-scrollbar-hover: #7b756f; }
+
 :root,
 body,
 #agent-k-editor-root {
@@ -9,21 +27,21 @@ body,
 }
 
 body {
-  background: #f6f4f1;
-  font-family: "Noto Sans SC", "Segoe UI", sans-serif;
+  background: var(--text-background);
+  color: var(--text-primary);
+  font-family: var(--text-ui-font);
 }
-:root[data-theme="soft-light"] body { background: #e2ded8; }
 
 .agent-k-definition-link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .agent-k-cpp-language-status {
   align-items: center;
-  background: #f4f1eced;
-  border: 1px solid #d8d2c9;
+  background: color-mix(in srgb, var(--text-raised) 93%, transparent);
+  border: 1px solid var(--text-border);
   border-radius: 999px;
-  box-shadow: 0 3px 10px #201b1517;
-  color: #746d64;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--text-background) 34%, transparent);
+  color: var(--text-secondary);
   display: flex;
-  font: 11px/1 "Noto Sans SC", "Segoe UI", sans-serif;
+  font: 11px/1 var(--text-ui-font);
   gap: 7px;
   padding: 6px 9px;
   pointer-events: none;
@@ -33,23 +51,21 @@ body {
   z-index: 15;
 }
 .agent-k-cpp-language-status[hidden] { display: none; }
-.agent-k-cpp-language-status[data-theme="dark"] { background: #302e2bec; border-color: #4d4944; box-shadow: 0 3px 10px #0005; color: #bdb7af; }
-.agent-k-cpp-language-spinner { animation: agent-k-cpp-language-spin .75s linear infinite; border: 2px solid #bdb5aa; border-radius: 50%; border-top-color: #8d5d25; box-sizing: border-box; height: 11px; width: 11px; }
-.agent-k-cpp-language-status[data-theme="dark"] .agent-k-cpp-language-spinner { border-color: #625d56; border-top-color: #d59a52; }
+.agent-k-cpp-language-spinner { animation: agent-k-cpp-language-spin .75s linear infinite; border: 2px solid var(--text-border); border-radius: 50%; border-top-color: var(--text-accent); box-sizing: border-box; height: 11px; width: 11px; }
 @keyframes agent-k-cpp-language-spin { to { transform: rotate(360deg); } }
 /* Monaco's compatibility multi-cursor action is not supported by the
    host-backed editor, so keep it out of every context menu deterministically. */
-.agent-k-editor-context-menu { background: #353535; border: 1px solid #4a4a4a; border-radius: 4px; box-shadow: 0 6px 18px #0007; min-width: 190px; padding: 4px 0; position: absolute; z-index: 30; }
-.agent-k-editor-context-menu button { background: transparent; border: 0; color: #f0f0f0; cursor: pointer; display: block; font: 13px/28px "Noto Sans SC", "Segoe UI", sans-serif; padding: 0 14px; text-align: left; width: 100%; }
-.agent-k-editor-context-menu button:hover { background: #094771; }
-.agent-k-editor-context-menu hr { border: 0; border-top: 1px solid #515151; margin: 4px 0; }
+.agent-k-editor-context-menu { background: var(--text-raised); border: 1px solid var(--text-border); border-radius: 4px; box-shadow: 0 6px 18px color-mix(in srgb, var(--text-background) 62%, transparent); min-width: 190px; padding: 4px 0; position: absolute; z-index: 30; }
+.agent-k-editor-context-menu button { background: transparent; border: 0; color: var(--text-primary); cursor: pointer; display: block; font: 13px/28px var(--text-ui-font); padding: 0 14px; text-align: left; width: 100%; }
+.agent-k-editor-context-menu button:hover { background: var(--text-hover); color: var(--text-hover-foreground); }
+.agent-k-editor-context-menu hr { border: 0; border-top: 1px solid var(--text-border); margin: 4px 0; }
 
 .agent-k-cpp-references {
-  background: #252422;
-  border: 1px solid #4a4845;
+  background: var(--text-raised);
+  border: 1px solid var(--text-border);
   border-radius: 6px;
-  box-shadow: 0 8px 28px #0008;
-  color: #d4d4d4;
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--text-background) 68%, transparent);
+  color: var(--text-primary);
   max-height: min(320px, calc(100% - 32px));
   overflow: auto;
   padding: 6px;
@@ -59,17 +75,13 @@ body {
   z-index: 20;
 }
 .agent-k-cpp-references::-webkit-scrollbar { height: 10px; width: 10px; }
-.agent-k-cpp-references::-webkit-scrollbar-track { background: #1d1c1a; border-radius: 8px; }
-.agent-k-cpp-references::-webkit-scrollbar-thumb { background: #5d5954; border: 2px solid #1d1c1a; border-radius: 8px; }
-.agent-k-cpp-references::-webkit-scrollbar-thumb:hover { background: #817b73; }
-.agent-k-cpp-references-header { align-items: center; background: #252422; cursor: move; display: flex; font-size: 12px; justify-content: space-between; padding: 2px 4px 6px; position: sticky; top: 0; user-select: none; z-index: 1; }
-.agent-k-cpp-references-header button { background: transparent; border: 0; color: #bdbab5; cursor: pointer; font-size: 18px; line-height: 16px; padding: 0 2px; }
-.agent-k-cpp-reference { background: transparent; border: 0; border-radius: 4px; color: #d4d4d4; cursor: pointer; display: block; overflow: hidden; padding: 5px 6px; text-align: left; width: 100%; }
-.agent-k-cpp-reference-location { display: block; font: 12px/1.35 Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-k-cpp-reference-kind { border: 1px solid #5d5954; border-radius: 3px; color: #cfcac3; font: 10px/1.25 "Noto Sans SC", "Segoe UI", sans-serif; font-style: normal; margin-right: 6px; padding: 1px 4px; }
-.agent-k-cpp-reference-preview { color: #a7a39d; display: block; font: 11px/1.35 Consolas, monospace; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-k-cpp-reference:hover { background: #353331; }
-
-@media (prefers-color-scheme: dark) {
-  body { background: #252422; }
-}
+.agent-k-cpp-references::-webkit-scrollbar-track { background: var(--text-background); border-radius: 8px; }
+.agent-k-cpp-references::-webkit-scrollbar-thumb { background: var(--text-scrollbar); border: 2px solid var(--text-background); border-radius: 8px; }
+.agent-k-cpp-references::-webkit-scrollbar-thumb:hover { background: var(--text-scrollbar-hover); }
+.agent-k-cpp-references-header { align-items: center; background: var(--text-raised); cursor: move; display: flex; font-size: 12px; justify-content: space-between; padding: 2px 4px 6px; position: sticky; top: 0; user-select: none; z-index: 1; }
+.agent-k-cpp-references-header button { background: transparent; border: 0; color: var(--text-secondary); cursor: pointer; font-size: 18px; line-height: 16px; padding: 0 2px; }
+.agent-k-cpp-reference { background: transparent; border: 0; border-radius: 4px; color: var(--text-primary); cursor: pointer; display: block; overflow: hidden; padding: 5px 6px; text-align: left; width: 100%; }
+.agent-k-cpp-reference-location { display: block; font: 12px/1.35 var(--text-code-font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-k-cpp-reference-kind { border: 1px solid var(--text-border); border-radius: 3px; color: var(--text-secondary); font: 10px/1.25 var(--text-ui-font); font-style: normal; margin-right: 6px; padding: 1px 4px; }
+.agent-k-cpp-reference-preview { color: var(--text-muted); display: block; font: 11px/1.35 var(--text-code-font); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-k-cpp-reference:hover { background: var(--text-hover); color: var(--text-hover-foreground); }

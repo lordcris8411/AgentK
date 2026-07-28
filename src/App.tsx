@@ -600,6 +600,47 @@ export function App() {
     setError(undefined);
     setWorkspacePickerOpen(true);
   };
+  const removeWorkspace = async (project: ProjectSummary) => {
+    try {
+      const projectPaths = new Set(project.sessions.map((session) => session.path));
+      const runtimesToClose = new Set<string>();
+      for (const [path, runtimeId] of runtimeIds.current) {
+        if (!projectPaths.has(path)) continue;
+        runtimesToClose.add(runtimeId);
+        runtimeIds.current.delete(path);
+      }
+      const current = activeRef.current;
+      if (current?.cwd === project.cwd && current.runtimeId)
+        runtimesToClose.add(current.runtimeId);
+      for (const runtimeId of runtimesToClose) {
+        await cancelPending(runtimeId);
+        clearSessionUi(runtimeId);
+        desktop.abort(runtimeId);
+        await desktop.closeRuntime(runtimeId);
+      }
+      await desktop.removeWorkspace(project.cwd);
+      if (settings.pinnedWorkspaces.includes(project.cwd)) {
+        await updateSettings({
+          pinnedWorkspaces: settings.pinnedWorkspaces.filter((cwd) => cwd !== project.cwd),
+        });
+      }
+      const remaining = (await reload())?.filter((item) => item.cwd !== project.cwd) ?? [];
+      if (current?.cwd !== project.cwd) return;
+      const next = remaining[0];
+      if (next) createSession(next.cwd);
+      else {
+        ++selectionVersion.current;
+        activeRef.current = undefined;
+        setActive(undefined);
+        setActiveRuntimeId(undefined);
+        setHistorySeed(undefined);
+        setWorkspaceCwd(undefined);
+        setReadyPath(undefined);
+      }
+    } catch (cause) {
+      setError(en ? `Failed to remove workspace: ${String(cause)}` : `移除工作区失败：${String(cause)}`);
+    }
+  };
   const selectWorkspace = async (selected: string) => {
     setWorkspacePickerOpen(false);
     try {
@@ -916,6 +957,7 @@ export function App() {
             onSettings={() => {
               window.dispatchEvent(new Event("agent-k-open-settings"));
             }}
+            onRemoveWorkspace={removeWorkspace}
             onTogglePin={toggleWorkspacePin}
             projects={projects.map((project) => ({
               ...project,

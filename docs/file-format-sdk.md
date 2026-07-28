@@ -83,7 +83,7 @@ my-editor/
 插件调用 SDK 的 `defineEditor` 注册工厂。下面的导入路径表示插件包内复制的协议适配器；构建者也可以将仓库中的 `editor/sdk/index.ts` 通过其他本地路径纳入 bundle。下面是一个不依赖框架的最小编辑器；React、Vue、Monaco 等依赖可以由插件自行打包：
 
 ```ts
-import { defineEditor } from "./agent-k-editor-sdk";
+import { defineEditor, type EditorThemeConfig } from "./agent-k-editor-sdk";
 import "./editor.css";
 
 defineEditor((host, initial) => {
@@ -91,6 +91,15 @@ defineEditor((host, initial) => {
   textarea.value = initial.content;
   textarea.readOnly = initial.readOnly;
   host.root.append(textarea);
+
+  const applyTheme = (config?: EditorThemeConfig) => {
+    const colors = config?.colors;
+    textarea.style.background = colors?.["surface-panel"] ?? "";
+    textarea.style.color = colors?.["text-primary"] ?? "";
+    textarea.style.borderColor = colors?.["border-color"] ?? "";
+    textarea.style.fontFamily = config?.fonts?.code ?? "";
+  };
+  applyTheme(initial.themeConfig);
 
   let saved = initial.content;
   textarea.addEventListener("input", () => {
@@ -118,6 +127,7 @@ defineEditor((host, initial) => {
     setTheme(theme) {
       document.documentElement.dataset.theme = theme;
     },
+    setThemeConfig: applyTheme,
     setWordWrap(enabled) {
       textarea.wrap = enabled ? "soft" : "off";
     },
@@ -133,10 +143,11 @@ defineEditor((host, initial) => {
 
 - 文件相对路径、绝对路径、文件名、MIME type、文本内容和编辑器无关的语言 ID；
 - 二进制插件所需的 `binary`、`byteSize`、`codec` 与 `mediaKind`；
-- `light` / `soft-light` / `dark` 主题与 `zh-CN` / `en-US` locale；`soft-light` 是降低纸白亮度的 HDR 友好亮色主题；
+- `light` / `soft-light` / `dark` 基础主题与 `zh-CN` / `en-US` locale；`soft-light` 是降低纸白亮度的 HDR 友好亮色主题；
+- 当前完整 `themeConfig`，包括通用界面 `colors`、语义 `components`、`monaco`、`monacoSyntax` 和 `fonts`；插件自行决定如何将这些 token 应用到独立 DOM、CSS 或渲染引擎；
 - 只读状态与自动换行设置。
 
-插件实例必须实现 `getContent` 和 `setContent`，还可实现 `getSelection`、`markSaved`、`focus`、`navigate`、`executeAction`、`setLayoutSuspended`、`setTheme`、`setWordWrap` 和 `dispose`。`getSelection` 让宿主把当前选择预填到项目高级查找；`executeAction` 接收宿主或 Pi 发来的已声明动作；`setLayoutSuspended` 让重型编辑器在侧栏拖动期间暂停布局，并在结束后执行一次权威布局。
+插件实例必须实现 `getContent` 和 `setContent`，还可实现 `getSelection`、`markSaved`、`focus`、`navigate`、`executeAction`、`setLayoutSuspended`、`setTheme`、`setThemeConfig`、`setWordWrap` 和 `dispose`。`setTheme` 通知基础明暗模式，`setThemeConfig` 则在用户切换或热更新完整主题时传入最新 token；二者不会替插件生成公共样式。`getSelection` 让宿主把当前选择预填到项目高级查找；`executeAction` 接收宿主或 Pi 发来的已声明动作；`setLayoutSuspended` 让重型编辑器在侧栏拖动期间暂停布局，并在结束后执行一次权威布局。
 
 插件可通过 host 的以下方法请求宿主能力：
 

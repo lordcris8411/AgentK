@@ -3,6 +3,8 @@ export const EDITOR_CHANNEL = "agent-k-editor" as const;
 
 export type EditorTheme = "light" | "soft-light" | "dark";
 export type EditorThemeConfig = {
+  colors: Record<string, string>;
+  components: Record<string, string>;
   monaco: Record<string, string>;
   monacoSyntax?: Record<string, string>;
   fonts?: { ui: string; code: string };

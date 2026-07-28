@@ -1,4 +1,4 @@
-import { defineEditor } from "../../sdk";
+import { defineEditor, type EditorThemeConfig } from "../../sdk";
 import "./editor.css";
 
 function displayBytes(value?: number): string {
@@ -8,9 +8,23 @@ function displayBytes(value?: number): string {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function applyThemeConfig(config?: EditorThemeConfig): void {
+  const style = document.documentElement.style;
+  const set = (name: string, value?: string) => value
+    ? style.setProperty(name, value)
+    : style.removeProperty(name);
+  set("--video-background", config?.colors["surface-panel"]);
+  set("--video-border", config?.colors["border-color"]);
+  set("--video-text", config?.colors["text-primary"]);
+  set("--video-muted", config?.colors["text-secondary"]);
+  set("--video-accent", config?.colors.accent);
+  set("--video-ui-font", config?.fonts?.ui);
+}
+
 defineEditor((host, initial) => {
   if (!initial.binary) throw new Error("The video plugin requires binary file data");
   document.documentElement.dataset.theme = initial.theme;
+  applyThemeConfig(initial.themeConfig);
   const url = URL.createObjectURL(new Blob([initial.binary], { type: initial.mimeType }));
   host.root.className = "video-editor";
   const stage = document.createElement("main");
@@ -41,5 +55,6 @@ defineEditor((host, initial) => {
     setTheme(theme) {
       document.documentElement.dataset.theme = theme;
     },
+    setThemeConfig: applyThemeConfig,
   };
 });

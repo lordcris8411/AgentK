@@ -28,6 +28,7 @@ export function SessionSidebar({
   onSelectProject,
   onSettings,
   onTogglePin,
+  onRemoveWorkspace,
   runningPaths,
 }: {
   projects: ProjectSummary[];
@@ -42,11 +43,17 @@ export function SessionSidebar({
   onSelectProject(cwd: string): void;
   onSettings(): void;
   onTogglePin(cwd: string): void | Promise<void>;
+  onRemoveWorkspace(project: ProjectSummary): void | Promise<void>;
   runningPaths: Set<string>;
 }) {
   const { t } = useSettings();
   const [contextMenu, setContextMenu] = useState<{
     session: SessionSummary;
+    x: number;
+    y: number;
+  }>();
+  const [workspaceContextMenu, setWorkspaceContextMenu] = useState<{
+    project: ProjectSummary;
     x: number;
     y: number;
   }>();
@@ -63,8 +70,11 @@ export function SessionSidebar({
   );
 
   useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(undefined);
+    if (!contextMenu && !workspaceContextMenu) return;
+    const close = () => {
+      setContextMenu(undefined);
+      setWorkspaceContextMenu(undefined);
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
@@ -78,7 +88,7 @@ export function SessionSidebar({
       window.removeEventListener("blur", close);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [contextMenu]);
+  }, [contextMenu, workspaceContextMenu]);
 
   useEffect(() => {
     if (dialog?.action !== "rename") return;
@@ -96,8 +106,25 @@ export function SessionSidebar({
     event.stopPropagation();
     const width = 218;
     const height = 196;
+    setWorkspaceContextMenu(undefined);
     setContextMenu({
       session,
+      x: Math.max(6, Math.min(event.clientX, window.innerWidth - width - 6)),
+      y: Math.max(6, Math.min(event.clientY, window.innerHeight - height - 6)),
+    });
+  };
+
+  const showWorkspaceContextMenu = (
+    project: ProjectSummary,
+    event: ReactMouseEvent,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const width = 218;
+    const height = 48;
+    setContextMenu(undefined);
+    setWorkspaceContextMenu({
+      project,
       x: Math.max(6, Math.min(event.clientX, window.innerWidth - width - 6)),
       y: Math.max(6, Math.min(event.clientY, window.innerHeight - height - 6)),
     });
@@ -160,6 +187,7 @@ export function SessionSidebar({
             <summary
               className="project-summary"
               onClick={() => onSelectProject(project.cwd)}
+              onContextMenu={(event) => showWorkspaceContextMenu(project, event)}
             >
               <i
                 aria-hidden="true"
@@ -325,6 +353,32 @@ export function SessionSidebar({
               >
                 <i className="fa-regular fa-trash-can" />
                 {t("deleteSession")}
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
+      {workspaceContextMenu
+        ? createPortal(
+            <div
+              className="file-context-menu session-context-menu"
+              onContextMenu={(event) => event.preventDefault()}
+              onPointerDown={(event) => event.stopPropagation()}
+              role="menu"
+              style={{ left: workspaceContextMenu.x, top: workspaceContextMenu.y }}
+            >
+              <button
+                className="message-context-delete"
+                onClick={() => {
+                  const project = workspaceContextMenu.project;
+                  setWorkspaceContextMenu(undefined);
+                  void onRemoveWorkspace(project);
+                }}
+                role="menuitem"
+                type="button"
+              >
+                <i className="fa-solid fa-folder-minus" />
+                {t("removeWorkspace")}
               </button>
             </div>,
             document.body,

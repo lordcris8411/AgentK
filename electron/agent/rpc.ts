@@ -346,7 +346,11 @@ export class RpcBridge {
     this.inFlight += 1;
     const id = `desktop-${++this.sequence}`;
     const request = { ...command, id };
-    const timeout = command.type === "switch_session" ? 90_000 : 30_000;
+    const timeout = command.type === "compact"
+      ? 30 * 60_000
+      : command.type === "switch_session"
+        ? 90_000
+        : 30_000;
     try {
       const response = await new Promise<JsonObject>((resolveRequest, reject) => {
         const timer = setTimeout(() => {

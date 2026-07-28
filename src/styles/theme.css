@@ -1573,12 +1573,12 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   background: #f6f4f1;
 }
 .jump-to-latest {
-  background: #292827;
-  border: 1px solid #292827;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
   bottom: 136px;
-  box-shadow: 0 4px 14px #2c27221f;
-  color: #fff;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--surface-app) 44%, transparent);
+  color: var(--component-inactive-item-foreground, var(--text-secondary));
   font-size: 11px;
   left: 50%;
   padding: 7px 12px;
@@ -1587,8 +1587,9 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   z-index: 3;
 }
 .jump-to-latest:hover {
-  background: #c65b2e;
-  border-color: #c65b2e;
+  background: var(--component-active-item, var(--surface-active));
+  border-color: var(--accent);
+  color: var(--component-active-item-foreground, var(--text-primary));
 }
 .message {
   align-self: center;

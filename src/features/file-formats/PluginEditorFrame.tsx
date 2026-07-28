@@ -63,7 +63,7 @@ type PluginEditorFrameProps = {
   readOnly?: boolean;
   root: string;
   theme: "light" | "soft-light" | "dark";
-  themeConfig?: Pick<ThemeDefinition, "monaco" | "monacoSyntax" | "fonts">;
+  themeConfig?: Pick<ThemeDefinition, "colors" | "components" | "monaco" | "monacoSyntax" | "fonts">;
   wordWrap: boolean;
 };
 
@@ -177,7 +177,13 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
         path,
         readOnly,
         theme,
-        themeConfig: themeConfig ? { monaco: themeConfig.monaco, monacoSyntax: themeConfig.monacoSyntax, fonts: themeConfig.fonts } : undefined,
+        themeConfig: themeConfig ? {
+          colors: themeConfig.colors,
+          components: themeConfig.components,
+          monaco: themeConfig.monaco,
+          monacoSyntax: themeConfig.monacoSyntax,
+          fonts: themeConfig.fonts,
+        } : undefined,
         wordWrap,
       });
     };
@@ -432,7 +438,13 @@ void (async () => {
 
     useEffect(() => {
       if (!ready) return;
-      send("set-theme-config", themeConfig ? { monaco: themeConfig.monaco, monacoSyntax: themeConfig.monacoSyntax, fonts: themeConfig.fonts } : undefined);
+      send("set-theme-config", themeConfig ? {
+        colors: themeConfig.colors,
+        components: themeConfig.components,
+        monaco: themeConfig.monaco,
+        monacoSyntax: themeConfig.monacoSyntax,
+        fonts: themeConfig.fonts,
+      } : undefined);
       send("set-theme", theme);
     }, [ready, theme, themeConfig]);
     useEffect(() => {

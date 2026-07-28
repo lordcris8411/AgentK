@@ -52,6 +52,62 @@ function customSyntaxRules(theme: EditorTheme, syntax?: Record<string, string>) 
   ];
 }
 
+function customMonacoColors(config: EditorThemeConfig): Record<string, string> {
+  const colors = config.colors;
+  const components = config.components;
+  const raised = colors["surface-raised"];
+  const panel = colors["surface-panel"];
+  const primary = colors["text-primary"];
+  const secondary = colors["text-secondary"];
+  const muted = colors["text-muted"];
+  const border = colors["border-strong"];
+  const accent = colors.accent;
+  const active = components["active-item"] ?? colors["surface-active"];
+  const activeForeground = components["active-item-foreground"] ?? primary;
+  const hover = components.hover ?? colors["surface-hover"];
+  const hoverForeground = components["hover-foreground"] ?? primary;
+  const input = components.input ?? raised;
+  const inputForeground = components["input-foreground"] ?? primary;
+  const codeBlock = components["code-block"] ?? colors["surface-active"];
+  const codeForeground = components["code-block-foreground"] ?? primary;
+  return {
+    "focusBorder": accent,
+    "input.background": input,
+    "input.border": border,
+    "input.foreground": inputForeground,
+    "input.placeholderForeground": muted,
+    "editorWidget.background": raised,
+    "editorWidget.border": border,
+    "editorWidget.foreground": primary,
+    "editorWidget.resizeBorder": accent,
+    "editorHoverWidget.background": raised,
+    "editorHoverWidget.border": border,
+    "editorHoverWidget.foreground": primary,
+    "editorHoverWidget.highlightForeground": accent,
+    "editorHoverWidget.statusBarBackground": panel,
+    "editorSuggestWidget.background": raised,
+    "editorSuggestWidget.border": border,
+    "editorSuggestWidget.foreground": secondary,
+    "editorSuggestWidget.focusHighlightForeground": accent,
+    "editorSuggestWidget.highlightForeground": accent,
+    "editorSuggestWidget.selectedBackground": active,
+    "editorSuggestWidget.selectedForeground": activeForeground,
+    "list.activeSelectionBackground": active,
+    "list.activeSelectionForeground": activeForeground,
+    "list.hoverBackground": hover,
+    "list.hoverForeground": hoverForeground,
+    "list.inactiveSelectionBackground": active,
+    "list.inactiveSelectionForeground": activeForeground,
+    "scrollbarSlider.background": colors["scrollbar-thumb"],
+    "scrollbarSlider.hoverBackground": colors["scrollbar-thumb-hover"],
+    "scrollbarSlider.activeBackground": colors["scrollbar-thumb-hover"],
+    "textCodeBlock.background": codeBlock,
+    "textPreformat.foreground": codeForeground,
+    "textLink.foreground": colors.info ?? accent,
+    ...config.monaco,
+  };
+}
+
 function hoverMarkdown(contents: unknown): Array<{ value: string }> {
   const values = Array.isArray(contents) ? contents : [contents];
   return values.flatMap((item) => {
@@ -216,6 +272,23 @@ defineEditor((host, initial) => {
   let themeConfig = initial.themeConfig;
   const applyThemeConfig = (config?: EditorThemeConfig) => {
     themeConfig = config;
+    const style = globalThis.document.documentElement.style;
+    const set = (name: string, value?: string) => value
+      ? style.setProperty(name, value)
+      : style.removeProperty(name);
+    set("--text-background", config?.colors["surface-panel"]);
+    set("--text-raised", config?.colors["surface-raised"]);
+    set("--text-hover", config?.components.hover ?? config?.colors["surface-hover"]);
+    set("--text-hover-foreground", config?.components["hover-foreground"] ?? config?.colors["text-primary"]);
+    set("--text-border", config?.colors["border-strong"]);
+    set("--text-primary", config?.colors["text-primary"]);
+    set("--text-secondary", config?.colors["text-secondary"]);
+    set("--text-muted", config?.colors["text-muted"]);
+    set("--text-accent", config?.colors.accent);
+    set("--text-scrollbar", config?.colors["scrollbar-thumb"]);
+    set("--text-scrollbar-hover", config?.colors["scrollbar-thumb-hover"]);
+    set("--text-ui-font", config?.fonts?.ui);
+    set("--text-code-font", config?.fonts?.code);
     if (config) {
       monaco.editor.defineTheme("agent-k-plugin-custom", {
         base: currentTheme === "dark" ? "vs-dark" : "vs",
@@ -223,7 +296,7 @@ defineEditor((host, initial) => {
         // Custom syntax entries override only the requested tokens; the
         // base palette keeps every unspecified language token readable.
         rules: customSyntaxRules(currentTheme, config.monacoSyntax),
-        colors: config.monaco,
+        colors: customMonacoColors(config),
       });
     }
   };
