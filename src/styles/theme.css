@@ -93,7 +93,7 @@ body,
 }
 body {
   margin: 0;
-  min-width: 1452px;
+  min-width: 1372px;
   overflow: hidden;
 }
 
@@ -891,7 +891,7 @@ button:disabled {
 .app-shell {
   display: grid;
   grid-template-columns:
-    var(--left-panel-width, 304px) 6px minmax(780px, 1fr)
+    var(--left-panel-width, 304px) 6px minmax(700px, 1fr)
     6px var(--right-panel-width, 420px);
   height: 100%;
   min-height: 0;

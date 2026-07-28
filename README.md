@@ -7,7 +7,7 @@
 
   Bring conversations, projects, files, tools, models, and Pi extensions together on Windows and Linux.
 
-  [Product overview](#part-i-product-overview) · [Technical guide](#part-ii-technical-guide) · [中文](#第一部分产品介绍)
+  [Product overview](#part-i-product-overview) · [Product tour](#product-tour) · [Technical guide](#part-ii-technical-guide) · [中文](#第一部分产品介绍)
 
   [![CI](https://github.com/lordcris8411/AgentK/actions/workflows/ci.yml/badge.svg)](https://github.com/lordcris8411/AgentK/actions/workflows/ci.yml)
   [![Electron 43](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
@@ -31,6 +31,43 @@ change-review cards.
 
 Agent K is also self-extensible: **users can create Editor Extensions and Language Service Extensions from inside Agent K by
 working with Pi.** This authoring workflow is available now; it is not only a roadmap direction.
+
+### Product tour
+
+<p align="center">
+  <img src="screenshots/cpp-workspace.png" width="100%" alt="Agent K conversation, C++ project, code Editor, and terminal in one workspace">
+  <br>
+  <sub>Conversation, C++ semantic navigation, project files, a code Editor, and a native terminal stay in one workspace.</sub>
+</p>
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="screenshots/project-actions.png" width="100%" alt="Agent K project actions and C++ workspace loading">
+      <br><sub><strong>Project actions</strong> — open a folder externally, load its C++ language workspace, or build it in the integrated terminal.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="screenshots/model-providers.png" width="100%" alt="Agent K model and Provider settings">
+      <br><sub><strong>Models and Providers</strong> — configure compatible Pi providers, authentication, models, and reasoning levels visually.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="screenshots/themes.png" width="100%" alt="Agent K custom theme carousel">
+      <br><sub><strong>Complete themes</strong> — preview built-in or imported themes that coordinate the app, Editors, syntax, terminal, and fonts.</sub>
+    </td>
+    <td width="50%" valign="top">
+      <img src="screenshots/editor-manager.png" width="100%" alt="Agent K Editor and language extension manager">
+      <br><sub><strong>Editor management</strong> — inspect package Skills and control Editors, Editor Skills, language services, and Language Skills separately.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">
+      <img src="screenshots/skill-hub.png" width="100%" alt="Agent K Skill Hub and installed Skill manager">
+      <br><sub><strong>Skill Hub</strong> — safely preview Skills from skills.sh or GitHub, then manage installed Pi Skills in the same interface.</sub>
+    </td>
+  </tr>
+</table>
 
 ### Core feature: Editors Pi can understand and use
 
@@ -70,14 +107,19 @@ and agent workflow are shipped together.
   an Editor Skill enabled, Pi knows which file is active, understands the experience it belongs to, and can use the actions that
   experience makes available.
 - **Use a real project terminal:** run normal shell commands, copy terminal content, or send selected output back into the chat.
+  On Linux, Agent K keeps your Bash configuration while mapping standard ANSI colors—and Starship when installed—to the
+  active theme.
 - **Manage the Pi ecosystem visually:** inspect, install, enable, or disable Skills and Extensions without manually editing
   configuration files. File editors and language features have their own controls.
 - **Choose models and permissions:** manage providers, switch models, select reasoning levels, and control whether a session may
   run actions.
 - **Keep long conversations useful:** optional automatic context cleanup preserves the important recent state before the context
   becomes full.
-- **Match your desktop:** choose light, HDR-friendly soft light, dark, or system theme. Window size, panel widths, terminal height, and panel visibility are
-  remembered for the next launch.
+- **Match your desktop:** choose light, HDR-friendly soft light, dark, system, or an imported custom theme. A complete theme can
+  coordinate the application, Monaco syntax, terminal palette, and UI/code fonts. Window size, panel widths, terminal height,
+  and panel visibility are remembered for the next launch.
+- **Put large caches where they belong:** choose the cache location used by language tools, indexes, and temporary data without
+  moving the project or application installation.
 - **Stay responsive on larger work:** session reuse, file-editor caching, and interaction optimizations reduce pauses when
   switching conversations, opening files, scrolling, or resizing panels.
 
@@ -184,7 +226,7 @@ Installed language packages may add their own project actions.
 
 - Windows 10/11 x64
 - Modern Linux x64 desktops using X11 or Wayland
-- Light, HDR-friendly soft light, dark, and system theme modes on both platforms
+- Light, HDR-friendly soft light, dark, system, and importable custom themes on both platforms
 
 Release builds include a compatible, unmodified Pi distribution, so a separate global Pi installation is not required.
 
@@ -254,8 +296,19 @@ transactional refresh avoids mixed resource states across workers.
 | Dependency cache | Exact Monaco JavaScript/CSS versions use an internal read-only protocol, Chromium resource caching, and V8 code caching. Language workers are loaded only when required. |
 | Editor instance cache | Up to 40 recently used Editor frames remain alive across file, session, and workspace switches, with LRU eviction. |
 | Scrolling and media | Scroll measurement, custom scrollbars, delayed commits, and media zoom are frame-budgeted with `requestAnimationFrame`. |
-| Terminal | The project console uses a native PTY and enables WebGL rendering when available. Terminal input is isolated from conversation streaming. |
-| Lightweight caches | Provider catalogs use a short TTL; About/browser discovery share promises; layout and theme state restore before expensive background initialization. |
+| Terminal | The project console uses a native PTY and enables WebGL rendering when available. Terminal input is isolated from conversation streaming. Theme changes replace the xterm palette and font live; the Linux Bash profile retains the user's `.bashrc`, gives an installed Starship an ANSI-only profile, and keeps directory colors on that palette. |
+| Lightweight caches | Provider catalogs use a short TTL; About/browser discovery share promises; layout and theme state restore before expensive background initialization. The language-tool, index, and temporary-data cache root is user-selectable. |
+
+### Complete theme system
+
+An Agent K theme is a validated JSON package rather than a single light/dark flag. It can define application surfaces and
+semantic component colors, Monaco UI and syntax colors, the complete ANSI terminal palette, and separate UI/code font stacks.
+Theme changes propagate live to the React interface, cached Editor frames, Monaco instances, the review view, and the project
+terminal; imported themes are previewed before selection and can be removed independently.
+
+Custom theme files can be imported from **Settings → Appearance and language** or created with Pi through the bundled
+`create-agent-k-theme` Skill. Agent K watches the user theme directory and applies valid external updates without requiring a
+rebuild. See the [Retro Terminal example](examples/theme/retro-terminal.json) for a complete theme definition.
 
 ### Programmable file Editor SDK
 
@@ -330,6 +383,7 @@ include:
 | `weather` Skill | Current, hourly, and seven-day weather through Open-Meteo |
 | `gdb-debug` Skill | GDB launch, backtrace, threads, and core-dump workflows |
 | `create-agent-k-extensions` Skill | Authoring and validation guidance for Agent K packages |
+| `create-agent-k-theme` Skill | Creation and management of complete Agent K theme packages |
 | K's Plan Extension | Strict file-backed task planning and review through `/plan` |
 
 Skill Hub accepts `skills add` commands, skills.sh URLs, GitHub repository URLs, and direct GitHub Skill-directory URLs. Preview
@@ -426,6 +480,8 @@ AgentK/
 ├── language-servers/       # trusted native language packages
 ├── extensions/k-plan/      # bundled Pi Extension
 ├── skills/                 # bundled Pi Skills
+├── themes/                 # built-in complete theme definitions
+├── screenshots/            # product screenshots used by this README
 ├── script/                 # Windows/Linux run, test, and build scripts
 └── docs/                   # protocol and architecture documentation
 ~~~
@@ -455,6 +511,17 @@ Provider、会话、命令、Skills、Extensions 和项目配置都可以继续�
 
 Agent K 还具备自扩展能力：**用户可以直接在 Agent K 中与 Pi 协作，创建 Editor Extension 和 Language Service Extension。**
 这是当前已经提供的编写流程，不只是 Roadmap 中的未来方向。
+
+### 产品界面
+
+<p align="center">
+  <img src="screenshots/cpp-workspace.png" width="100%" alt="Agent K 对话、C++ 工程、代码 Editor 和终端工作区">
+  <br>
+  <sub>对话、C++ 语义导航、项目文件、代码 Editor 与原生终端位于同一个工作区。</sub>
+</p>
+
+模型与 Provider、项目操作、完整主题、Editor 管理器和 Skill Hub 的更多界面见前面的
+[Product tour](#product-tour)。
 
 ### 核心特性：Pi 能理解和使用的 Editor
 
@@ -487,11 +554,14 @@ Agent K 还具备自扩展能力：**用户可以直接在 Agent K 中与 Pi 协
 - **实时跟进 Agent 工作：** 在同一个对话界面查看进度、思考过程、工具调用、执行确认、文件变更、耗时、上下文用量和完成状态。
 - **和 Pi 一起处理文件：** 在对话旁打开代码、文档、网站、图片、音频、视频和 PDF。启用 Editor Skill 后，Pi 会知道当前
   正在查看哪个文件、它属于哪种文件体验，以及此刻可以安全使用哪些编辑器动作。
-- **使用真正的项目终端：** 运行日常命令、复制终端内容，或把选中的输出直接加入聊天框。
+- **使用真正的项目终端：** 运行日常命令、复制终端内容，或把选中的输出直接加入聊天框。在 Linux 上，Agent K 会保留用户
+  的 Bash 配置，同时让标准 ANSI 颜色及已安装的 Starship 跟随当前主题。
 - **可视化管理 Pi 生态：** 查看、安装、启用或关闭 Skills 和 Extensions，无需手动编辑配置文件；文件编辑器和语言功能也有独立开关。
 - **选择模型和权限：** 管理 Provider、切换模型、选择思考级别，并决定某个会话是否允许执行操作。
 - **保持长对话可用：** 可选的自动上下文整理会在容量耗尽前保留近期的重要信息。
-- **适应你的桌面习惯：** 支持浅色、适合 HDR 显示器的柔和亮色、深色和跟随系统主题，并记住窗口大小、边栏宽度、终端高度及面板开关状态。
+- **适应你的桌面习惯：** 支持浅色、适合 HDR 显示器的柔和亮色、深色、跟随系统及导入的自定义主题。完整主题可以统一应用
+  界面、Monaco 语法、终端调色板和 UI/代码字体，并记住窗口大小、边栏宽度、终端高度及面板开关状态。
+- **自行安排大型缓存：** 可以选择语言工具、索引和临时数据的缓存位置，无需移动项目或 Agent K 安装目录。
 - **在大型任务中保持流畅：** 会话复用、文件编辑器缓存和交互优化可以减少切换会话、打开文件、滚动及调整面板时的等待。
 
 ### Editor Skill 模型带来的可能性
@@ -593,7 +663,7 @@ Agent K 不会静默信任或安装生成的代码。Editor Extension 通过校�
 
 - Windows 10/11 x64
 - 使用 X11 或 Wayland 的现代 Linux x64 桌面
-- 两个平台都支持浅色、适合 HDR 显示器的柔和亮色、深色和跟随系统主题
+- 两个平台都支持浅色、适合 HDR 显示器的柔和亮色、深色、跟随系统及可导入的自定义主题
 
 正式安装包包含兼容且未经修改的 Pi 发行物，不要求用户另外全局安装 Pi。
 
@@ -661,8 +731,18 @@ Skill 和 Extension 的改动先保留在设置界面。设置关闭且所有 wo
 | 依赖缓存 | 精确版本的 Monaco JavaScript/CSS 通过内部只读协议、Chromium 资源缓存和 V8 编译缓存加载；语言 worker 按需启动。 |
 | Editor 实例缓存 | 跨文件、Session 和工作区保留最近 40 个 Editor frame，超出上限后按 LRU 淘汰。 |
 | 滚动与媒体 | 滚动测量、自定义滚动条、延迟提交和媒体缩放统一使用 `requestAnimationFrame` 控制帧预算。 |
-| 终端 | 项目控制台使用原生 PTY，并在可用时启用 WebGL；终端输入与对话流式输出相互隔离。 |
-| 轻量缓存 | Provider 目录使用短 TTL，关于信息和浏览器探测共享 Promise；布局和主题在后台初始化前恢复。 |
+| 终端 | 项目控制台使用原生 PTY，并在可用时启用 WebGL；终端输入与对话流式输出相互隔离。主题切换会即时更新 xterm 调色板和字体；Linux Bash profile 会保留用户 `.bashrc`，为已安装的 Starship 提供仅使用 ANSI 色的配置，并让目录色使用该调色板。 |
+| 轻量缓存 | Provider 目录使用短 TTL，关于信息和浏览器探测共享 Promise；布局和主题在后台初始化前恢复。语言工具、索引和临时数据的缓存根目录可由用户选择。 |
+
+### 完整主题系统
+
+Agent K 主题是经过校验的 JSON 包，而不只是一个浅色/深色开关。它可以定义应用表面和语义组件配色、Monaco 界面与语法颜色、
+完整 ANSI 终端调色板，以及独立的 UI/代码字体栈。切换主题时，React 界面、已缓存的 Editor frame、Monaco 实例、审阅界面和项目
+终端都会即时更新；导入的主题可以先预览，再独立选择或删除。
+
+用户可以从**设置 → 外观与语言**导入主题文件，也可以通过内置 `create-agent-k-theme` Skill 让 Pi 创建主题。Agent K 会监控用户
+主题目录，并在有效文件发生变化时直接应用，无需重新构建。完整定义可参考
+[Retro Terminal 示例](examples/theme/retro-terminal.json)。
 
 ### 可编程文件 Editor SDK
 
@@ -729,6 +809,7 @@ Agent K 通过 Pi 公开的启动参数提供 Skills 和 Extensions，不修改 
 | `weather` Skill | 通过 Open-Meteo 查询实时、逐小时和七日天气 |
 | `gdb-debug` Skill | GDB 启动、回溯、线程和 core dump 工作流 |
 | `create-agent-k-extensions` Skill | Agent K 扩展包的编写和校验说明 |
+| `create-agent-k-theme` Skill | 创建和管理完整的 Agent K 主题包 |
 | K's Plan Extension | 通过 `/plan` 使用严格、文件化的任务规划与审阅流程 |
 
 Skill Hub 接受 `skills add` 命令、skills.sh URL、GitHub 仓库 URL 和直接的 GitHub Skill 目录 URL。预览限制为 80 个文件 / 2 MiB，
@@ -822,6 +903,8 @@ AgentK/
 ├── language-servers/       # 受信任的原生语言包
 ├── extensions/k-plan/      # 内置 Pi Extension
 ├── skills/                 # 内置 Pi Skills
+├── themes/                 # 内置完整主题定义
+├── screenshots/            # README 使用的产品截图
 ├── script/                 # Windows/Linux 运行、测试与构建脚本
 └── docs/                   # 协议与架构文档
 ~~~

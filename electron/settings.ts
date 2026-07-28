@@ -144,7 +144,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.leftPanelHidden = source.leftPanelHidden;
   if (typeof source.rightPanelHidden === "boolean")
     settings.rightPanelHidden = source.rightPanelHidden;
-  if (Number(source.windowWidth) >= 1452 && Number(source.windowWidth) <= 16384)
+  if (Number(source.windowWidth) >= 1372 && Number(source.windowWidth) <= 16384)
     settings.windowWidth = Number(source.windowWidth);
   if (Number(source.windowHeight) >= 640 && Number(source.windowHeight) <= 16384)
     settings.windowHeight = Number(source.windowHeight);

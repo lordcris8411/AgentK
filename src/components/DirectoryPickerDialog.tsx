@@ -8,6 +8,15 @@ function normalizedPath(path: string): string {
   return path.replaceAll("\\", "/").replace(/\/$/, "").toLowerCase();
 }
 
+function childPath(directory: string, name: string): string {
+  const windowsPath = /^[A-Za-z]:[\\/]/.test(directory) || directory.startsWith("\\\\");
+  const separator = windowsPath ? "\\" : "/";
+  const base = windowsPath
+    ? directory.replace(/[\\/]+$/, "")
+    : directory.replace(/\/+$/, "");
+  return `${base}${separator}${name}`;
+}
+
 export function DirectoryPickerDialog({ acceptedFileExtensions, initialPath, onCancel, onSelect, restrictedRoot, selectFiles = false, title }: { acceptedFileExtensions?: readonly string[]; initialPath?: string; onCancel(): void; onSelect(path: string): void; restrictedRoot?: string; selectFiles?: boolean; title: string }) {
   const [state, setState] = useState<DirectoryState>();
   const [pathInput, setPathInput] = useState(initialPath ?? "");
@@ -30,6 +39,18 @@ export function DirectoryPickerDialog({ acceptedFileExtensions, initialPath, onC
       setPathInput(next.path);
     }).catch((cause) => setError(String(cause)));
   };
+  const submitPathInput = () => {
+    const target = pathInput.trim();
+    const acceptedFile = selectFiles && target && (
+      !acceptedFileExtensions ||
+      acceptedFileExtensions.some((extension) => target.toLowerCase().endsWith(extension.toLowerCase()))
+    );
+    if (acceptedFile) {
+      onSelect(target);
+      return;
+    }
+    load(target);
+  };
   useEffect(() => load(initialPath), [initialPath]);
   const atRestrictedRoot = !!state && !!restrictedRoot && normalizedPath(state.path) === normalizedPath(restrictedRoot);
   return createPortal(
@@ -38,9 +59,9 @@ export function DirectoryPickerDialog({ acceptedFileExtensions, initialPath, onC
         <header onPointerDown={(event) => { if ((event.target as Element).closest("button")) return; drag.current = { x: event.clientX - offset.x, y: event.clientY - offset.y }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (drag.current) setOffset({ x: event.clientX - drag.current.x, y: event.clientY - drag.current.y }); }} onPointerUp={() => { drag.current = undefined; }}>
           <strong>{title}</strong><button onClick={onCancel} type="button"><i className="fa-solid fa-xmark" /></button>
         </header>
-        <label className="directory-picker-path">路径<input aria-label="目录路径" onChange={(event) => setPathInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); load(pathInput); } }} value={pathInput} /></label>
+        <label className="directory-picker-path">路径<input aria-label={selectFiles ? "文件或目录路径" : "目录路径"} onChange={(event) => setPathInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submitPathInput(); } }} value={pathInput} /></label>
         {state?.drives.length && !restrictedRoot ? <label className="directory-picker-drives">驱动器<select onChange={(event) => load(event.target.value)} value={state.drives.find((drive) => state.path.toLowerCase().startsWith(drive.toLowerCase())) ?? state.drives[0]}>{state.drives.map((drive) => <option key={drive} value={drive}>{drive}</option>)}</select></label> : null}
-        {error ? <p>{error}</p> : <div className="directory-picker-list"><button disabled={atRestrictedRoot} onClick={() => state && load(state.parent)} type="button">..</button>{state?.directories.map((name) => <button key={name} onClick={() => state && load(`${state.path}\\${name}`)} type="button"><i className="fa-regular fa-folder" /> {name}</button>)}{selectFiles && state?.files.filter((name) => !acceptedFileExtensions || acceptedFileExtensions.some((extension) => name.toLowerCase().endsWith(extension.toLowerCase()))).map((name) => <button className="directory-picker-file" key={name} onClick={() => state && onSelect(`${state.path}\\${name}`)} type="button"><i className="fa-regular fa-file-zipper" /> {name}</button>)}</div>}
+        {error ? <p>{error}</p> : <div className="directory-picker-list"><button disabled={atRestrictedRoot} onClick={() => state && load(state.parent)} type="button">..</button>{state?.directories.map((name) => <button key={name} onClick={() => state && load(childPath(state.path, name))} type="button"><i className="fa-regular fa-folder" /> {name}</button>)}{selectFiles && state?.files.filter((name) => !acceptedFileExtensions || acceptedFileExtensions.some((extension) => name.toLowerCase().endsWith(extension.toLowerCase()))).map((name) => <button className="directory-picker-file" key={name} onClick={() => state && onSelect(childPath(state.path, name))} type="button"><i className="fa-regular fa-file-zipper" /> {name}</button>)}</div>}
         {!selectFiles && <footer><button disabled={!state} onClick={() => state && onSelect(state.path)} type="button">选择此目录</button></footer>}
       </section>
     </div>,

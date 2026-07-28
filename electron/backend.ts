@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { createServer } from "node:net";
 import { constants, existsSync, readdirSync, watch, type FSWatcher } from "node:fs";
 import { access, cp, mkdir, readFile, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 import type {
@@ -46,6 +46,7 @@ import { installSkillHub, previewSkillHub } from "./skill-hub.js";
 import { importTheme, listThemes, removeTheme, themeDirectory } from "./themes.js";
 import { LanguageServerRegistry } from "./language-server-registry.js";
 import type { WorkspaceFileChange } from "./language-server-host.js";
+import { agentKBashRcConfig, agentKStarshipConfig } from "./terminal-profile.js";
 import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
 
 export interface DesktopBackendOptions {
@@ -74,6 +75,8 @@ export class DesktopBackend {
   private readonly files: FileService;
   private readonly bundledExtensionsDirectory: string;
   private readonly bundledSkillsDirectory: string;
+  private readonly terminalProfilePath: string;
+  private readonly terminalBashRcPath: string;
   private firstPartyEditorPlugins: FileFormatPluginResource[] = [];
   private piLaunch?: PiLaunch;
   private pool?: RpcPool;
@@ -101,6 +104,8 @@ export class DesktopBackend {
     );
     this.bundledExtensionsDirectory = join(options.appDataPath, "bundled-extensions");
     this.bundledSkillsDirectory = join(options.appDataPath, "bundled-skills");
+    this.terminalProfilePath = join(options.appDataPath, "terminal", "starship.toml");
+    this.terminalBashRcPath = join(options.appDataPath, "terminal", "bashrc");
   }
 
   async initialize(): Promise<void> {
@@ -119,6 +124,10 @@ export class DesktopBackend {
       recursive: true,
       force: true,
     });
+    if (process.platform !== "win32") {
+      await atomicWrite(this.terminalProfilePath, agentKStarshipConfig);
+      await atomicWrite(this.terminalBashRcPath, agentKBashRcConfig);
+    }
     this.options.updateSplash(
       startupText("Configuring Editor plugins…", "配置编辑器插件…"),
       0,
@@ -586,7 +595,11 @@ export class DesktopBackend {
         : existsSync("/bin/bash")
           ? "/bin/bash"
           : "/bin/sh";
-    const args = isWindows ? ["-NoLogo"] : [];
+    const args = isWindows
+      ? ["-NoLogo"]
+      : basename(executable).toLocaleLowerCase("en-US") === "bash"
+        ? ["--rcfile", this.terminalBashRcPath, "-i"]
+        : [];
     const environment = Object.fromEntries(
       Object.entries(process.env).filter((entry): entry is [string, string] =>
         typeof entry[1] === "string",
@@ -601,6 +614,10 @@ export class DesktopBackend {
         TERM: "xterm-256color",
         COLORTERM: "truecolor",
         TERM_PROGRAM: "AgentK",
+        ...(isWindows ? {} : {
+          AGENT_K_TERMINAL: "1",
+          STARSHIP_CONFIG: this.terminalProfilePath,
+        }),
       },
       name: "xterm-256color",
     });

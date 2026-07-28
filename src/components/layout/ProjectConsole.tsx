@@ -12,6 +12,8 @@ import {
 } from "../../features/settings/SettingsContext";
 import type { ThemeDefinition } from "../../lib/themes";
 
+const defaultTerminalFont = 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace';
+
 function terminalTheme(theme: ResolvedTheme, activeTheme?: ThemeDefinition): ITheme {
   if (activeTheme) return activeTheme.terminal;
   if (theme === "dark") {
@@ -75,6 +77,8 @@ function terminalTheme(theme: ResolvedTheme, activeTheme?: ThemeDefinition): ITh
 
 export function ProjectConsole({ root, onError }: { root?: string; onError(message: string): void }) {
   const { resolvedTheme, activeTheme, settings } = useSettings();
+  const currentTerminalTheme = terminalTheme(resolvedTheme, activeTheme);
+  const currentTerminalFont = activeTheme?.fonts?.code ?? defaultTerminalFont;
   const en = settings.locale === "en-US";
   const [collapsed, setCollapsed] = useState(false);
   const [height, setHeight] = useState(220);
@@ -139,11 +143,11 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
     const terminal = new Terminal({
       cursorBlink: true,
       cursorStyle: "block",
-      fontFamily: activeTheme?.fonts?.code ?? 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace',
+      fontFamily: currentTerminalFont,
       fontSize: 12,
       lineHeight: 1.25,
       scrollback: 10_000,
-      theme: terminalTheme(resolvedTheme, activeTheme),
+      theme: currentTerminalTheme,
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -210,8 +214,12 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) return;
-    terminal.options.theme = terminalTheme(resolvedTheme, activeTheme);
-  }, [activeTheme, resolvedTheme]);
+    terminal.options.theme = currentTerminalTheme;
+    terminal.options.fontFamily = currentTerminalFont;
+    terminal.clearTextureAtlas();
+    terminal.refresh(0, terminal.rows - 1);
+    fitTerminal();
+  }, [activeTheme, fitTerminal, resolvedTheme]);
 
   useEffect(() => {
     const stop = desktop.onProjectConsoleEvent((event) => {
@@ -415,6 +423,7 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
         }}
         onMouseDown={() => terminalRef.current?.focus()}
         ref={terminalHostRef}
+        style={{ background: currentTerminalTheme.background }}
       />
       {contextMenu ? createPortal(
         <div

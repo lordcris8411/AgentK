@@ -189,7 +189,7 @@ function createWindows(theme: ClientSettings["theme"], resolvedTheme?: ThemeDefi
     title: "Agent K",
     width: 1600,
     height: 920,
-    minWidth: 1452,
+    minWidth: 1372,
     minHeight: 640,
     frame: false,
     show: false,
@@ -542,7 +542,7 @@ function updateWindowResize(window: BrowserWindow, screenX: number, screenY: num
     next.height = start.height - dy;
   }
   const minimumSize = window.getMinimumSize();
-  const minimumWidth = minimumSize[0] ?? 1452;
+  const minimumWidth = minimumSize[0] ?? 1372;
   const minimumHeight = minimumSize[1] ?? 640;
   if (next.width < minimumWidth) {
     if (resizeState.direction.includes("West")) next.x -= minimumWidth - next.width;
