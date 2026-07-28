@@ -10,16 +10,18 @@ import {
   useSettings,
   type ResolvedTheme,
 } from "../../features/settings/SettingsContext";
+import type { ThemeDefinition } from "../../lib/themes";
 
-function terminalTheme(theme: ResolvedTheme): ITheme {
+function terminalTheme(theme: ResolvedTheme, activeTheme?: ThemeDefinition): ITheme {
+  if (activeTheme) return activeTheme.terminal;
   if (theme === "dark") {
     return {
-      background: "#242321",
+      background: "#2c2b29",
       foreground: "#dedad4",
       cursor: "#dedad4",
-      cursorAccent: "#242321",
+      cursorAccent: "#2c2b29",
       selectionBackground: "#69533f",
-      black: "#242321",
+      black: "#2c2b29",
       red: "#d17a6d",
       green: "#8fb573",
       yellow: "#d5ad68",
@@ -63,8 +65,8 @@ function terminalTheme(theme: ResolvedTheme): ITheme {
   return theme === "soft-light"
     ? {
         ...lightTheme,
-        background: "#e2ded8",
-        cursorAccent: "#e2ded8",
+        background: "#ece9e4",
+        cursorAccent: "#ece9e4",
         white: "#d2ccc4",
         brightWhite: "#f0ede8",
       }
@@ -72,7 +74,7 @@ function terminalTheme(theme: ResolvedTheme): ITheme {
 }
 
 export function ProjectConsole({ root, onError }: { root?: string; onError(message: string): void }) {
-  const { resolvedTheme, settings } = useSettings();
+  const { resolvedTheme, activeTheme, settings } = useSettings();
   const en = settings.locale === "en-US";
   const [collapsed, setCollapsed] = useState(false);
   const [height, setHeight] = useState(220);
@@ -137,11 +139,11 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
     const terminal = new Terminal({
       cursorBlink: true,
       cursorStyle: "block",
-      fontFamily: 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace',
+      fontFamily: activeTheme?.fonts?.code ?? 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace',
       fontSize: 12,
       lineHeight: 1.25,
       scrollback: 10_000,
-      theme: terminalTheme(resolvedTheme),
+      theme: terminalTheme(resolvedTheme, activeTheme),
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -208,8 +210,8 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) return;
-    terminal.options.theme = terminalTheme(resolvedTheme);
-  }, [resolvedTheme]);
+    terminal.options.theme = terminalTheme(resolvedTheme, activeTheme);
+  }, [activeTheme, resolvedTheme]);
 
   useEffect(() => {
     const stop = desktop.onProjectConsoleEvent((event) => {

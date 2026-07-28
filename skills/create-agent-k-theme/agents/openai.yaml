@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Agent K Themes"
+  short_description: "Create, set, and remove Agent K themes"
+  default_prompt: "Use $create-agent-k-theme to create, set, or remove an Agent K theme."

@@ -1,3 +1,5 @@
+import type { ThemeDefinition } from "./themes";
+
 const invoke = <T>(command: string, args: Record<string, unknown> = {}) =>
   window.agentK.invoke<T>(command, args);
 
@@ -46,7 +48,7 @@ export type LanguageServerPlugin = {
 
 export type ClientSettings = {
   version: number;
-  theme: "light" | "soft-light" | "dark" | "system";
+  theme: string;
   locale: "zh-CN" | "en-US";
   permissionMode: "ask" | "full";
   browserId: string;
@@ -207,6 +209,9 @@ export const desktop = {
   cacheDirectoryInfo: () => invoke<{ activePath: string; defaultPath: string }>("get_cache_directory_info"),
   validateCacheDirectory: (path: string) => invoke<string>("validate_cache_directory", { path }),
   getSettings: () => invoke<ClientSettings>("get_client_settings"),
+  listThemes: () => invoke<ThemeDefinition[]>("list_themes"),
+  importTheme: (path: string) => invoke<ThemeDefinition>("import_theme", { path }),
+  removeTheme: (id: string) => invoke<void>("remove_theme", { id }),
   saveSettings: (settings: ClientSettings) =>
     invoke<ClientSettings>("save_client_settings", { settings }),
   listBrowsers: () => invoke<BrowserOption[]>("list_browsers"),
@@ -261,7 +266,7 @@ export const desktop = {
     message: string,
     current: number,
     total: number,
-    theme: "light" | "soft-light" | "dark" | "system",
+    theme: string,
   ) => invoke<void>("update_startup_progress", { message, current, total, theme }),
   finishStartup: () => invoke<void>("finish_startup"),
   sessionMessages: (path: string) =>
@@ -300,7 +305,7 @@ export const desktop = {
   projectContext: (root: string) => invoke<string>("project_context", { root }),
   directory: (root: string, path: string, depth: 1 | 2 = 2) =>
     invoke<FileEntry>("directory_tree", { root, path, depth }),
-  browseDirectories: (path?: string) => invoke<{ path: string; parent: string; directories: string[]; drives: string[] }>("browse_directories", { path }),
+  browseDirectories: (path?: string) => invoke<{ path: string; parent: string; directories: string[]; files: string[]; drives: string[] }>("browse_directories", { path }),
   read: (root: string, path: string) =>
     invoke<string>("read_text_file", { root, path }),
   readBinary: (root: string, path: string) =>

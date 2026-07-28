@@ -20,6 +20,7 @@ import {
 import { DesktopBackend } from "./backend.js";
 import { editorPluginDependencyFilePath } from "./file-formats.js";
 import { loadClientSettings } from "./settings.js";
+import { resolveTheme, type ThemeDefinition } from "./themes.js";
 import type { ClientSettings, JsonObject } from "./types.js";
 import { asObject, errorMessage } from "./utils.js";
 
@@ -154,6 +155,7 @@ let splashState: {
   theme: string;
   total: number;
 } | undefined;
+let splashTheme: ThemeDefinition | undefined;
 
 function projectPath(...parts: string[]): string {
   return join(app.getAppPath(), ...parts);
@@ -177,10 +179,10 @@ function resolvedAppearanceTheme(
   theme: ClientSettings["theme"],
 ): "light" | "soft-light" | "dark" {
   if (theme === "system") return nativeTheme.shouldUseDarkColors ? "dark" : "light";
-  return theme;
+  return theme === "light" || theme === "soft-light" || theme === "dark" ? theme : "light";
 }
 
-function createWindows(theme: ClientSettings["theme"]): void {
+function createWindows(theme: ClientSettings["theme"], resolvedTheme?: ThemeDefinition): void {
   const preload = projectPath("electron", "preload.cjs");
   const appearance = resolvedAppearanceTheme(theme);
   mainWindow = new BrowserWindow({
@@ -191,11 +193,7 @@ function createWindows(theme: ClientSettings["theme"]): void {
     minHeight: 640,
     frame: false,
     show: false,
-    backgroundColor: appearance === "dark"
-      ? "#1f1f1f"
-      : appearance === "soft-light"
-        ? "#dedad4"
-        : "#f4f2ee",
+    backgroundColor: resolvedTheme?.colors["surface-app"] ?? (appearance === "dark" ? "#1f1f1f" : appearance === "soft-light" ? "#dedad4" : "#f4f2ee"),
     icon: projectPath("assets", "icons", "icon.png"),
     webPreferences: {
       contextIsolation: true,
@@ -375,15 +373,12 @@ function notifyWindowState(): void {
 function applySplashState(): void {
   if (!splashState || !splashWindow || splashWindow.isDestroyed()) return;
   const { current, message, theme, total } = splashState;
-  const resolvedTheme = resolvedAppearanceTheme(
-    ["light", "soft-light", "dark", "system"].includes(theme)
-      ? theme as ClientSettings["theme"]
-      : "light",
-  );
+  const resolvedTheme = splashTheme?.base ?? resolvedAppearanceTheme(theme);
   if (!splashWindow || splashWindow.isDestroyed()) return;
   const percent = total > 0 ? (Math.min(current, total) / total) * 100 : 0;
   void splashWindow.webContents.executeJavaScript(
     `document.documentElement.dataset.theme=${JSON.stringify(resolvedTheme)};` +
+      `for(const [key,value] of Object.entries(${JSON.stringify(splashTheme?.colors ?? {})}))document.documentElement.style.setProperty('--'+key,String(value));` +
       `document.getElementById('status').textContent=${JSON.stringify(message)};` +
       `document.getElementById('progress').style.width=${JSON.stringify(`${percent.toFixed(2)}%`)};`,
   ).catch(() => undefined);
@@ -570,6 +565,14 @@ async function start(): Promise<void> {
   await app.whenReady();
   const appDataPath = app.getPath("userData");
   const startupSettings = await loadClientSettings(appDataPath);
+  const bundledThemesSource = app.isPackaged ? join(process.resourcesPath, "themes") : projectPath("themes");
+  splashTheme = await resolveTheme(appDataPath, bundledThemesSource, startupSettings.theme, nativeTheme.shouldUseDarkColors);
+  splashState = {
+    current: 0,
+    message: startupSettings.locale === "en-US" ? "Starting Agent K…" : "正在启动 Agent K…",
+    theme: startupSettings.theme,
+    total: 1,
+  };
   const cachePath = startupSettings.cacheDirectory || join(appDataPath, "cache");
   protocol.handle("agentk-file", (request) => {
     const url = new URL(request.url);
@@ -626,7 +629,7 @@ async function start(): Promise<void> {
       });
     });
   }
-  createWindows(startupSettings.theme);
+  createWindows(startupSettings.theme, splashTheme);
   registerIpc();
   backend = new DesktopBackend({
     appDataPath,
@@ -638,6 +641,7 @@ async function start(): Promise<void> {
     bundledSkillsSource: app.isPackaged
       ? join(process.resourcesPath, "skills")
       : projectPath("skills"),
+    bundledThemesSource,
     bundledPiCli: app.isPackaged
       ? join(process.resourcesPath, "pi-runtime", "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js")
       : projectPath("node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js"),

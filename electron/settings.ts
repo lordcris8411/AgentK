@@ -88,8 +88,8 @@ function sameStringArray(value: unknown, expected: string[]): boolean {
 export function parseClientSettings(value: unknown): ClientSettings {
   const source = asObject(value);
   const settings = { ...DEFAULT_SETTINGS };
-  if (["light", "soft-light", "dark", "system"].includes(String(source.theme)))
-    settings.theme = source.theme as ClientSettings["theme"];
+  if (/^(system|light|soft-light|dark|[a-z0-9][a-z0-9-]{1,63})$/i.test(String(source.theme)))
+    settings.theme = String(source.theme);
   if (["zh-CN", "en-US"].includes(String(source.locale)))
     settings.locale = source.locale as ClientSettings["locale"];
   if (["ask", "full"].includes(String(source.permissionMode)))

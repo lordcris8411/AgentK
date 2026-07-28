@@ -31,7 +31,9 @@ function SettingsOverlay({
   useEffect(() => {
     const show = (event: Event) => {
       const requestedPage = (event as CustomEvent<{ page?: SettingsPage }>).detail?.page;
-      setPage(requestedPage ?? "models");
+      // A normal Settings command reopens the last page. Callers can still
+      // explicitly route the dialog to a particular page.
+      if (requestedPage) setPage(requestedPage);
       setOpen(true);
     };
     window.addEventListener("agent-k-open-settings", show);

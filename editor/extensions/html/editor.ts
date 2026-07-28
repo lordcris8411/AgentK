@@ -1,10 +1,11 @@
 import type * as Monaco from "monaco-editor";
-import { defineEditor, type EditorTheme } from "../../sdk";
+import { defineEditor, type EditorTheme, type EditorThemeConfig } from "../../sdk";
 import "./editor.css";
 
 const monaco = (globalThis as typeof globalThis & {
   AgentKEditorDependencies: { monaco: typeof Monaco };
 }).AgentKEditorDependencies.monaco;
+const defaultCodeFont = '"Cascadia Code", "Cascadia Mono", Consolas, monospace';
 
 function themeName(theme: EditorTheme): string {
   return theme === "dark"
@@ -47,6 +48,7 @@ defineEditor((host, initial) => {
   );
   const editor = monaco.editor.create(source, {
     automaticLayout: false,
+    fontFamily: initial.themeConfig?.fonts?.code ?? defaultCodeFont,
     inertialScroll: true,
     minimap: { enabled: false },
     model,
@@ -162,6 +164,9 @@ defineEditor((host, initial) => {
     setTheme(theme) {
       document.documentElement.dataset.theme = theme;
       monaco.editor.setTheme(themeName(theme));
+    },
+    setThemeConfig(config: EditorThemeConfig | undefined) {
+      editor.updateOptions({ fontFamily: config?.fonts?.code ?? defaultCodeFont });
     },
     setWordWrap(enabled) {
       editor.updateOptions({ wordWrap: enabled ? "on" : "off" });

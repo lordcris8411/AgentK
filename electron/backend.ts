@@ -43,6 +43,7 @@ import {
   loadFirstPartyFileFormatPlugins,
 } from "./file-formats.js";
 import { installSkillHub, previewSkillHub } from "./skill-hub.js";
+import { importTheme, listThemes, removeTheme, themeDirectory } from "./themes.js";
 import { LanguageServerRegistry } from "./language-server-registry.js";
 import type { WorkspaceFileChange } from "./language-server-host.js";
 import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
@@ -53,6 +54,7 @@ export interface DesktopBackendOptions {
   firstPartyEditorExtensionsSource: string;
   firstPartyLanguageServerPluginsSource: string;
   bundledSkillsSource: string;
+  bundledThemesSource: string;
   bundledPiCli: string;
   cachePath: string;
   permissionExtensionSource: string;
@@ -79,6 +81,10 @@ export class DesktopBackend {
   private readonly webProjects = new Map<string, ReturnType<typeof spawn>>();
   private readonly languageServers: LanguageServerRegistry;
   private workspaceWatcher?: FSWatcher;
+  private themeWatcher?: FSWatcher;
+  private themeWatchTimer?: ReturnType<typeof setTimeout>;
+  private settingsWatcher?: FSWatcher;
+  private settingsWatchTimer?: ReturnType<typeof setTimeout>;
   private workspaceWatchRoot?: string;
   private readonly workspaceWatchTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly workspaceLanguageChanges = new Map<string, WorkspaceFileChange>();
@@ -123,6 +129,8 @@ export class DesktopBackend {
       this.options.firstPartyEditorExtensionsSource,
     );
     this.piLaunch = resolvePiLaunch(settings.piExecutable, this.options.bundledPiCli);
+    this.startSettingsWatch();
+    await this.startThemeWatch();
     this.pool = new RpcPool({
       appDataPath: this.options.appDataPath,
       bundledExtensionsDirectory: this.bundledExtensionsDirectory,
@@ -146,6 +154,55 @@ export class DesktopBackend {
     await atomicWrite(join(this.options.appDataPath, "permission-state.json"), "[]");
   }
 
+  private startSettingsWatch(): void {
+    this.settingsWatcher?.close();
+    try {
+      this.settingsWatcher = watch(this.options.appDataPath, (_kind, name) => {
+        if (String(name) !== "client-settings.json") return;
+        if (this.settingsWatchTimer) clearTimeout(this.settingsWatchTimer);
+        this.settingsWatchTimer = setTimeout(() => {
+          this.settingsWatchTimer = undefined;
+          this.options.emit({ type: "client_settings_changed" });
+        }, 100);
+      });
+      this.settingsWatcher.on("error", (cause) => this.options.emit({ type: "settings_watch_error", error: String(cause) }));
+    } catch (cause) {
+      this.options.emit({ type: "settings_watch_error", error: String(cause) });
+    }
+  }
+
+  private async startThemeWatch(): Promise<void> {
+    this.themeWatcher?.close();
+    if (this.themeWatchTimer) clearTimeout(this.themeWatchTimer);
+    const root = themeDirectory();
+    await mkdir(root, { recursive: true });
+    try {
+      this.themeWatcher = watch(root, { recursive: true }, () => {
+        if (this.themeWatchTimer) clearTimeout(this.themeWatchTimer);
+        this.themeWatchTimer = setTimeout(() => {
+          this.themeWatchTimer = undefined;
+          void this.emitThemeChange();
+        }, 180);
+      });
+      this.themeWatcher.on("error", (cause) => this.options.emit({ type: "theme_watch_error", error: String(cause) }));
+    } catch (cause) {
+      this.options.emit({ type: "theme_watch_error", error: String(cause) });
+    }
+  }
+
+  private async emitThemeChange(): Promise<void> {
+    try {
+      const settings = await loadClientSettings(this.options.appDataPath);
+      const themes = await listThemes(this.options.appDataPath, this.options.bundledThemesSource);
+      // A custom active theme being midway through a save can temporarily be
+      // invalid. Keep the last known renderer palette until it validates.
+      if (settings.theme !== "system" && !["light", "soft-light", "dark"].includes(settings.theme) && !themes.some((theme) => theme.id === settings.theme)) return;
+      this.options.emit({ type: "themes_changed" });
+    } catch (cause) {
+      this.options.emit({ type: "theme_watch_error", error: String(cause) });
+    }
+  }
+
   async invoke(command: string, rawArgs: unknown): Promise<unknown> {
     const args = asObject(rawArgs);
     if (command === "get_provider_balance")
@@ -165,6 +222,13 @@ export class DesktopBackend {
       }
       case "get_client_settings":
         return loadClientSettings(this.options.appDataPath);
+      case "list_themes":
+        return listThemes(this.options.appDataPath, this.options.bundledThemesSource);
+      case "import_theme":
+        return importTheme(this.options.appDataPath, requiredString(args.path, "path"));
+      case "remove_theme":
+        await removeTheme(this.options.appDataPath, requiredString(args.id, "id"));
+        return;
       case "save_client_settings":
         { const saved = await saveClientSettings(this.options.appDataPath, args.settings); for (const plugin of this.languageServers.list()) this.languageServers.setEnabled(plugin.id, !saved.disabledLanguageServers.includes(plugin.id)); return saved; }
       case "list_browsers":
@@ -318,7 +382,7 @@ export class DesktopBackend {
         const path = optionalString(args.path) ?? homedir();
         const entries = readdirSync(path, { withFileTypes: true });
         const drives = process.platform === "win32" ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => `${letter}:\\`).filter(existsSync) : [];
-        return { path, parent: dirname(path), directories: entries.filter((entry) => entry.isDirectory() && entry.name !== "node_modules").map((entry) => entry.name).sort((a, b) => a.localeCompare(b)), drives };
+        return { path, parent: dirname(path), directories: entries.filter((entry) => entry.isDirectory() && entry.name !== "node_modules").map((entry) => entry.name).sort((a, b) => a.localeCompare(b)), files: entries.filter((entry) => entry.isFile()).map((entry) => entry.name).sort((a, b) => a.localeCompare(b)), drives };
       }
       case "read_text_file":
         return this.files.readText(requiredString(args.root, "root"), requiredString(args.path, "path"));

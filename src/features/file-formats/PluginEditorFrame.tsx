@@ -11,6 +11,7 @@ import {
   type EditorPluginRuntime,
   type FileFormatPluginResource,
 } from "../../lib/desktop";
+import type { ThemeDefinition } from "../../lib/themes";
 
 const EDITOR_API_VERSION = 1;
 const EDITOR_CHANNEL = "agent-k-editor";
@@ -62,6 +63,7 @@ type PluginEditorFrameProps = {
   readOnly?: boolean;
   root: string;
   theme: "light" | "soft-light" | "dark";
+  themeConfig?: Pick<ThemeDefinition, "monaco" | "monacoSyntax" | "fonts">;
   wordWrap: boolean;
 };
 
@@ -128,6 +130,7 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
       readOnly = false,
       root,
       theme,
+      themeConfig,
       wordWrap,
     },
     forwardedRef,
@@ -174,6 +177,7 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
         path,
         readOnly,
         theme,
+        themeConfig: themeConfig ? { monaco: themeConfig.monaco, monacoSyntax: themeConfig.monacoSyntax, fonts: themeConfig.fonts } : undefined,
         wordWrap,
       });
     };
@@ -427,8 +431,10 @@ void (async () => {
     }, []);
 
     useEffect(() => {
-      if (ready) send("set-theme", theme);
-    }, [ready, theme]);
+      if (!ready) return;
+      send("set-theme-config", themeConfig ? { monaco: themeConfig.monaco, monacoSyntax: themeConfig.monacoSyntax, fonts: themeConfig.fonts } : undefined);
+      send("set-theme", theme);
+    }, [ready, theme, themeConfig]);
     useEffect(() => {
       if (ready) send("set-word-wrap", wordWrap);
     }, [ready, wordWrap]);

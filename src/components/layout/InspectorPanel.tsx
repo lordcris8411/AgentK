@@ -598,7 +598,7 @@ export function InspectorPanel({
   review?: ReviewCall[];
   onCloseReview(): void;
 }) {
-  const { settings, resolvedTheme, t, update: updateSettings } = useSettings();
+  const { activeTheme, settings, resolvedTheme, t, update: updateSettings } = useSettings();
   const en = settings.locale === "en-US";
   const [tree, setTree] = useState<FileEntry>();
   const [fileFormatPlugins, setFileFormatPlugins] = useState<FileFormatPlugin[]>([]);
@@ -1895,6 +1895,7 @@ export function InspectorPanel({
           readOnly: current.format.editable !== true,
           root,
           theme: resolvedTheme,
+          themeConfig: activeTheme,
           wordWrap: settings.editorWordWrap,
         }
       : undefined;

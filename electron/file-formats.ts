@@ -9,6 +9,7 @@ import type {
   PiResource,
 } from "./types.js";
 import { homeDirectory, piAgentDirectory, readJson } from "./utils.js";
+import { preparePluginSource } from "./plugin-archive.js";
 
 const MAX_PLUGIN_SOURCE_BYTES = 64 * 1024;
 const MAX_SKILL_SOURCE_BYTES = 256 * 1024;
@@ -186,8 +187,10 @@ export async function installUserFileFormatPlugin(
   sourceDirectory: string,
   builtins: readonly FileFormatPluginResource[],
 ): Promise<FileFormatPluginResource> {
-  const source = await realpath(sourceDirectory);
-  const plugin = await readPlugin(source, "user");
+  const prepared = await preparePluginSource(sourceDirectory, "editor.json");
+  try {
+    const source = await realpath(prepared.source);
+    const plugin = await readPlugin(source, "user");
   if (!plugin) throw new Error("Selected directory is not a valid Editor plugin package");
   if (!existsSync(join(source, "SKILL.md"))) throw new Error("Editor plugin package must include SKILL.md");
   const builtin = builtins.find((candidate) => candidate.id === plugin.id);
@@ -197,7 +200,10 @@ export async function installUserFileFormatPlugin(
   if (existsSync(destination)) throw new Error(`A user Editor plugin with id '${plugin.id}' is already installed`);
   await mkdir(join(piAgentDirectory(), "skills"), { recursive: true });
   await cp(source, destination, { recursive: true, errorOnExist: true, force: false });
-  return { ...plugin, path: join(destination, "editor.json") };
+    return { ...plugin, path: join(destination, "editor.json") };
+  } finally {
+    await prepared.cleanup();
+  }
 }
 
 async function readPlugin(directory: string, scope: FileFormatPluginResource["scope"]): Promise<FileFormatPluginResource | undefined> {

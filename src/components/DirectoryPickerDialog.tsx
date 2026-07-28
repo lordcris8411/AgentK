@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { desktop } from "../lib/desktop";
 
-type DirectoryState = { path: string; parent: string; directories: string[]; drives: string[] };
+type DirectoryState = { path: string; parent: string; directories: string[]; files: string[]; drives: string[] };
 
 function normalizedPath(path: string): string {
   return path.replaceAll("\\", "/").replace(/\/$/, "").toLowerCase();
 }
 
-export function DirectoryPickerDialog({ initialPath, onCancel, onSelect, restrictedRoot, title }: { initialPath?: string; onCancel(): void; onSelect(path: string): void; restrictedRoot?: string; title: string }) {
+export function DirectoryPickerDialog({ acceptedFileExtensions, initialPath, onCancel, onSelect, restrictedRoot, selectFiles = false, title }: { acceptedFileExtensions?: readonly string[]; initialPath?: string; onCancel(): void; onSelect(path: string): void; restrictedRoot?: string; selectFiles?: boolean; title: string }) {
   const [state, setState] = useState<DirectoryState>();
   const [pathInput, setPathInput] = useState(initialPath ?? "");
   const [error, setError] = useState<string>();
@@ -40,8 +40,8 @@ export function DirectoryPickerDialog({ initialPath, onCancel, onSelect, restric
         </header>
         <label className="directory-picker-path">路径<input aria-label="目录路径" onChange={(event) => setPathInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); load(pathInput); } }} value={pathInput} /></label>
         {state?.drives.length && !restrictedRoot ? <label className="directory-picker-drives">驱动器<select onChange={(event) => load(event.target.value)} value={state.drives.find((drive) => state.path.toLowerCase().startsWith(drive.toLowerCase())) ?? state.drives[0]}>{state.drives.map((drive) => <option key={drive} value={drive}>{drive}</option>)}</select></label> : null}
-        {error ? <p>{error}</p> : <div className="directory-picker-list"><button disabled={atRestrictedRoot} onClick={() => state && load(state.parent)} type="button">..</button>{state?.directories.map((name) => <button key={name} onClick={() => state && load(`${state.path}\\${name}`)} type="button"><i className="fa-regular fa-folder" /> {name}</button>)}</div>}
-        <footer><button disabled={!state} onClick={() => state && onSelect(state.path)} type="button">选择此目录</button></footer>
+        {error ? <p>{error}</p> : <div className="directory-picker-list"><button disabled={atRestrictedRoot} onClick={() => state && load(state.parent)} type="button">..</button>{state?.directories.map((name) => <button key={name} onClick={() => state && load(`${state.path}\\${name}`)} type="button"><i className="fa-regular fa-folder" /> {name}</button>)}{selectFiles && state?.files.filter((name) => !acceptedFileExtensions || acceptedFileExtensions.some((extension) => name.toLowerCase().endsWith(extension.toLowerCase()))).map((name) => <button className="directory-picker-file" key={name} onClick={() => state && onSelect(`${state.path}\\${name}`)} type="button"><i className="fa-regular fa-file-zipper" /> {name}</button>)}</div>}
+        {!selectFiles && <footer><button disabled={!state} onClick={() => state && onSelect(state.path)} type="button">选择此目录</button></footer>}
       </section>
     </div>,
     document.body,

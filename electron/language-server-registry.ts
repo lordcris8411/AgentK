@@ -7,6 +7,7 @@ import {
   type LanguageServerPluginManifest,
   type WorkspaceFileChange,
 } from "./language-server-host.js";
+import { preparePluginSource } from "./plugin-archive.js";
 
 const MANIFEST_FILE = "agent-k.language-server.json";
 
@@ -144,8 +145,11 @@ export class LanguageServerRegistry {
   }
 
   async install(sourceDirectory: string): Promise<Omit<LanguageServerPluginManifest, "worker"> & { enabled: boolean }> {
-    const sourceManifest = join(resolve(sourceDirectory), MANIFEST_FILE);
-    const input = JSON.parse(await readFile(sourceManifest, "utf8")) as DiskManifest;
+    const prepared = await preparePluginSource(sourceDirectory, MANIFEST_FILE);
+    try {
+      const sourceRoot = prepared.source;
+      const sourceManifest = join(sourceRoot, MANIFEST_FILE);
+      const input = JSON.parse(await readFile(sourceManifest, "utf8")) as DiskManifest;
     if (typeof input.id !== "string") throw new Error("Language extension manifest has no id");
     const firstParty = await discoverLanguageServerPlugins(this.firstPartyPluginDirectory);
     const candidate = (await discoverLanguageServerPlugins(dirname(sourceManifest))).find((item) => item.id === input.id);
@@ -157,11 +161,14 @@ export class LanguageServerRegistry {
     const destination = join(this.pluginDirectory, candidate.id);
     await mkdir(this.pluginDirectory, { recursive: true });
     await rm(destination, { recursive: true, force: true });
-    await cp(resolve(sourceDirectory), destination, { recursive: true });
+    await cp(sourceRoot, destination, { recursive: true });
     await this.reload();
     const installed = this.list().find((item) => item.id === candidate.id);
     if (!installed) throw new Error("Installed language extension was not discovered");
-    return installed;
+      return installed;
+    } finally {
+      await prepared.cleanup();
+    }
   }
 
   list(): Array<Omit<LanguageServerPluginManifest, "worker"> & { enabled: boolean }> {

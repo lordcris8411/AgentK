@@ -9,10 +9,11 @@ import {
   type ReactNode,
 } from "react";
 import { desktop, type ClientSettings } from "../../lib/desktop";
+import type { ThemeDefinition } from "../../lib/themes";
 
 export type Locale = "zh-CN" | "en-US";
-export type ThemeMode = "light" | "soft-light" | "dark" | "system";
-export type ResolvedTheme = Exclude<ThemeMode, "system">;
+export type ThemeMode = string;
+export type ResolvedTheme = "light" | "soft-light" | "dark";
 
 const fallback: ClientSettings = {
   version: 10,
@@ -67,6 +68,10 @@ const dictionaries = {
     softLightDescription: "柔和亮色会降低界面、编辑器和终端的纸白亮度，适合 HDR 显示器；图片、视频和网页预览内容不会被压暗。",
     dark: "黑夜模式",
     systemTheme: "跟随系统",
+    importTheme: "添加主题文件",
+    removeTheme: "移除主题",
+    customThemes: "自定义主题",
+    themeFileDialog: "选择 Agent K 主题 JSON 文件",
     language: "界面语言",
     browser: "打开链接的浏览器",
     cacheDirectory: "缓存位置",
@@ -218,6 +223,10 @@ const dictionaries = {
     softLightDescription: "Soft light lowers the paper-white level of the interface, editors, and terminal for HDR displays without dimming images, video, or web previews.",
     dark: "Dark",
     systemTheme: "System",
+    importTheme: "Add theme file",
+    removeTheme: "Remove theme",
+    customThemes: "Custom themes",
+    themeFileDialog: "Choose an Agent K theme JSON file",
     language: "Interface language",
     browser: "Browser for links",
     cacheDirectory: "Cache location",
@@ -351,6 +360,9 @@ const dictionaries = {
 type SettingsContextValue = {
   settings: ClientSettings;
   resolvedTheme: ResolvedTheme;
+  activeTheme: ThemeDefinition | undefined;
+  themes: ThemeDefinition[];
+  refreshThemes(): Promise<ThemeDefinition[]>;
   ready: boolean;
   update(patch: Partial<ClientSettings>): Promise<void>;
   t: (key: keyof (typeof dictionaries)["zh-CN"]) => string;
@@ -358,10 +370,25 @@ type SettingsContextValue = {
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);
 
-function applyTheme(locale: Locale, theme: ResolvedTheme) {
-  document.documentElement.dataset.theme = theme;
+const themeColorKeys = ["surface-app", "surface-panel", "surface-raised", "surface-hover", "surface-active", "border-color", "border-strong", "text-primary", "text-secondary", "text-muted", "accent", "selection-background", "selection-foreground", "scrollbar-thumb", "scrollbar-thumb-hover", "danger", "info", "success", "warning", "modal-overlay"];
+const themeComponentKeys = ["primary-action", "primary-action-foreground", "active-item", "active-item-foreground", "input", "input-foreground", "code-block", "code-block-foreground", "hover", "hover-foreground"];
+
+function applyTheme(locale: Locale, theme: ThemeDefinition | undefined, fallback: ResolvedTheme) {
+  const root = document.documentElement;
+  root.dataset.theme = theme?.base ?? fallback;
+  for (const key of themeColorKeys) root.style.removeProperty(`--${key}`);
+  for (const key of themeComponentKeys) root.style.removeProperty(`--component-${key}`);
+  root.style.removeProperty("--font-ui");
+  root.style.removeProperty("--font-code");
+  for (const [key, value] of Object.entries(theme?.colors ?? {})) root.style.setProperty(`--${key}`, value);
+  for (const [key, value] of Object.entries(theme?.components ?? {})) root.style.setProperty(`--component-${key}`, value);
+  if (theme?.fonts) {
+    root.style.setProperty("--font-ui", theme.fonts.ui);
+    root.style.setProperty("--font-code", theme.fonts.code);
+  }
+  (window as Window & { agentKActiveTheme?: ThemeDefinition }).agentKActiveTheme = theme;
   document.documentElement.lang = locale;
-  window.dispatchEvent(new CustomEvent("agent-k-theme", { detail: theme }));
+  window.dispatchEvent(new CustomEvent("agent-k-theme", { detail: theme ?? fallback }));
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
@@ -374,18 +401,26 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   });
   const [ready, setReady] = useState(false);
+  const [themes, setThemes] = useState<ThemeDefinition[]>([]);
   const settingsRef = useRef(settings);
   const settingsRevision = useRef(0);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
-  const resolvedTheme =
+  const fallbackTheme: ResolvedTheme =
     settings.theme === "system"
       ? systemDark
         ? "dark"
         : "light"
-      : settings.theme;
+      : settings.theme === "dark" || settings.theme === "soft-light" ? settings.theme : "light";
+  const activeTheme = settings.theme === "system" ? undefined : themes.find((theme) => theme.id === settings.theme);
+  const resolvedTheme = activeTheme?.base ?? fallbackTheme;
+  const refreshThemes = useCallback(async () => {
+    const loaded = await desktop.listThemes();
+    setThemes(loaded);
+    return loaded;
+  }, []);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const changed = (event: MediaQueryListEvent) => setSystemDark(event.matches);
@@ -393,9 +428,18 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     media.addEventListener("change", changed);
     return () => media.removeEventListener("change", changed);
   }, []);
+  useEffect(() => desktop.onEvent((event) => {
+    if (event.type === "themes_changed") void refreshThemes().catch(() => undefined);
+    if (event.type === "client_settings_changed") void desktop.getSettings().then((loaded) => {
+      const next = { ...fallback, ...loaded };
+      settingsRef.current = next;
+      setSettings(next);
+      localStorage.setItem("agent-k-settings", JSON.stringify(next));
+    }).catch(() => undefined);
+  }), [refreshThemes]);
   useEffect(() => {
-    applyTheme(settings.locale, resolvedTheme);
-  }, [resolvedTheme, settings.locale]);
+    applyTheme(settings.locale, activeTheme, resolvedTheme);
+  }, [activeTheme, resolvedTheme, settings.locale]);
   useEffect(() => {
     const openExternalLink = (event: MouseEvent) => {
       if (event.defaultPrevented || event.button !== 0) return;
@@ -430,6 +474,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       .finally(() => {
         if (!disposed) setReady(true);
       });
+    void refreshThemes().catch(() => undefined);
     return () => {
       disposed = true;
     };
@@ -472,11 +517,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     () => ({
       settings,
       resolvedTheme,
+      activeTheme,
+      themes,
+      refreshThemes,
       ready,
       update,
       t: (key) => dictionaries[settings.locale][key],
     }),
-    [ready, resolvedTheme, settings, update],
+    [activeTheme, ready, refreshThemes, resolvedTheme, settings, themes, update],
   );
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }

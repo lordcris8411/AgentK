@@ -109,6 +109,10 @@
       {
         "from": "skills",
         "to": "skills"
+      },
+      {
+        "from": "themes",
+        "to": "themes"
       }
     ],
     "linux": {

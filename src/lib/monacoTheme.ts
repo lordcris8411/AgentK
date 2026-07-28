@@ -1,4 +1,41 @@
 import type * as Monaco from "monaco-editor";
+import type { ThemeDefinition } from "./themes";
+
+const fallbackSyntax = (dark: boolean) => dark ? {
+  comment: "6A9955", keyword: "569CD6", string: "CE9178", number: "B5CEA8",
+  type: "4FC1FF", function: "4FC1FF", variable: "D4D4D4", parameter: "9CA3AF",
+  macro: "C586C0", namespace: "C586C0", property: "C49732",
+} : {
+  comment: "6A737D", keyword: "0000FF", string: "A31515", number: "098658",
+  type: "267F99", function: "267F99", variable: "24292F", parameter: "6B7280",
+  macro: "AF00DB", namespace: "AF00DB", property: "8B6508",
+};
+
+function syntaxRules(theme: ThemeDefinition) {
+  const syntax = { ...fallbackSyntax(theme.base === "dark"), ...theme.monacoSyntax };
+  const color = (key: keyof typeof syntax) => syntax[key].replace(/^#/, "");
+  return [
+    { token: "comment", foreground: color("comment") }, { token: "keyword", foreground: color("keyword") },
+    { token: "string", foreground: color("string") }, { token: "number", foreground: color("number") },
+    { token: "type", foreground: color("type") }, { token: "class", foreground: color("type") },
+    { token: "function", foreground: color("function") }, { token: "method", foreground: color("function") },
+    { token: "variable", foreground: color("variable") }, { token: "parameter", foreground: color("parameter") },
+    { token: "macro", foreground: color("macro") }, { token: "namespace", foreground: color("namespace") },
+    { token: "property", foreground: color("property") }, { token: "enum", foreground: color("property") },
+    { token: "enumMember", foreground: color("property") },
+  ];
+}
+
+function customTheme(monaco: typeof Monaco, theme: ThemeDefinition) {
+  monaco.editor.defineTheme("agent-k-custom", {
+    base: theme.base === "dark" ? "vs-dark" : "vs", inherit: true, rules: syntaxRules(theme), colors: theme.monaco,
+  });
+}
+
+function themeName(theme: ThemeDefinition | string | undefined) {
+  if (typeof theme === "object") return "agent-k-custom";
+  return theme === "dark" ? "agent-k-dark" : theme === "soft-light" ? "agent-k-soft-light" : "agent-k-light";
+}
 
 export function defineAgentKTheme(monaco: typeof Monaco) {
   monaco.editor.defineTheme("agent-k-light", {
@@ -41,23 +78,16 @@ export function defineAgentKTheme(monaco: typeof Monaco) {
     },
   });
   window.addEventListener("agent-k-theme", (event) => {
-    const mode = (event as CustomEvent<string>).detail;
-    monaco.editor.setTheme(
-      mode === "dark"
-        ? "agent-k-dark"
-        : mode === "soft-light"
-          ? "agent-k-soft-light"
-          : "agent-k-light",
-    );
+    const theme = (event as CustomEvent<ThemeDefinition | string>).detail;
+    if (typeof theme === "object") customTheme(monaco, theme);
+    monaco.editor.setTheme(themeName(theme));
   });
+  const active = (window as Window & { agentKActiveTheme?: ThemeDefinition }).agentKActiveTheme;
+  if (active) customTheme(monaco, active);
 }
 
 export function applyAgentKTheme(_: unknown, monaco: typeof Monaco) {
-  monaco.editor.setTheme(
-    document.documentElement.dataset.theme === "dark"
-      ? "agent-k-dark"
-      : document.documentElement.dataset.theme === "soft-light"
-        ? "agent-k-soft-light"
-        : "agent-k-light",
-  );
+  const active = (window as Window & { agentKActiveTheme?: ThemeDefinition }).agentKActiveTheme;
+  if (active) customTheme(monaco, active);
+  monaco.editor.setTheme(themeName(active ?? document.documentElement.dataset.theme));
 }

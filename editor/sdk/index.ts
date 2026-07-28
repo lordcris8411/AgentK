@@ -2,6 +2,11 @@ export const EDITOR_API_VERSION = 1 as const;
 export const EDITOR_CHANNEL = "agent-k-editor" as const;
 
 export type EditorTheme = "light" | "soft-light" | "dark";
+export type EditorThemeConfig = {
+  monaco: Record<string, string>;
+  monacoSyntax?: Record<string, string>;
+  fonts?: { ui: string; code: string };
+};
 
 export type EditorInitialState = {
   absolutePath: string;
@@ -17,6 +22,7 @@ export type EditorInitialState = {
   path: string;
   readOnly: boolean;
   theme: EditorTheme;
+  themeConfig?: EditorThemeConfig;
   wordWrap: boolean;
 };
 
@@ -31,6 +37,7 @@ export type EditorInstance = {
   setContent(content: string): void;
   setLayoutSuspended?(suspended: boolean): void;
   setTheme?(theme: EditorTheme): void;
+  setThemeConfig?(config?: EditorThemeConfig): void;
   setWordWrap?(enabled: boolean): void;
 };
 
@@ -84,7 +91,7 @@ type HostMessage = {
   channel: typeof EDITOR_CHANNEL;
   nonce: string;
   requestId?: string;
-  type: "action" | "focus" | "initialize" | "language-response" | "mark-saved" | "navigate" | "read-content" | "read-selection" | "set-content" | "set-layout-suspended" | "set-theme" | "set-word-wrap";
+  type: "action" | "focus" | "initialize" | "language-response" | "mark-saved" | "navigate" | "read-content" | "read-selection" | "set-content" | "set-layout-suspended" | "set-theme" | "set-theme-config" | "set-word-wrap";
   value?: unknown;
 };
 
@@ -240,6 +247,16 @@ export function defineEditor(factory: EditorFactory): void {
         )
           instance.setTheme?.(message.value);
         break;
+      case "set-theme-config": {
+        const config = message.value;
+        instance.setThemeConfig?.(
+          config && typeof config === "object" && "monaco" in config &&
+          typeof (config as { monaco?: unknown }).monaco === "object"
+            ? config as EditorThemeConfig
+            : undefined,
+        );
+        break;
+      }
       case "set-word-wrap":
         if (typeof message.value === "boolean") instance.setWordWrap?.(message.value);
         break;

@@ -33,8 +33,10 @@ function versionsFor(call: ReviewCall) {
 function languageFor(path: string) { const extension = path.split(".").pop()?.toLowerCase(); return ({ py: "python", pyw: "python", ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", json: "json", md: "markdown", yml: "yaml", yaml: "yaml", sh: "shell", ps1: "powershell", rs: "rust", css: "css", html: "html", xml: "xml" } as Record<string, string>)[extension ?? ""] ?? "plaintext"; }
 
 export function ReviewPanel({ calls, root, onClose, onError }: { calls: ReviewCall[]; root?: string; onClose(): void; onError(message: string): void }) {
-  const { resolvedTheme } = useSettings();
-  const editorTheme = resolvedTheme === "dark"
+  const { activeTheme, resolvedTheme } = useSettings();
+  const editorTheme = activeTheme
+    ? "agent-k-custom"
+    : resolvedTheme === "dark"
     ? "agent-k-dark"
     : resolvedTheme === "soft-light"
       ? "agent-k-soft-light"

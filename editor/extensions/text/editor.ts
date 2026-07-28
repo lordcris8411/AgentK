@@ -1,10 +1,11 @@
 import type * as Monaco from "monaco-editor";
-import { defineEditor, type EditorTheme } from "../../sdk";
+import { defineEditor, type EditorTheme, type EditorThemeConfig } from "../../sdk";
 import "./editor.css";
 
 const monaco = (globalThis as typeof globalThis & {
   AgentKEditorDependencies: { monaco: typeof Monaco };
 }).AgentKEditorDependencies.monaco;
+const defaultCodeFont = '"Cascadia Code", "Cascadia Mono", Consolas, monospace';
 
 // clangd 22's initialize response defines this exact legend. It deliberately
 // contains repeated standard names, so token indices must not be replaced by a
@@ -17,12 +18,38 @@ const CLANGD_STATIC_MODIFIER = 1 << CLANGD_TOKEN_MODIFIERS.indexOf("static");
 const CLANGD_CONSTRUCTOR_OR_DESTRUCTOR_MODIFIER =
   1 << CLANGD_TOKEN_MODIFIERS.indexOf("constructorOrDestructor");
 
-function themeName(theme: EditorTheme): string {
+function themeName(theme: EditorTheme, config?: EditorThemeConfig): string {
+  if (config) return "agent-k-plugin-custom";
   return theme === "dark"
     ? "agent-k-plugin-dark"
     : theme === "soft-light"
       ? "agent-k-plugin-soft-light"
       : "agent-k-plugin-light";
+}
+
+function customSyntaxRules(theme: EditorTheme, syntax?: Record<string, string>) {
+  const defaults = theme === "dark" ? {
+    comment: "6A9955", keyword: "569CD6", string: "CE9178", number: "B5CEA8",
+    type: "4FC1FF", function: "4FC1FF", variable: "D4D4D4", parameter: "9CA3AF",
+    macro: "C586C0", namespace: "C586C0", property: "C49732",
+  } : {
+    comment: "6A737D", keyword: "0000FF", string: "A31515", number: "098658",
+    type: "267F99", function: "267F99", variable: "24292F", parameter: "6B7280",
+    macro: "AF00DB", namespace: "AF00DB", property: "8B6508",
+  };
+  const palette = { ...defaults, ...syntax };
+  const color = (key: keyof typeof defaults) => palette[key].replace(/^#/, "");
+  return [
+    { token: "comment", foreground: color("comment") }, { token: "keyword", foreground: color("keyword") },
+    { token: "string", foreground: color("string") }, { token: "number", foreground: color("number") },
+    { token: "type", foreground: color("type") }, { token: "class", foreground: color("type") },
+    { token: "interface", foreground: color("type") }, { token: "concept", foreground: color("type") },
+    { token: "function", foreground: color("function") }, { token: "method", foreground: color("function") },
+    { token: "variable", foreground: color("variable") }, { token: "parameter", foreground: color("parameter") },
+    { token: "macro", foreground: color("macro") }, { token: "namespace", foreground: color("namespace") },
+    { token: "property", foreground: color("property") }, { token: "enum", foreground: color("property") },
+    { token: "enumMember", foreground: color("property") },
+  ];
 }
 
 function hoverMarkdown(contents: unknown): Array<{ value: string }> {
@@ -185,6 +212,23 @@ defineEditor((host, initial) => {
     },
   });
 
+  let currentTheme = initial.theme;
+  let themeConfig = initial.themeConfig;
+  const applyThemeConfig = (config?: EditorThemeConfig) => {
+    themeConfig = config;
+    if (config) {
+      monaco.editor.defineTheme("agent-k-plugin-custom", {
+        base: currentTheme === "dark" ? "vs-dark" : "vs",
+        inherit: true,
+        // Custom syntax entries override only the requested tokens; the
+        // base palette keeps every unspecified language token readable.
+        rules: customSyntaxRules(currentTheme, config.monacoSyntax),
+        colors: config.monaco,
+      });
+    }
+  };
+  applyThemeConfig(themeConfig);
+
   const model = monaco.editor.createModel(
     initial.content,
     initial.language,
@@ -193,6 +237,7 @@ defineEditor((host, initial) => {
   const editor = monaco.editor.create(host.root, {
     automaticLayout: false,
     contextmenu: false,
+    fontFamily: themeConfig?.fonts?.code ?? defaultCodeFont,
     inertialScroll: true,
     minimap: { enabled: false },
     model,
@@ -203,7 +248,7 @@ defineEditor((host, initial) => {
     quickSuggestions: { comments: false, other: true, strings: false },
     suggestOnTriggerCharacters: true,
     smoothScrolling: true,
-    theme: themeName(initial.theme),
+    theme: themeName(initial.theme, themeConfig),
     wordWrap: initial.wordWrap ? "on" : "off",
   });
   const cpp = initial.language === "cpp";
@@ -224,12 +269,20 @@ defineEditor((host, initial) => {
   const document = () => ({ uri: model.uri.toString(), languageId: "cpp", version: model.getVersionId(), text: model.getValue() });
   let languageSync: Promise<void> = Promise.resolve();
   let cppDocumentOpened = false;
+  const semanticChangeListeners = new Set<(event: void) => unknown>();
+  const fireSemanticChange = () => {
+    for (const listener of semanticChangeListeners) listener(undefined);
+  };
   const openDocument = () => {
     if (!cpp) return languageSync;
     const openingDocument = document();
     showLanguageStatus();
     languageSync = languageSync.catch(() => undefined).then(() => host.languageRequest("textDocument/didOpen", { textDocument: openingDocument })
-      .then((accepted) => { cppDocumentOpened = accepted === true; if (!cppDocumentOpened) hideLanguageStatus(); })
+      .then((accepted) => {
+        cppDocumentOpened = accepted === true;
+        if (cppDocumentOpened) fireSemanticChange();
+        else hideLanguageStatus();
+      })
       .catch(() => { cppDocumentOpened = false; hideLanguageStatus(); }));
     return languageSync;
   };
@@ -384,6 +437,13 @@ defineEditor((host, initial) => {
         }
       } });
       semantic = monaco.languages.registerDocumentSemanticTokensProvider("cpp", {
+        onDidChange: (listener: (event: void) => unknown, thisArg?: unknown) => {
+          const subscribed = thisArg === undefined
+            ? listener
+            : (event: void) => listener.call(thisArg, event);
+          semanticChangeListeners.add(subscribed);
+          return { dispose: () => semanticChangeListeners.delete(subscribed) };
+        },
         getLegend: () => ({ tokenTypes: CLANGD_TOKEN_TYPES, tokenModifiers: CLANGD_TOKEN_MODIFIERS }),
         provideDocumentSemanticTokens: async (requestedModel, _lastResultId, token) => {
           if (requestedModel !== model) return null;
@@ -394,10 +454,10 @@ defineEditor((host, initial) => {
           // semantic token snapshot, otherwise rapid edits can starve its
           // interactive completion queue.
           await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
-          if (token?.isCancellationRequested || requestedVersion !== model.getVersionId()) return null;
+          if (!cppDocumentOpened || token?.isCancellationRequested || requestedVersion !== model.getVersionId()) return null;
           try {
             const result = await host.languageRequest("textDocument/semanticTokens/full", { textDocument: { uri: model.uri.toString() } }) as { data?: number[] } | undefined;
-            if (token?.isCancellationRequested || requestedVersion !== model.getVersionId()) return null;
+            if (!Array.isArray(result?.data) || token?.isCancellationRequested || requestedVersion !== model.getVersionId()) return null;
             const data = sanitizeSemanticTokens(result?.data ?? []); hideLanguageStatus();
             return { data: new Uint32Array(data) };
           } catch {
@@ -665,6 +725,7 @@ defineEditor((host, initial) => {
       languageStatus?.remove();
       if (cpp) void host.languageRequest("textDocument/didClose", { textDocument: { uri: model.uri.toString() } }).catch(() => undefined);
       completion?.dispose(); hover?.dispose(); semantic?.dispose();
+      semanticChangeListeners.clear();
       editor.dispose();
       model.dispose();
     },
@@ -716,9 +777,16 @@ defineEditor((host, initial) => {
         editor.layout({ width: host.root.clientWidth, height: host.root.clientHeight });
     },
     setTheme(theme) {
+      currentTheme = theme;
       globalThis.document.documentElement.dataset.theme = theme;
-      monaco.editor.setTheme(themeName(theme));
+      applyThemeConfig(themeConfig);
+      monaco.editor.setTheme(themeName(theme, themeConfig));
       if (languageStatus) languageStatus.dataset.theme = theme;
+    },
+    setThemeConfig(config) {
+      applyThemeConfig(config);
+      editor.updateOptions({ fontFamily: config?.fonts?.code ?? defaultCodeFont });
+      monaco.editor.setTheme(themeName(currentTheme, themeConfig));
     },
     setWordWrap(enabled) {
       editor.updateOptions({ wordWrap: enabled ? "on" : "off" });

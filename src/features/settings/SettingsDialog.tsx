@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import {
   desktop,
   type BrowserOption,
@@ -14,6 +14,8 @@ import {
 } from "../../lib/desktop";
 import { useSettings } from "./SettingsContext";
 import { platform } from "../../lib/platform";
+import type { ThemeDefinition } from "../../lib/themes";
+import { DirectoryPickerDialog } from "../../components/DirectoryPickerDialog";
 
 export type SettingsPage = "models" | "appearance" | "agentSettings" | "skills" | "extensions" | "editors" | "permissions" | "about";
 
@@ -27,6 +29,18 @@ const featuredSkills = [
     sourceUrl: "https://github.com/vercel-labs/skills/tree/main/skills/find-skills",
   },
 ];
+
+function previewStyle(theme: ThemeDefinition): CSSProperties {
+  return {
+    "--theme-preview-app": theme.colors["surface-app"],
+    "--theme-preview-panel": theme.colors["surface-panel"],
+    "--theme-preview-raised": theme.colors["surface-raised"],
+    "--theme-preview-text": theme.colors["text-primary"],
+    "--theme-preview-muted": theme.colors["text-muted"],
+    "--theme-preview-accent": theme.colors.accent,
+    "--theme-preview-selection": theme.colors["selection-background"],
+  } as CSSProperties;
+}
 
 function resourceChangeKey(
   resource: PiResource,
@@ -99,7 +113,7 @@ export function SettingsDialog({
   runtimeId?: string;
   sessionId?: string;
 }) {
-  const { settings, update, t } = useSettings();
+  const { settings, update, t, themes, refreshThemes } = useSettings();
   const [page, setPage] = useState<SettingsPage>(initialPage);
   const [resources, setResources] = useState<PiResource[]>([]);
   const [resourceChanges, setResourceChanges] = useState<PiResourceChange[]>([]);
@@ -140,6 +154,7 @@ export function SettingsDialog({
   const [skillHubUrl, setSkillHubUrl] = useState("");
   const [skillHubPreview, setSkillHubPreview] = useState<SkillHubPreview>();
   const [skillHubScope, setSkillHubScope] = useState<SkillHubScope>(cwd ? "project" : "user");
+  const [extensionPicker, setExtensionPicker] = useState<"editor" | "language" | "theme">();
   const [selectedSkill, setSelectedSkill] = useState<PiResource>();
   const [editorSkillViewer, setEditorSkillViewer] = useState<{ name: string; source: string }>();
   const [authTarget, setAuthTarget] = useState<ProviderCatalogItem>();
@@ -151,10 +166,25 @@ export function SettingsDialog({
     { id: "default", name: "System default" },
   ]);
   const [cacheDirectoryInfo, setCacheDirectoryInfo] = useState<{ activePath: string; defaultPath: string }>();
+  const [themeSlideIndex, setThemeSlideIndex] = useState(0);
   const providersRef = useRef<ProviderCatalogItem[]>([]);
   const lastCatalogRefreshRef = useRef(0);
   const providerDisplayName = (provider: Pick<ProviderCatalogItem, "id" | "name">) =>
     provider.id === "ollama" ? "Ollama" : provider.id === "vllm" ? "vLLM" : provider.name || provider.id;
+  useEffect(() => {
+    const selected = themes.findIndex((theme) => theme.id === settings.theme);
+    if (selected >= 0) setThemeSlideIndex(selected);
+  }, [settings.theme, themes]);
+  const selectThemeSlide = (index: number) => {
+    const theme = themes[index];
+    if (!theme) return;
+    setThemeSlideIndex(index);
+    void update({ theme: theme.id });
+  };
+  const changeThemeSlide = (step: number) => {
+    if (!themes.length) return;
+    selectThemeSlide((themeSlideIndex + step + themes.length) % themes.length);
+  };
   const chooseCacheDirectory = async () => {
     setError(undefined);
     const selected = await platform.openDialog({ directory: true, title: t("cacheDirectoryDialog") });
@@ -167,6 +197,22 @@ export function SettingsDialog({
     } catch (cause) {
       setError(String(cause));
     }
+  };
+  const importTheme = async (path: string) => {
+    setError(undefined);
+    try {
+      const theme = await desktop.importTheme(path);
+      await refreshThemes();
+      await update({ theme: theme.id });
+    } catch (cause) { setError(String(cause)); }
+  };
+  const removeTheme = async (id: string) => {
+    setError(undefined);
+    try {
+      await desktop.removeTheme(id);
+      await refreshThemes();
+      if (settings.theme === id) await update({ theme: "light" });
+    } catch (cause) { setError(String(cause)); }
   };
   const resetCacheDirectory = async () => {
     setError(undefined);
@@ -231,9 +277,7 @@ export function SettingsDialog({
       setBusy(false);
     }
   };
-  const installEditorPlugin = async () => {
-    const sourceDirectory = await platform.openDialog({ directory: true, title: "安装编辑器扩展" });
-    if (typeof sourceDirectory !== "string") return;
+  const installEditorPlugin = async (sourceDirectory: string) => {
     setBusy(true);
     setError(undefined);
     try {
@@ -246,9 +290,7 @@ export function SettingsDialog({
       setBusy(false);
     }
   };
-  const installLanguageServerPlugin = async () => {
-    const sourceDirectory = await platform.openDialog({ directory: true, title: "安装语言扩展" });
-    if (typeof sourceDirectory !== "string") return;
+  const installLanguageServerPlugin = async (sourceDirectory: string) => {
     setBusy(true); setError(undefined);
     try { const installed = await desktop.installLanguageServerPlugin(sourceDirectory); setLanguageServerPlugins(await desktop.listLanguageServerPlugins()); setNotice(`已安装 ${installed.displayName}`); }
     catch (cause) { setError(String(cause)); }
@@ -283,6 +325,9 @@ export function SettingsDialog({
     setDisabledFileEditors([...settings.disabledFileEditors]);
     setDisabledFileEditorSkills([...settings.disabledFileEditorSkills]);
   }, [initialPage, open]);
+  useEffect(() => {
+    if (open && page === "appearance") void refreshThemes().catch(() => undefined);
+  }, [open, page, refreshThemes]);
   useEffect(() => {
     if (!cwd) setSkillHubScope("user");
   }, [cwd]);
@@ -671,14 +716,24 @@ export function SettingsDialog({
               <>
                 <h2>{t("appearance")}</h2>
                 <div className="settings-section">
-                  <label>{t("appearance")}</label>
-                  <div className="segmented-control">
-                    <button className={settings.theme === "light" ? "is-active" : ""} onClick={() => void update({ theme: "light" })} type="button"><i className="fa-regular fa-sun" /> {t("light")}</button>
-                    <button className={settings.theme === "soft-light" ? "is-active" : ""} onClick={() => void update({ theme: "soft-light" })} type="button"><i className="fa-solid fa-cloud-sun" /> {t("softLight")}</button>
-                    <button className={settings.theme === "dark" ? "is-active" : ""} onClick={() => void update({ theme: "dark" })} type="button"><i className="fa-regular fa-moon" /> {t("dark")}</button>
-                    <button className={settings.theme === "system" ? "is-active" : ""} onClick={() => void update({ theme: "system" })} type="button"><i className="fa-solid fa-desktop" /> {t("systemTheme")}</button>
+                  <div className="theme-carousel-actions">
+                    <span className="settings-description">选择预览卡立即应用主题</span>
+                    <div className="theme-carousel-tools"><button className={settings.theme === "system" ? "is-active" : ""} onClick={() => void update({ theme: "system" })} type="button"><i className="fa-solid fa-desktop" /> {t("systemTheme")}</button><button onClick={() => setExtensionPicker("theme")} type="button">{t("importTheme")}</button></div>
                   </div>
-                  <p className="settings-description">{t("softLightDescription")}</p>
+                  <div aria-label="主题轮播" className="theme-carousel">
+                    {themes.map((theme, index) => {
+                      const offset = (index - themeSlideIndex + themes.length) % themes.length;
+                      const position = offset === 0 ? "current" : offset === 1 ? "next" : offset === themes.length - 1 ? "previous" : "hidden";
+                      return <article className={`theme-preview-card ${position} ${settings.theme === theme.id ? "is-active" : ""}`} key={theme.id} style={previewStyle(theme)}>
+                      <button aria-pressed={settings.theme === theme.id} className="theme-preview-select" onClick={() => selectThemeSlide(index)} type="button">
+                        <div className="theme-preview-window"><div className="theme-preview-titlebar"><i /><i /><i /></div><div className="theme-preview-sidebar"><span /><span /><span /></div><div className="theme-preview-content"><strong>Agent K</strong><small>Theme preview</small><b>const theme =</b><em> {theme.name}</em><div /></div></div>
+                        <span className="theme-preview-name">{theme.name}</span><small>{theme.base}</small>
+                      </button>
+                      {!theme.builtin && <button aria-label={`${t("removeTheme")}: ${theme.name}`} className="theme-preview-remove" onClick={() => void removeTheme(theme.id)} type="button"><i className="fa-solid fa-trash" /></button>}
+                      {position === "current" && <div className="theme-preview-nav"><button aria-label="上一个主题" onClick={() => changeThemeSlide(-1)} type="button"><i className="fa-solid fa-chevron-left" /></button><button aria-label="下一个主题" onClick={() => changeThemeSlide(1)} type="button"><i className="fa-solid fa-chevron-right" /></button></div>}
+                    </article>;
+                    })}
+                  </div>
                 </div>
                 <div className="settings-section">
                   <label htmlFor="settings-language">{t("language")}</label>
@@ -912,9 +967,9 @@ export function SettingsDialog({
               <>
                 <div className="settings-title-row">
                   <h2>{t("editors")}</h2>
-                  <div className="settings-title-actions"><button disabled={busy || resourcesLocked} onClick={() => void installEditorPlugin()} type="button">
+                  <div className="settings-title-actions"><button disabled={busy || resourcesLocked} onClick={() => setExtensionPicker("editor")} type="button">
                     <i className="fa-solid fa-box-open" /> 安装扩展
-                  </button><button disabled={busy || resourcesLocked} onClick={() => void installLanguageServerPlugin()} type="button"><i className="fa-solid fa-code" /> 安装语言扩展</button><button
+                  </button><button disabled={busy || resourcesLocked} onClick={() => setExtensionPicker("language")} type="button"><i className="fa-solid fa-code" /> 安装语言扩展</button><button
                     disabled={busy || !runtimeId || resourcesLocked}
                     onClick={() => {
                       if (!runtimeId || !cwd) return;
@@ -1084,6 +1139,17 @@ export function SettingsDialog({
         {selectedSkill && <div className="settings-subdialog"><div className="settings-subdialog-card skill-details"><h3>{t("skillDetails")}</h3><dl><div><dt>{t("displayName")}</dt><dd>{selectedSkill.name}</dd></div><div><dt>{t("skillDescriptionLabel")}</dt><dd>{selectedSkill.description || t("noSkillDescription")}</dd></div><div><dt>{t("skillScopeLabel")}</dt><dd>{selectedSkill.scope === "project" ? t("projectScope") : t("userScope")}</dd></div><div><dt>{t("skillPathLabel")}</dt><dd>{selectedSkill.path}</dd></div></dl><footer><button className="primary-button" onClick={() => setSelectedSkill(undefined)} type="button">{t("close")}</button></footer></div></div>}
         {editorSkillViewer && <div className="settings-subdialog"><div className="settings-subdialog-card skill-hub-preview"><h3>{editorSkillViewer.name} · Editor Skill</h3><label>SKILL.md<textarea readOnly value={editorSkillViewer.source} /></label><footer><button className="primary-button" onClick={() => setEditorSkillViewer(undefined)} type="button">{t("close")}</button></footer></div></div>}
         {skillHubPreview && <div className="settings-subdialog"><div className="settings-subdialog-card skill-hub-preview"><h3>{t("skillHubReview")}</h3><div className="skill-hub-preview-meta"><strong>{skillHubPreview.name}</strong>{skillHubPreview.description && <span>{skillHubPreview.description}</span>}<small>{skillHubPreview.source} · {skillHubPreview.files.length} {t("skillHubFiles")}</small></div><label>{t("skillHubInstallScope")}<select disabled={!cwd} onChange={(event) => setSkillHubScope(event.target.value as SkillHubScope)} value={skillHubScope}><option value="project">{t("projectScope")}</option><option value="user">{t("userScope")}</option></select></label><div className="skill-hub-file-list">{skillHubPreview.files.map((file) => <span key={file.path}>{file.path}<small>{Math.ceil(file.bytes / 1024)} KB</small></span>)}</div><label>{t("skillHubContent")}<textarea readOnly value={skillHubPreview.skillMarkdown} /></label><footer><button onClick={() => setSkillHubPreview(undefined)} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy || !cwd} onClick={() => void installSkill()} type="button">{t("skillHubInstall")}</button></footer></div></div>}
+        {extensionPicker && <DirectoryPickerDialog
+          acceptedFileExtensions={extensionPicker === "theme" ? [".json"] : [".zip"]}
+          onCancel={() => setExtensionPicker(undefined)}
+          onSelect={(path) => {
+            const target = extensionPicker;
+            setExtensionPicker(undefined);
+            void (target === "editor" ? installEditorPlugin(path) : target === "language" ? installLanguageServerPlugin(path) : importTheme(path));
+          }}
+          selectFiles
+          title={extensionPicker === "editor" ? "选择编辑器扩展文件" : extensionPicker === "language" ? "选择语言扩展文件" : t("themeFileDialog")}
+        />}
       </section>
     </div>
   );
