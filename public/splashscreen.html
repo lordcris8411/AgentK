@@ -28,13 +28,22 @@
         --text-primary: #272625;
         --text-muted: #98928a;
         --accent: #302d2a;
+        --icon-primary: #272625;
+        --icon-secondary: #ffffff;
         color-scheme: light;
       }
-      :root[data-theme="dark"] { color-scheme: dark; }
+      :root[data-theme="dark"] {
+        --icon-primary: #ece9e4;
+        --icon-secondary: #252422;
+        color-scheme: dark;
+      }
       html, body { background: transparent; }
       body { align-items: center; color: var(--text-primary); display: flex; font-family: "Segoe UI Variable", "Microsoft YaHei UI", sans-serif; height: 100vh; justify-content: center; margin: 0; }
       main { align-items: center; background: var(--surface-raised); border: 1px solid var(--border-color); border-radius: 16px; box-shadow: 0 12px 32px rgb(0 0 0 / 18%); display: flex; gap: 18px; min-height: 122px; padding: 24px 26px; width: 348px; }
-      .mark { align-items: center; background: var(--accent); border-radius: 11px; color: var(--surface-raised); display: flex; flex: 0 0 auto; font-family: Georgia, serif; font-size: 27px; font-weight: 700; height: 52px; justify-content: center; width: 52px; }
+      .mark { display: block; flex: 0 0 auto; height: 68px; position: relative; width: 68px; }
+      .mark span { inset: 0; mask-position: center; mask-repeat: no-repeat; mask-size: contain; position: absolute; -webkit-mask-position: center; -webkit-mask-repeat: no-repeat; -webkit-mask-size: contain; }
+      .mark .primary { background: var(--icon-primary); mask-image: url("../assets/icons/icon-primary-mask.png"); -webkit-mask-image: url("../assets/icons/icon-primary-mask.png"); }
+      .mark .secondary { background: var(--icon-secondary); mask-image: url("../assets/icons/icon-secondary-mask.png"); -webkit-mask-image: url("../assets/icons/icon-secondary-mask.png"); }
       main div { flex: 1; min-width: 0; }
       strong { display: block; font-size: 17px; letter-spacing: -.02em; line-height: 1.3; }
       p { color: var(--text-muted); font-size: 12px; line-height: 1.55; margin: 7px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -44,5 +53,5 @@
       @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
-  <body><main><span class="mark">K</span><div><strong>Agent K</strong><p id="status">正在读取会话…</p><section class="track"><span class="progress" id="progress"></span></section></div><i></i></main></body>
+  <body><main><span aria-hidden="true" class="mark"><span class="primary"></span><span class="secondary"></span></span><div><strong>Agent K</strong><p id="status">正在读取会话…</p><section class="track"><span class="progress" id="progress"></span></section></div><i></i></main></body>
 </html>

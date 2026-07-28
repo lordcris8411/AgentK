@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/icons/agent-k.svg" width="112" height="112" alt="Agent K logo">
+  <img src="assets/icons/icon.png" width="112" height="112" alt="Agent K logo">
 
   # Agent K
 
@@ -302,7 +302,8 @@ transactional refresh avoids mixed resource states across workers.
 ### Complete theme system
 
 An Agent K theme is a validated JSON package rather than a single light/dark flag. It can define application surfaces and
-semantic component colors, Monaco UI and syntax colors, the complete ANSI terminal palette, and separate UI/code font stacks.
+semantic component colors, the two-color Agent K logo palette, Monaco UI and syntax colors, the complete ANSI terminal palette,
+and separate UI/code font stacks.
 Theme changes propagate live to the React interface, cached Editor frames, Monaco instances, the review view, and the project
 terminal; imported themes are previewed before selection and can be removed independently.
 
@@ -736,7 +737,7 @@ Skill 和 Extension 的改动先保留在设置界面。设置关闭且所有 wo
 
 ### 完整主题系统
 
-Agent K 主题是经过校验的 JSON 包，而不只是一个浅色/深色开关。它可以定义应用表面和语义组件配色、Monaco 界面与语法颜色、
+Agent K 主题是经过校验的 JSON 包，而不只是一个浅色/深色开关。它可以定义应用表面和语义组件配色、Agent K 图标的双色配色、Monaco 界面与语法颜色、
 完整 ANSI 终端调色板，以及独立的 UI/代码字体栈。切换主题时，React 界面、已缓存的 Editor frame、Monaco 实例、审阅界面和项目
 终端都会即时更新；导入的主题可以先预览，再独立选择或删除。
 

@@ -14,7 +14,7 @@ import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import type { LanguageServerProject, SessionSummary } from "../../lib/desktop";
+import type { CodexQuotaWindow, LanguageServerProject, SessionSummary } from "../../lib/desktop";
 import { desktop } from "../../lib/desktop";
 import { stopDampedScrolling } from "../../lib/dampedScrolling";
 import { desktopWindow, platform } from "../../lib/platform";
@@ -28,6 +28,7 @@ import {
   plainUiText,
   useExtensionUi,
 } from "../extensions/ExtensionUiContext";
+import { AgentKLogo } from "../../components/AgentKLogo";
 
 type ToolCall = { id?: string; name: string; args: Record<string, unknown> };
 
@@ -554,6 +555,42 @@ function formatContextTokens(tokens: number): string {
   return tokens >= 1_000 ? `${(tokens / 1_000).toFixed(1)}k` : String(tokens);
 }
 
+function codexWindowLabel(window: CodexQuotaWindow, en: boolean): string {
+  const seconds = window.windowDurationSeconds;
+  if (seconds >= 86_400 && seconds % 86_400 === 0) {
+    const days = seconds / 86_400;
+    return en ? `${days} day${days === 1 ? "" : "s"}` : `${days} 天`;
+  }
+  if (seconds >= 3_600 && seconds % 3_600 === 0) {
+    const hours = seconds / 3_600;
+    return en ? `${hours} hour${hours === 1 ? "" : "s"}` : `${hours} 小时`;
+  }
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  return en ? `${minutes} min` : `${minutes} 分钟`;
+}
+
+function codexResetLabel(resetsAt: number | undefined, en: boolean): string | undefined {
+  if (resetsAt === undefined) return undefined;
+  return new Intl.DateTimeFormat(en ? "en-US" : "zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(resetsAt * 1_000));
+}
+
+function codexPlanLabel(plan: string | undefined): string | undefined {
+  if (!plan) return undefined;
+  if (plan.toLowerCase() === "prolite") return "Pro Lite";
+  return plan
+    .replaceAll(/[_-]+/g, " ")
+    .replaceAll(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function normalizedModelIdentifier(value: string): string {
+  return value.toLowerCase().replaceAll(/[^a-z0-9]+/g, "");
+}
+
 function deepSeekPrice(provider: string | undefined, model: string | undefined) {
   if (provider && provider !== "deepseek") return undefined;
   if (model?.toLowerCase() === "deepseek-v4-pro")
@@ -1012,6 +1049,12 @@ function timeline(items: Item[]): TimelineEntry[] {
         )
     )
       continue;
+    if (item.customType === "agent-k-logo") {
+      flush();
+      flushChanges();
+      entries.push({ type: "message", item });
+      continue;
+    }
     if (item.role === "user") {
       flush();
       flushChanges();
@@ -1432,6 +1475,13 @@ const ConversationMessage = memo(function ConversationMessage({
       onContextMenu={item.role === "user" ? (event) => onContextMenu(event, item) : undefined}
     >
       <div className="message-content">
+        {item.customType === "agent-k-logo" && (
+          <div className="conversation-agent-k-brand">
+            <AgentKLogo className="conversation-agent-k-logo" />
+            <strong>Agent K</strong>
+            <span>v{item.content}</span>
+          </div>
+        )}
         {((item.images?.length ?? 0) > 0 ||
           (item.localImageUrls?.length ?? 0) > 0) && (
           <div className="message-images">
@@ -1472,7 +1522,7 @@ const ConversationMessage = memo(function ConversationMessage({
         {item.thinking && (
           <ActivityRow item={{ ...item, content: "", toolCalls: [] }} />
         )}
-        {item.content && (
+        {item.content && item.customType !== "agent-k-logo" && (
           <ReactMarkdown
             components={{
               pre: ({ children, className }) => (
@@ -1633,6 +1683,9 @@ export function ConversationWorkspace({
   const [currentModelKey, setCurrentModelKey] = useState("");
   const [providerBalance, setProviderBalance] = useState<string>();
   const [providerBalanceError, setProviderBalanceError] = useState<string>();
+  const [codexQuota, setCodexQuota] = useState<Awaited<ReturnType<typeof desktop.codexQuota>>>();
+  const [codexQuotaError, setCodexQuotaError] = useState<string>();
+  const [codexQuotaLoading, setCodexQuotaLoading] = useState(false);
   const [billingHidden, setBillingHidden] = useState(false);
   const [contextWindow, setContextWindow] = useState<number>();
   const [reportedContextTokens, setReportedContextTokens] = useState<number>();
@@ -1835,6 +1888,7 @@ export function ConversationWorkspace({
     return () => window.removeEventListener("agent-k-file-format-capabilities", updateFileFormatContext);
   }, []);
   const builtinCommands = useMemo<SlashCommand[]>(() => [
+    { name: "k", description: en ? "Show the Agent K logo" : "显示 Agent K Logo", source: "builtin" },
     { name: "settings", description: en ? "Open Agent K settings" : "打开 Agent K 设置", source: "builtin" },
     { name: "skills", description: en ? "Manage Pi skills" : "管理 Pi Skills", source: "builtin" },
     { name: "extensions", description: en ? "Manage Pi extensions" : "管理 Pi Extensions", source: "builtin" },
@@ -2815,6 +2869,22 @@ export function ConversationWorkspace({
       return false;
     const [, name, rawArguments = ""] = match;
     const argumentsText = rawArguments.trim();
+    if (name === "k") {
+      const version = await platform.appVersion();
+      stickToBottom.current = true;
+      setItems((current) => [
+        ...current,
+        {
+          id: `agent-k-logo-${crypto.randomUUID()}`,
+          role: "assistant",
+          customType: "agent-k-logo",
+          content: version,
+          occurredAt: Date.now(),
+        },
+      ]);
+      window.requestAnimationFrame(() => scrollToLatest());
+      return true;
+    }
     if (["settings", "skills", "extensions", "editors"].includes(name)) {
       if (name === "settings") window.dispatchEvent(new Event("agent-k-open-settings"));
       else window.dispatchEvent(new CustomEvent("agent-k-open-settings", { detail: { page: name } }));
@@ -3322,7 +3392,8 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
     () => items.filter(
       (item) =>
         item.display !== false &&
-        (item.tool ||
+        (item.customType === "agent-k-logo" ||
+          item.tool ||
           item.content.trim().length > 0 ||
           item.thinking?.trim() ||
           item.images?.length ||
@@ -3372,6 +3443,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
   const billingProvider = currentProvider === "deepseek" || currentProvider === "openrouter"
     ? currentProvider
     : undefined;
+  const codexProvider = currentProvider === "openai-codex";
   const billing = useMemo(() => {
     const usage = items.reduce((total, item) => {
       const price = deepSeekPrice(item.modelProvider, item.modelId);
@@ -3426,6 +3498,66 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
   }, [billingProvider, en]);
+  useEffect(() => {
+    if (!codexProvider) {
+      setCodexQuota(undefined);
+      setCodexQuotaError(undefined);
+      setCodexQuotaLoading(false);
+      return;
+    }
+    setBillingHidden(false);
+    setCodexQuotaLoading(true);
+    let cancelled = false;
+    let retryDelay = 2_000;
+    let retryTimer: number | undefined;
+    const scheduleRetry = () => {
+      if (cancelled || retryTimer !== undefined) return;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = undefined;
+        retryDelay = Math.min(retryDelay * 2, 30_000);
+        refresh();
+      }, retryDelay);
+    };
+    const refresh = () => void desktop.codexQuota().then((result) => {
+      if (cancelled) return;
+      if (retryTimer !== undefined) {
+        window.clearTimeout(retryTimer);
+        retryTimer = undefined;
+      }
+      setCodexQuota(result);
+      setCodexQuotaError(undefined);
+      setCodexQuotaLoading(false);
+      retryDelay = 2_000;
+    }).catch((cause) => {
+      if (cancelled) return;
+      setCodexQuotaError(String(cause));
+      setCodexQuotaLoading(false);
+      scheduleRetry();
+    });
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [codexProvider]);
+  const codexQuotaWindows = useMemo(() => {
+    if (!codexQuota) return [];
+    const modelId = currentModelKey.slice(currentModelKey.indexOf("/") + 1);
+    const sparkSelected = normalizedModelIdentifier(modelId) === "gpt53codexspark";
+    const bucket = sparkSelected
+      ? codexQuota.buckets.find(
+          (candidate) => normalizedModelIdentifier(candidate.name) === "gpt53codexspark",
+        )
+      : codexQuota.buckets.find((candidate) => candidate.id === "codex");
+    if (!bucket) return [];
+    return [
+      ...(bucket.primary ? [{ id: `${bucket.id}:primary`, bucket, window: bucket.primary }] : []),
+      ...(bucket.secondary ? [{ id: `${bucket.id}:secondary`, bucket, window: bucket.secondary }] : []),
+    ];
+  }, [codexQuota, currentModelKey]);
+  const showProviderUsage = showBilling || codexProvider;
   const toggleWindowMaximize = async () => {
     if (await desktopWindow.isMaximized()) await desktopWindow.unmaximize();
     else await desktopWindow.maximize();
@@ -4169,6 +4301,48 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
               ))}
             </section>
           ))}
+        {codexProvider && !billingHidden && (
+          <section
+            aria-live="polite"
+            className="composer-codex-quota"
+            title={codexQuotaError}
+          >
+            <header>
+              <span className="codex-quota-brand"><i aria-hidden="true" className="fa-solid fa-gauge-high" /> Codex</span>
+              {codexPlanLabel(codexQuota?.planType) && <small>{codexPlanLabel(codexQuota?.planType)}</small>}
+              {codexQuota?.credits?.unlimited && <em>{en ? "Unlimited" : "无限"}</em>}
+              {codexQuota?.credits?.hasCredits && codexQuota.credits.balance && <em>{en ? "Credits" : "点数"} {codexQuota.credits.balance}</em>}
+              {codexQuota?.resetCredits ? <em>{en ? "Resets" : "重置次数"} {codexQuota.resetCredits}</em> : null}
+            </header>
+            {codexQuotaLoading && !codexQuota ? (
+              <div className="codex-quota-state"><i aria-hidden="true" className="fa-solid fa-circle-notch fa-spin" /> {en ? "Reading limits…" : "正在读取限额…"}</div>
+            ) : codexQuotaWindows.length > 0 ? (
+              <div className="codex-quota-windows">
+                {codexQuotaWindows.map(({ id, bucket, window }) => {
+                  const remaining = Math.max(0, 100 - window.usedPercent);
+                  const reset = codexResetLabel(window.resetsAt, en);
+                  const severity = bucket.limitReached || remaining <= 10
+                    ? "is-danger"
+                    : remaining <= 25
+                      ? "is-warning"
+                      : "";
+                  return (
+                    <div className={`codex-quota-window ${severity}`} key={id}>
+                      <div>
+                        <strong>{bucket.name}</strong>
+                        <span>{remaining.toFixed(0)}% {en ? "remaining" : "可用"}</span>
+                      </div>
+                      <span className="codex-quota-meter"><i style={{ width: `${remaining}%` }} /></span>
+                      <small>{codexWindowLabel(window, en)}{reset ? ` · ${en ? "resets" : "重置于"} ${reset}` : ""}</small>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="codex-quota-state is-error"><i aria-hidden="true" className="fa-solid fa-triangle-exclamation" /> {en ? "Limits unavailable" : "限额暂时不可用"}</div>
+            )}
+          </section>
+        )}
         <div className="composer-footer">
           <button
             aria-label={en ? "Attach images" : "添加图片"}
@@ -4288,12 +4462,12 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
               </div>
             )}
           </div>
-          {showBilling && (
+          {showProviderUsage && (
             <button
-              aria-label={billingHidden ? (en ? "Show billing" : "显示资费") : (en ? "Hide billing" : "隐藏资费")}
+              aria-label={billingHidden ? (en ? "Show provider usage" : "显示服务用量") : (en ? "Hide provider usage" : "隐藏服务用量")}
               className="composer-billing-toggle"
               onClick={() => setBillingHidden((hidden) => !hidden)}
-              title={billingHidden ? (en ? "Show billing" : "显示资费") : (en ? "Hide billing" : "隐藏资费")}
+              title={billingHidden ? (en ? "Show provider usage" : "显示服务用量") : (en ? "Hide provider usage" : "隐藏服务用量")}
               type="button"
             >
               <i aria-hidden="true" className={`fa-solid ${billingHidden ? "fa-eye" : "fa-eye-slash"}`} />

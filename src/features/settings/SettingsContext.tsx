@@ -382,8 +382,8 @@ type SettingsContextValue = {
 
 const SettingsContext = createContext<SettingsContextValue | undefined>(undefined);
 
-const themeColorKeys = ["surface-app", "surface-panel", "surface-raised", "surface-hover", "surface-active", "border-color", "border-strong", "text-primary", "text-secondary", "text-muted", "accent", "selection-background", "selection-foreground", "scrollbar-thumb", "scrollbar-thumb-hover", "danger", "info", "success", "warning", "modal-overlay"];
-const themeComponentKeys = ["primary-action", "primary-action-foreground", "active-item", "active-item-foreground", "input", "input-foreground", "code-block", "code-block-foreground", "hover", "hover-foreground"];
+const themeColorKeys = ["surface-app", "surface-panel", "surface-raised", "surface-hover", "surface-active", "border-color", "border-strong", "text-primary", "text-secondary", "text-muted", "accent", "selection-background", "selection-foreground", "scrollbar-thumb", "scrollbar-thumb-hover", "danger", "info", "success", "warning", "modal-overlay", "icon-primary", "icon-secondary"];
+const themeComponentKeys = ["primary-action", "primary-action-foreground", "active-item", "active-item-foreground", "inactive-item-foreground", "input", "input-foreground", "code-block", "code-block-foreground", "hover", "hover-foreground"];
 
 function applyTheme(locale: Locale, theme: ThemeDefinition | undefined, fallback: ResolvedTheme) {
   const root = document.documentElement;

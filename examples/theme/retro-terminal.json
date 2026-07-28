@@ -6,7 +6,14 @@
     "surface-app": "#0C0E0A", "surface-panel": "#11140F", "surface-raised": "#181C15", "surface-hover": "#1F241C", "surface-active": "#262D22",
     "border-color": "#2A3326", "border-strong": "#3D4A36", "text-primary": "#B8D9A5", "text-secondary": "#88B572", "text-muted": "#5A7A4A",
     "accent": "#C4E8B0", "selection-background": "#3A5A2E", "selection-foreground": "#E0F5D0", "scrollbar-thumb": "#3D4A36", "scrollbar-thumb-hover": "#4F6048",
-    "danger": "#E06C6C", "info": "#6CB5E0", "success": "#8FBD82", "warning": "#D9B36A", "modal-overlay": "#000000B0"
+    "danger": "#E06C6C", "info": "#6CB5E0", "success": "#8FBD82", "warning": "#D9B36A", "modal-overlay": "#000000B0",
+    "icon-primary": "#C4E8B0", "icon-secondary": "#181C15"
+  },
+  "components": {
+    "primary-action": "#88B572", "primary-action-foreground": "#181C15",
+    "active-item": "#262D22", "active-item-foreground": "#B8D9A5", "inactive-item-foreground": "#88B572",
+    "input": "#181C15", "input-foreground": "#B8D9A5", "code-block": "#262D22", "code-block-foreground": "#B8D9A5",
+    "hover": "#1F241C", "hover-foreground": "#B8D9A5"
   },
   "fonts": { "ui": "JetBrains Mono, Iosevka Term, Fira Code, Consolas, monospace", "code": "JetBrains Mono, Iosevka Term, Fira Code, Consolas, monospace" },
   "monaco": {

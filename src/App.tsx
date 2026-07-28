@@ -17,6 +17,7 @@ import { SettingsDialog, type SettingsPage } from "./features/settings/SettingsD
 import { useSettings } from "./features/settings/SettingsContext";
 import { useExtensionUi } from "./features/extensions/ExtensionUiContext";
 import { modelIsEnabled } from "./lib/modelAvailability";
+import { AgentKLogo } from "./components/AgentKLogo";
 
 const DRAFT_SESSION_PATH = "__new__";
 
@@ -945,7 +946,7 @@ export function App() {
       {(booting || busyMessage) && (
         <div aria-live="polite" className="startup-splash">
           <div className="splash-card">
-            <span className="splash-mark">K</span>
+            <AgentKLogo className="splash-mark" />
             <div>
               <strong>Agent K</strong>
               <p>{busyMessage ?? bootMessage ?? (en ? "Preloading sessions and workspaces…" : "正在预加载会话与工作区…")}</p>

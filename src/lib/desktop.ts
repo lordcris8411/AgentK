@@ -200,6 +200,30 @@ export type ProviderBalance = {
   available: boolean;
   balances: Array<{ currency: string; total: string }>;
 };
+export type CodexQuotaWindow = {
+  usedPercent: number;
+  windowDurationSeconds: number;
+  resetsAt?: number;
+};
+export type CodexQuota = {
+  planType?: string;
+  buckets: Array<{
+    id: string;
+    name: string;
+    allowed: boolean;
+    limitReached: boolean;
+    primary?: CodexQuotaWindow;
+    secondary?: CodexQuotaWindow;
+  }>;
+  credits?: {
+    hasCredits: boolean;
+    unlimited: boolean;
+    overageLimitReached: boolean;
+    balance?: string;
+  };
+  resetCredits?: number;
+  rateLimitReachedType?: string;
+};
 
 export type LocalServiceInfo = {
   kind: "ollama" | "vllm" | "lm-studio" | "openai-compatible";
@@ -229,6 +253,7 @@ export const desktop = {
     invoke<ProviderCatalogItem[]>("get_provider_catalog", { runtimeId }),
   providerBalance: (providerId: "deepseek" | "openrouter") =>
     invoke<ProviderBalance>("get_provider_balance", { providerId }),
+  codexQuota: () => invoke<CodexQuota>("get_codex_quota"),
   saveProviderApiKey: (providerId: string, apiKey: string) =>
     invoke<void>("save_provider_api_key", { providerId, apiKey }),
   logoutProvider: (providerId: string) =>
@@ -308,6 +333,8 @@ export const desktop = {
   directory: (root: string, path: string, depth: 1 | 2 = 2) =>
     invoke<FileEntry>("directory_tree", { root, path, depth }),
   browseDirectories: (path?: string) => invoke<{ path: string; parent: string; directories: string[]; files: string[]; drives: string[] }>("browse_directories", { path }),
+  createBrowsedDirectory: (parent: string, name: string) =>
+    invoke<string>("create_browsed_directory", { name, parent }),
   read: (root: string, path: string) =>
     invoke<string>("read_text_file", { root, path }),
   readBinary: (root: string, path: string) =>

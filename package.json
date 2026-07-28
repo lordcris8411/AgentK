@@ -87,6 +87,8 @@
       "electron/preload.cjs",
       "agent-k-permissions.ts",
       "assets/icons/icon.png",
+      "assets/icons/icon-primary-mask.png",
+      "assets/icons/icon-secondary-mask.png",
       "package.json"
     ],
     "extraResources": [

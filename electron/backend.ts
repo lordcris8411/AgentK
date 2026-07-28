@@ -16,6 +16,7 @@ import { RpcPool } from "./agent/pool.js";
 import { resolvePiLaunch, type PiLaunch } from "./pi-runtime.js";
 import { FileService } from "./files.js";
 import {
+  codexQuota,
   deleteModelProvider,
   detectLocalService,
   discoverLocalModels,
@@ -216,6 +217,7 @@ export class DesktopBackend {
     const args = asObject(rawArgs);
     if (command === "get_provider_balance")
       return providerBalance(requiredString(args.providerId, "providerId"));
+    if (command === "get_codex_quota") return codexQuota();
     const pool = this.requirePool();
     switch (command) {
       case "get_runtime_info":
@@ -392,6 +394,22 @@ export class DesktopBackend {
         const entries = readdirSync(path, { withFileTypes: true });
         const drives = process.platform === "win32" ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => `${letter}:\\`).filter(existsSync) : [];
         return { path, parent: dirname(path), directories: entries.filter((entry) => entry.isDirectory() && entry.name !== "node_modules").map((entry) => entry.name).sort((a, b) => a.localeCompare(b)), files: entries.filter((entry) => entry.isFile()).map((entry) => entry.name).sort((a, b) => a.localeCompare(b)), drives };
+      }
+      case "create_browsed_directory": {
+        const parent = requiredString(args.parent, "parent");
+        const name = requiredString(args.name, "name").trim();
+        if (!isAbsolute(parent)) throw new Error("Parent directory must be absolute");
+        if (
+          !name ||
+          name === "." ||
+          name === ".." ||
+          /[<>:"/\\|?*\u0000-\u001f]/u.test(name) ||
+          /[. ]$/u.test(name)
+        )
+          throw new Error("Invalid directory name");
+        const target = join(parent, name);
+        await mkdir(target, { recursive: false });
+        return target;
       }
       case "read_text_file":
         return this.files.readText(requiredString(args.root, "root"), requiredString(args.path, "path"));

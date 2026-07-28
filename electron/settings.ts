@@ -386,8 +386,138 @@ export type ProviderBalance = {
   balances: Array<{ currency: string; total: string }>;
 };
 
+export type CodexQuotaWindow = {
+  usedPercent: number;
+  windowDurationSeconds: number;
+  resetsAt?: number;
+};
+
+export type CodexQuotaBucket = {
+  id: string;
+  name: string;
+  allowed: boolean;
+  limitReached: boolean;
+  primary?: CodexQuotaWindow;
+  secondary?: CodexQuotaWindow;
+};
+
+export type CodexQuota = {
+  planType?: string;
+  buckets: CodexQuotaBucket[];
+  credits?: {
+    hasCredits: boolean;
+    unlimited: boolean;
+    overageLimitReached: boolean;
+    balance?: string;
+  };
+  resetCredits?: number;
+  rateLimitReachedType?: string;
+};
+
 function configuredApiKey(providerAuth: JsonObject): string | undefined {
   return asString(providerAuth.key) ?? asString(providerAuth.apiKey);
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function codexQuotaWindow(value: unknown): CodexQuotaWindow | undefined {
+  const window = asObject(value);
+  const usedPercent = finiteNumber(window.used_percent);
+  const windowDurationSeconds = finiteNumber(window.limit_window_seconds);
+  if (usedPercent === undefined || windowDurationSeconds === undefined) return undefined;
+  const resetsAt = finiteNumber(window.reset_at);
+  return {
+    usedPercent: Math.min(100, Math.max(0, usedPercent)),
+    windowDurationSeconds: Math.max(0, windowDurationSeconds),
+    ...(resetsAt === undefined ? {} : { resetsAt }),
+  };
+}
+
+function codexQuotaBucket(
+  id: string,
+  name: string,
+  value: unknown,
+): CodexQuotaBucket | undefined {
+  const rateLimit = asObject(value);
+  const primary = codexQuotaWindow(rateLimit.primary_window);
+  const secondary = codexQuotaWindow(rateLimit.secondary_window);
+  if (!primary && !secondary) return undefined;
+  return {
+    id,
+    name,
+    allowed: rateLimit.allowed !== false,
+    limitReached: rateLimit.limit_reached === true,
+    ...(primary ? { primary } : {}),
+    ...(secondary ? { secondary } : {}),
+  };
+}
+
+function parseCodexQuota(value: unknown): CodexQuota {
+  const body = asObject(value);
+  const buckets: CodexQuotaBucket[] = [];
+  const main = codexQuotaBucket("codex", "Codex", body.rate_limit);
+  if (main) buckets.push(main);
+  const codeReview = codexQuotaBucket(
+    "code-review",
+    "Code review",
+    body.code_review_rate_limit,
+  );
+  if (codeReview) buckets.push(codeReview);
+  for (const item of asArray(body.additional_rate_limits).map(asObject)) {
+    const rateLimit = asObject(item.rate_limit);
+    const id = asString(item.metered_feature) ?? asString(item.limit_name);
+    const name = asString(item.limit_name) ?? id;
+    if (!id || !name) continue;
+    const bucket = codexQuotaBucket(id, name, rateLimit);
+    if (bucket) buckets.push(bucket);
+  }
+  if (!buckets.length) throw new Error("Codex returned an invalid usage response");
+
+  const creditsValue = asObject(body.credits);
+  const hasCredits = creditsValue.has_credits === true;
+  const unlimited = creditsValue.unlimited === true;
+  const overageLimitReached = creditsValue.overage_limit_reached === true;
+  const balance = asString(creditsValue.balance);
+  const credits = Object.keys(creditsValue).length
+    ? {
+        hasCredits,
+        unlimited,
+        overageLimitReached,
+        ...(balance ? { balance } : {}),
+      }
+    : undefined;
+  const resetCreditsValue = asObject(body.rate_limit_reset_credits);
+  const resetCredits = finiteNumber(resetCreditsValue.applicable_available_count);
+  return {
+    planType: asString(body.plan_type),
+    buckets,
+    ...(credits ? { credits } : {}),
+    ...(resetCredits === undefined ? {} : { resetCredits }),
+    rateLimitReachedType: asString(body.rate_limit_reached_type),
+  };
+}
+
+export async function codexQuota(): Promise<CodexQuota> {
+  const auth = await jsonObject(join(piAgentDirectory(), "auth.json"));
+  const credential = asObject(auth["openai-codex"]);
+  const accessToken = asString(credential.access);
+  const accountId = asString(credential.accountId);
+  if (credential.type !== "oauth" || !accessToken || !accountId)
+    throw new Error("OpenAI Codex OAuth is not configured");
+  const response = await fetch("https://chatgpt.com/backend-api/wham/usage", {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "chatgpt-account-id": accountId,
+      "User-Agent": "AgentK",
+    },
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) throw new Error(`Codex usage request failed: ${response.status}`);
+  return parseCodexQuota(await response.json());
 }
 
 export async function providerBalance(providerId: string): Promise<ProviderBalance> {

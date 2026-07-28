@@ -11,6 +11,7 @@ import type { ProjectSummary, SessionSummary } from "../../lib/desktop";
 import { platform } from "../../lib/platform";
 import { useSettings } from "../settings/SettingsContext";
 import { sortProjectsByActivity } from "./activity";
+import { AgentKLogo } from "../../components/AgentKLogo";
 
 type SessionAction = "delete" | "rename";
 
@@ -134,7 +135,7 @@ export function SessionSidebar({
   return (
     <div className="sidebar-content">
       <div className="sidebar-header">
-        <span className="brand-mark">K</span>
+        <AgentKLogo className="brand-mark" />
         <span className="brand-name">Agent K</span>
         <button
           aria-label={t("settings")}

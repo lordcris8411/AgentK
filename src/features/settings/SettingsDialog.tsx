@@ -17,6 +17,7 @@ import { platform } from "../../lib/platform";
 import type { ThemeDefinition } from "../../lib/themes";
 import { modelIsEnabled, modelKey } from "../../lib/modelAvailability";
 import { DirectoryPickerDialog } from "../../components/DirectoryPickerDialog";
+import { AgentKLogo } from "../../components/AgentKLogo";
 
 export type SettingsPage = "models" | "appearance" | "agentSettings" | "skills" | "extensions" | "editors" | "permissions" | "about";
 
@@ -1270,7 +1271,7 @@ export function SettingsDialog({
               </>
             )}
             {page === "about" && (
-              <><div className="about-brand"><span className="brand-mark">K</span><div><h2>Agent K</h2><p>Visual desktop client for Pi</p></div></div><dl className="about-list"><div><dt>{t("appVersion")}</dt><dd>{version}</dd></div><div><dt>{t("piVersion")}</dt><dd>{runtimeInfo.piVersion}</dd></div><div><dt>{t("systemInfo")}</dt><dd>{runtimeInfo.operatingSystem} {runtimeInfo.architecture} · Electron / Chromium</dd></div></dl><div className="about-actions"><button onClick={() => void platform.copyText(`Agent K ${version}\nPi ${runtimeInfo.piVersion}\n${runtimeInfo.operatingSystem} ${runtimeInfo.architecture}\n${navigator.userAgent}`)} type="button"><i className="fa-regular fa-copy" /> {t("copyDiagnostics")}</button><button onClick={() => void desktop.openExternalUrl("https://github.com/earendil-works/pi", settings.browserId)} type="button"><i className="fa-solid fa-arrow-up-right-from-square" /> {t("projectHomepage")}</button></div></>
+              <><div className="about-brand"><AgentKLogo className="brand-mark" /><div><h2>Agent K</h2><p>Visual desktop client for Pi</p></div></div><dl className="about-list"><div><dt>{t("appVersion")}</dt><dd>{version}</dd></div><div><dt>{t("piVersion")}</dt><dd>{runtimeInfo.piVersion}</dd></div><div><dt>{t("systemInfo")}</dt><dd>{runtimeInfo.operatingSystem} {runtimeInfo.architecture} · Electron / Chromium</dd></div></dl><div className="about-actions"><button onClick={() => void platform.copyText(`Agent K ${version}\nPi ${runtimeInfo.piVersion}\n${runtimeInfo.operatingSystem} ${runtimeInfo.architecture}\n${navigator.userAgent}`)} type="button"><i className="fa-regular fa-copy" /> {t("copyDiagnostics")}</button><button onClick={() => void desktop.openExternalUrl("https://github.com/earendil-works/pi", settings.browserId)} type="button"><i className="fa-solid fa-arrow-up-right-from-square" /> {t("projectHomepage")}</button></div></>
             )}
           </main>
         </div>

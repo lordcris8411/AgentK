@@ -9,12 +9,14 @@ Create one JSON file based on `assets/theme.template.json`. Ask only for a missi
 
 - Use a lowercase kebab-case `id` that is not `light`, `soft-light`, `dark`, or `system`.
 - Keep every required key. Values must be hex colors (`#RRGGBB` or `#RRGGBBAA`); use a hex alpha value for `modal-overlay`.
+- Treat `icon-primary` and `icon-secondary` as a deliberate two-color logo palette. Both accept opaque RGB (`#RRGGBB`) or RGBA (`#RRGGBBAA`). `icon-primary` recolors the illustration's original black regions and should carry the logo's defining contrast or theme accent. `icon-secondary` recolors its original white regions and should normally be a nearby tint of the window's main surface colors (`surface-panel` and `surface-raised`), so the illustration belongs to the window rather than looking like a separate black-and-white asset. RGBA is especially useful for `icon-secondary`: use a deliberate alpha value when blending the secondary layer with the active surface produces a better theme fit, and judge separation using the final composited color rather than the raw RGBA value. Do not reuse `text-primary`, fixed black, or fixed white for `icon-secondary` merely because they are available in the template. Keep the two logo layers distinguishable, and depart from the surface-adjacent secondary color only when the user's brief clearly calls for a strongly contrasting two-color mark.
+- Configure component labels deliberately. `primary-action-foreground` controls text and icons on primary actions such as Add workspace. `active-item-foreground` controls selected session, file-tree, and editor-tab labels. `inactive-item-foreground` controls those labels when they are not selected. Choose each foreground against its corresponding background (`primary-action`, `active-item`, or the normal panel surface); do not assume one text color works for all three states.
 - Use the optional `monacoSyntax` object when the brief calls for a code-editor palette. Its supported keys are `comment`, `keyword`, `string`, `number`, `type`, `function`, `variable`, `parameter`, `macro`, `namespace`, and `property`. Include only intentional overrides: omitted keys inherit Agent K's readable base syntax palette.
 - Use the optional `fonts` object for a theme-specific type system. Set both `ui` (all interface text) and `code` (Monaco, terminal, and code blocks) to installed font-family lists; omitted `fonts` uses Agent K defaults.
 - Preserve contrast: `text-primary` must be clearly legible on `surface-panel`, and selection text must be legible on its selection background.
 - Set `base` to the closest contrast mode (`light`, `soft-light`, or `dark`).
 - Write the result to `%USERPROFILE%\\.pi\\agent\\themes\\<id>.json`. Create the directory if needed. Do not overwrite an existing theme without confirmation.
-- After creating a theme, offer to set it as the active theme.
+- After creating a theme, report the chosen `icon-primary` and `icon-secondary` colors with a short explanation of how they relate to the theme surfaces, then offer to set it as the active theme.
 
 ## List and set
 
