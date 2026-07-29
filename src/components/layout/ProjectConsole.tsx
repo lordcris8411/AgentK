@@ -76,7 +76,7 @@ function terminalTheme(theme: ResolvedTheme, activeTheme?: ThemeDefinition): ITh
     : lightTheme;
 }
 
-export function ProjectConsole({ root, onError }: { root?: string; onError(message: string): void }) {
+export function ProjectConsole({ root, onError, docked = false }: { root?: string; onError(message: string): void; docked?: boolean }) {
   const { resolvedTheme, activeTheme, settings } = useSettings();
   const currentTerminalTheme = terminalTheme(resolvedTheme, activeTheme);
   const currentTerminalFont = activeTheme?.fonts?.code ?? defaultTerminalFont;
@@ -206,13 +206,13 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
       dataSubscription.dispose();
       selectionSubscription.dispose();
       webglContextSubscription?.dispose();
-      terminal.dispose();
       terminalRef.current = undefined;
       fitAddonRef.current = undefined;
       if (resizeFrameRef.current !== undefined) {
         window.cancelAnimationFrame(resizeFrameRef.current);
         resizeFrameRef.current = undefined;
       }
+      terminal.dispose();
     };
   }, [copySelection, fitTerminal]);
 
@@ -222,9 +222,7 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
     terminal.options.theme = currentTerminalTheme;
     terminal.options.fontFamily = currentTerminalFont;
     terminal.write(currentTerminalAccentSequence, () => {
-      terminal.clearTextureAtlas();
-      terminal.refresh(0, terminal.rows - 1);
-      fitTerminal();
+      if (terminalRef.current === terminal) fitTerminal();
     });
   }, [activeTheme, currentTerminalAccentSequence, fitTerminal, resolvedTheme]);
 
@@ -380,8 +378,8 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
   }, [contextMenu]);
 
   return (
-    <section className={collapsed ? "project-console is-collapsed" : "project-console"} style={collapsed ? undefined : { flexBasis: height }}>
-      {!collapsed ? <div
+    <section className={collapsed && !docked ? "project-console is-collapsed" : "project-console"} style={collapsed || docked ? undefined : { flexBasis: height }}>
+      {!collapsed && !docked ? <div
         aria-label={en ? "Resize console" : "调整控制台高度"}
         className="project-console-resizer"
         onPointerDown={(event) => {
@@ -411,14 +409,14 @@ export function ProjectConsole({ root, onError }: { root?: string; onError(messa
         >
           <i aria-hidden="true" className="fa-regular fa-copy" />
         </button>
-        <button
+        {!docked ? <button
           aria-expanded={!collapsed}
           onClick={() => setCollapsed((value) => !value)}
           title={collapsed ? (en ? "Show terminal" : "显示终端") : (en ? "Hide terminal" : "隐藏终端")}
           type="button"
         >
           <i aria-hidden="true" className={`fa-solid fa-chevron-${collapsed ? "up" : "down"}`} />
-        </button>
+        </button> : null}
       </header>
       <div
         aria-label={en ? "Project terminal" : "项目终端"}

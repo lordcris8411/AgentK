@@ -10,6 +10,12 @@ export type EditorThemeConfig = {
   fonts?: { ui: string; code: string };
 };
 
+export type EditorDebugState = {
+  breakpoints: number[];
+  currentLine?: number;
+  paused: boolean;
+};
+
 export type EditorInitialState = {
   absolutePath: string;
   binary?: ArrayBuffer;
@@ -37,6 +43,7 @@ export type EditorInstance = {
   markSaved?(content: string): void;
   navigate?(line: number, column: number): void;
   setContent(content: string): void;
+  setDebugState?(state: EditorDebugState): void;
   setLayoutSuspended?(suspended: boolean): void;
   setTheme?(theme: EditorTheme): void;
   setThemeConfig?(config?: EditorThemeConfig): void;
@@ -54,6 +61,7 @@ export type EditorHost = {
   languageRequest(method: string, params: unknown): Promise<unknown>;
   openFile(path: string, line?: number, column?: number): void;
   command(name: string, value?: unknown): void;
+  toggleBreakpoint(line: number): void;
 };
 
 export type EditorFactory = (
@@ -93,7 +101,7 @@ type HostMessage = {
   channel: typeof EDITOR_CHANNEL;
   nonce: string;
   requestId?: string;
-  type: "action" | "focus" | "initialize" | "language-response" | "mark-saved" | "navigate" | "read-content" | "read-selection" | "set-content" | "set-layout-suspended" | "set-theme" | "set-theme-config" | "set-word-wrap";
+  type: "action" | "focus" | "initialize" | "language-response" | "mark-saved" | "navigate" | "read-content" | "read-selection" | "set-content" | "set-debug-state" | "set-layout-suspended" | "set-theme" | "set-theme-config" | "set-word-wrap";
   value?: unknown;
 };
 
@@ -162,6 +170,7 @@ export function defineEditor(factory: EditorFactory): void {
       if (nonce) post(nonce, "open-file", { column, line, path });
     },
     command(name, value) { if (nonce) post(nonce, "command", value === undefined ? name : { name, value }); },
+    toggleBreakpoint(line) { if (nonce) post(nonce, "debug-toggle-breakpoint", { line }); },
   };
 
   window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
@@ -238,6 +247,16 @@ export function defineEditor(factory: EditorFactory): void {
       case "set-content":
         if (typeof message.value === "string") instance.setContent(message.value);
         break;
+      case "set-debug-state": {
+        const value = message.value as { breakpoints?: unknown; currentLine?: unknown; paused?: unknown };
+        if (Array.isArray(value?.breakpoints) && typeof value.paused === "boolean")
+          instance.setDebugState?.({
+            breakpoints: value.breakpoints.filter((line): line is number => typeof line === "number"),
+            ...(typeof value.currentLine === "number" ? { currentLine: value.currentLine } : {}),
+            paused: value.paused,
+          });
+        break;
+      }
       case "set-layout-suspended":
         if (typeof message.value === "boolean") instance.setLayoutSuspended?.(message.value);
         break;

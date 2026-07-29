@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   app,
@@ -65,18 +65,29 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-const legacyDataPath =
-  process.platform === "linux"
+const e2eDataPath = process.env.AGENT_K_E2E === "1" && process.env.AGENT_K_E2E_USER_DATA && isAbsolute(process.env.AGENT_K_E2E_USER_DATA)
+  ? resolve(process.env.AGENT_K_E2E_USER_DATA) : undefined;
+const legacyDataPath = e2eDataPath ?? (process.platform === "linux"
     ? join(
         process.env.XDG_DATA_HOME ?? join(process.env.HOME ?? app.getPath("home"), ".local", "share"),
         "com.lordcris8411.agentk",
       )
-    : join(app.getPath("appData"), "com.lordcris8411.agentk");
+    : join(app.getPath("appData"), "com.lordcris8411.agentk"));
 mkdirSync(legacyDataPath, { recursive: true });
 app.setPath("userData", legacyDataPath);
 
 let mainWindow: BrowserWindow | undefined;
 let splashWindow: BrowserWindow | undefined;
+let debugWindow: BrowserWindow | undefined;
+let mainWindowReady = false;
+let startupFinished = false;
+type DebugToolKind = "disassembly" | "memory" | "registers";
+const debugToolWindows = new Map<DebugToolKind, BrowserWindow>();
+let debugToolWindowBoundsState: Partial<Record<DebugToolKind, Rectangle>> | undefined;
+let debugToolWindowBoundsTimer: ReturnType<typeof setTimeout> | undefined;
+let debugRoot: string | undefined;
+let debugWindowBackground = "#1f1f1f";
+const previousDebugStates = new Map<string, string | undefined>();
 let backend: DesktopBackend | undefined;
 let backendReady: Promise<void> | undefined;
 let quitting = false;
@@ -86,8 +97,9 @@ const pendingAssistantEvents = new Map<string, {
 }>();
 
 function sendRendererEvent(event: JsonObject): void {
-  if (quitting || !mainWindow || mainWindow.webContents.isDestroyed()) return;
-  mainWindow.webContents.send("agent-k:pi-event", event);
+  if (quitting) return;
+  for (const window of [mainWindow, debugWindow, ...debugToolWindows.values()])
+    if (window && !window.webContents.isDestroyed()) window.webContents.send("agent-k:pi-event", event);
 }
 
 function sendProjectConsoleEvent(event: JsonObject): void {
@@ -103,7 +115,41 @@ function flushAssistantEvent(key: string): void {
   sendRendererEvent(pending.event);
 }
 
+function bringDebugWindowToFront(): void {
+  const window = debugWindow;
+  if (!window || window.isDestroyed()) return;
+  if (window.isMinimized()) window.restore();
+  if (process.platform === "linux") window.setVisibleOnAllWorkspaces(true);
+  // Reasserting the flag creates a fresh compositor stacking request. Merely
+  // setting true again is ignored by some Wayland compositors.
+  window.setAlwaysOnTop(false);
+  window.setAlwaysOnTop(true, "floating");
+  window.show();
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) window.moveAbove(mainWindow.getMediaSourceId());
+  } catch { /* Some Wayland compositors do not expose a movable media source. */ }
+  window.moveTop();
+  window.focus();
+  if (process.platform === "linux") setTimeout(() => {
+    if (!window.isDestroyed()) window.setVisibleOnAllWorkspaces(false);
+  }, 250);
+}
+
 function emitBackendEvent(event: JsonObject): void {
+  if (event.type === "debug_session" && typeof event.languageServerId === "string") {
+    const languageServerId = event.languageServerId;
+    const snapshot = asObject(event.snapshot);
+    const state = typeof snapshot.state === "string" ? snapshot.state : undefined;
+    const stopReason = typeof snapshot.stopReason === "string" ? snapshot.stopReason : "";
+    const stopReasonKind = typeof snapshot.stopReasonKind === "string" ? snapshot.stopReasonKind : "";
+    const sessionKey = `${languageServerId}:${typeof event.sessionId === "string" ? event.sessionId : "default"}`;
+    const breakpointHit = state === "stopped" && previousDebugStates.get(sessionKey) !== "stopped" && (stopReasonKind === "breakpoint" || /breakpoint/i.test(stopReason));
+    previousDebugStates.set(sessionKey, state);
+    if (breakpointHit) {
+      if (debugWindow && !debugWindow.isDestroyed()) debugWindow.webContents.send("agent-k:debug-provider-hit", languageServerId);
+      bringDebugWindowToFront();
+    }
+  }
   const runtimeKey = typeof event.runtimeId === "string"
     ? event.runtimeId
     : "__default__";
@@ -182,9 +228,23 @@ function resolvedAppearanceTheme(
   return theme === "light" || theme === "soft-light" || theme === "dark" ? theme : "light";
 }
 
+function initialThemePayload(
+  fallback: "light" | "soft-light" | "dark",
+  theme?: ThemeDefinition,
+): string {
+  return JSON.stringify({
+    base: theme?.base ?? fallback,
+    colors: theme?.colors ?? {},
+    components: theme?.components ?? {},
+    fonts: theme?.fonts,
+  });
+}
+
 function createWindows(theme: ClientSettings["theme"], resolvedTheme?: ThemeDefinition): void {
   const preload = projectPath("electron", "preload.cjs");
   const appearance = resolvedAppearanceTheme(theme);
+  const initialTheme = initialThemePayload(appearance, resolvedTheme);
+  debugWindowBackground = resolvedTheme?.colors["surface-app"] ?? (appearance === "dark" ? "#1f1f1f" : appearance === "soft-light" ? "#dedad4" : "#f4f2ee");
   mainWindow = new BrowserWindow({
     title: "Agent K",
     width: 1600,
@@ -205,6 +265,10 @@ function createWindows(theme: ClientSettings["theme"], resolvedTheme?: ThemeDefi
       webSecurity: true,
     },
   });
+  mainWindow.once("ready-to-show", () => {
+    mainWindowReady = true;
+    revealMainWindow();
+  });
   splashWindow = new BrowserWindow({
     title: "Agent K",
     width: 388,
@@ -224,11 +288,15 @@ function createWindows(theme: ClientSettings["theme"], resolvedTheme?: ThemeDefi
 
   const devUrl = process.env.AGENT_K_DEV_URL;
   if (devUrl) {
-    void mainWindow.loadURL(devUrl);
-    void splashWindow.loadURL(`${devUrl}/splashscreen.html`);
+    const mainUrl = new URL(devUrl);
+    mainUrl.searchParams.set("initial-theme", initialTheme);
+    const splashUrl = new URL("/splashscreen.html", devUrl);
+    splashUrl.searchParams.set("initial-theme", initialTheme);
+    void mainWindow.loadURL(mainUrl.toString());
+    void splashWindow.loadURL(splashUrl.toString());
   } else {
-    void mainWindow.loadFile(projectPath("dist", "index.html"));
-    void splashWindow.loadFile(projectPath("dist", "splashscreen.html"));
+    void mainWindow.loadFile(projectPath("dist", "index.html"), { query: { "initial-theme": initialTheme } });
+    void splashWindow.loadFile(projectPath("dist", "splashscreen.html"), { query: { "initial-theme": initialTheme } });
   }
   splashWindow.once("ready-to-show", () => splashWindow?.show());
   splashWindow.webContents.on("did-finish-load", applySplashState);
@@ -255,6 +323,163 @@ function createWindows(theme: ClientSettings["theme"], resolvedTheme?: ThemeDefi
     if (!quitting) app.quit();
   });
   enablePreviewConsole(mainWindow);
+}
+
+function loadDebugWindow(root: string, contextFile?: string): void {
+  if (!debugWindow) return;
+  const initialTheme = initialThemePayload(splashTheme?.base ?? "light", splashTheme);
+  const devUrl = process.env.AGENT_K_DEV_URL;
+  if (devUrl) {
+    const url = new URL(devUrl);
+    url.searchParams.set("initial-theme", initialTheme);
+    url.searchParams.set("window", "debug");
+    url.searchParams.set("root", root);
+    if (contextFile) url.searchParams.set("context-file", contextFile);
+    void debugWindow.loadURL(url.toString());
+  } else {
+    void debugWindow.loadFile(projectPath("dist", "index.html"), { query: { "initial-theme": initialTheme, root, ...(contextFile ? { "context-file": contextFile } : {}), window: "debug" } });
+  }
+}
+
+function debugToolStatePath(): string {
+  return join(app.getPath("userData"), "debug-tool-windows.json");
+}
+
+function debugToolBounds(kind: DebugToolKind): Rectangle | undefined {
+  if (debugToolWindowBoundsState) return debugToolWindowBoundsState[kind];
+  try {
+    const source = JSON.parse(readFileSync(debugToolStatePath(), "utf8")) as Record<string, unknown>;
+    debugToolWindowBoundsState = {};
+    for (const candidate of ["memory", "registers", "disassembly"] as DebugToolKind[]) {
+      const value = asObject(source[candidate]);
+      const width = Number(value.width);
+      const height = Number(value.height);
+      const x = Number(value.x);
+      const y = Number(value.y);
+      if ([width, height, x, y].every(Number.isFinite) && width >= 420 && height >= 280)
+        debugToolWindowBoundsState[candidate] = { width, height, x, y };
+    }
+  } catch { debugToolWindowBoundsState = {}; }
+  return debugToolWindowBoundsState[kind];
+}
+
+function saveDebugToolBounds(kind: DebugToolKind, window: BrowserWindow): void {
+  if (window.isDestroyed() || window.isMinimized() || window.isMaximized()) return;
+  debugToolWindowBoundsState ??= {};
+  debugToolWindowBoundsState[kind] = window.getBounds();
+  if (debugToolWindowBoundsTimer) clearTimeout(debugToolWindowBoundsTimer);
+  debugToolWindowBoundsTimer = setTimeout(() => {
+    debugToolWindowBoundsTimer = undefined;
+    void writeFile(debugToolStatePath(), JSON.stringify(debugToolWindowBoundsState), "utf8").catch(() => undefined);
+  }, 150);
+}
+
+function openDebugToolWindow(kind: DebugToolKind, target: string | undefined, languageServerId: string, sessionId?: string): void {
+  const owner = debugWindow;
+  if (!owner || owner.isDestroyed() || !debugRoot) throw new Error("The Debug window is unavailable");
+  const existing = debugToolWindows.get(kind);
+  if (existing && !existing.isDestroyed()) {
+    existing.webContents.send("agent-k:debug-tool-provider", languageServerId);
+    existing.webContents.send("agent-k:debug-tool-session", sessionId);
+    if (target) existing.webContents.send("agent-k:debug-tool-target", target);
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.moveTop();
+    existing.focus();
+    return;
+  }
+  const labels: Record<DebugToolKind, string> = { disassembly: "Disassembly", memory: "Memory", registers: "Registers" };
+  const bounds = debugToolBounds(kind);
+  const window = new BrowserWindow({
+    ...(bounds ?? { width: 820, height: 560 }),
+    parent: owner,
+    title: `Agent K — ${labels[kind]}`,
+    minWidth: 420,
+    minHeight: 280,
+    show: false,
+    backgroundColor: debugWindowBackground,
+    icon: projectPath("assets", "icons", "icon.png"),
+    webPreferences: {
+      contextIsolation: true,
+      devTools: !app.isPackaged,
+      nodeIntegration: false,
+      preload: projectPath("electron", "preload.cjs"),
+      sandbox: true,
+      spellcheck: false,
+      webSecurity: true,
+    },
+  });
+  debugToolWindows.set(kind, window);
+  window.setMenuBarVisibility(false);
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event, url) => { if (url !== window.webContents.getURL()) event.preventDefault(); });
+  window.once("ready-to-show", () => { window.show(); window.focus(); });
+  window.on("resize", () => saveDebugToolBounds(kind, window));
+  window.on("move", () => saveDebugToolBounds(kind, window));
+  window.on("closed", () => debugToolWindows.delete(kind));
+  const initialTheme = initialThemePayload(splashTheme?.base ?? "light", splashTheme);
+  const query = { "initial-theme": initialTheme, "language-server": languageServerId, root: debugRoot, ...(sessionId ? { "session-id": sessionId } : {}), ...(target ? { target } : {}), tool: kind, window: "debug-tool" };
+  const devUrl = process.env.AGENT_K_DEV_URL;
+  if (devUrl) {
+    const url = new URL(devUrl);
+    for (const [name, value] of Object.entries(query)) url.searchParams.set(name, value);
+    void window.loadURL(url.toString());
+  } else void window.loadFile(projectPath("dist", "index.html"), { query });
+}
+
+function openDebugWindow(root: string, contextFile?: string): void {
+  const owner = mainWindow;
+  if (!owner || owner.isDestroyed()) throw new Error("The main window is unavailable");
+  debugRoot = root;
+  if (debugWindow && !debugWindow.isDestroyed()) {
+    debugWindow.webContents.send("agent-k:debug-root", root);
+    debugWindow.webContents.send("agent-k:debug-context", { root, ...(contextFile ? { contextFile } : {}) });
+    if (debugWindow.isMinimized()) debugWindow.restore();
+    debugWindow.setAlwaysOnTop(true);
+    debugWindow.show();
+    debugWindow.moveTop();
+    debugWindow.focus();
+    return;
+  }
+  debugWindow = new BrowserWindow({
+    alwaysOnTop: true,
+    parent: owner,
+    title: "Agent K — Debug",
+    width: 1040,
+    height: 720,
+    minWidth: 680,
+    minHeight: 420,
+    show: false,
+    backgroundColor: debugWindowBackground,
+    icon: projectPath("assets", "icons", "icon.png"),
+    webPreferences: {
+      contextIsolation: true,
+      devTools: !app.isPackaged,
+      nodeIntegration: false,
+      preload: projectPath("electron", "preload.cjs"),
+      sandbox: true,
+      spellcheck: false,
+      webSecurity: true,
+    },
+  });
+  debugWindow.setMenuBarVisibility(false);
+  debugWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  debugWindow.webContents.on("will-navigate", (event, url) => {
+    const current = debugWindow?.webContents.getURL();
+    if (url !== current) event.preventDefault();
+  });
+  debugWindow.once("ready-to-show", () => {
+    debugWindow?.setAlwaysOnTop(true);
+    debugWindow?.show();
+    debugWindow?.moveTop();
+    debugWindow?.focus();
+  });
+  debugWindow.on("closed", () => {
+    for (const window of debugToolWindows.values()) if (!window.isDestroyed()) window.close();
+    debugToolWindows.clear();
+    debugWindow = undefined;
+  });
+  loadDebugWindow(root, contextFile);
 }
 
 function pushPreviewConsole(entry: PreviewConsoleEntry): void {
@@ -389,11 +614,17 @@ function updateSplash(message: string, current: number, total: number, theme: st
   applySplashState();
 }
 
-function finishSplash(): void {
-  mainWindow?.show();
-  mainWindow?.focus();
+function revealMainWindow(): void {
+  if (!startupFinished || !mainWindowReady || !mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.show();
+  mainWindow.focus();
   splashWindow?.close();
   splashWindow = undefined;
+}
+
+function finishSplash(): void {
+  startupFinished = true;
+  revealMainWindow();
 }
 
 function registerIpc(): void {
@@ -458,6 +689,50 @@ function registerIpc(): void {
     if (!window || typeof action !== "string") return;
     const data = asObject(payload);
     switch (action) {
+      case "open-debug": {
+        if (event.sender !== mainWindow?.webContents) throw new Error("Only the main window can open Debug");
+        const root = typeof data.root === "string" && isAbsolute(data.root) ? resolve(data.root) : undefined;
+        if (!root) throw new Error("An absolute workspace root is required");
+        const candidate = typeof data.contextFile === "string" && isAbsolute(data.contextFile) ? resolve(data.contextFile) : undefined;
+        const nested = candidate ? relative(root, candidate) : "";
+        const contextFile = candidate && nested !== ".." && !isAbsolute(nested) && !nested.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ? candidate : undefined;
+        openDebugWindow(root, contextFile);
+        break;
+      }
+      case "set-debug-root": {
+        if (event.sender !== mainWindow?.webContents) return;
+        const root = typeof data.root === "string" && isAbsolute(data.root) ? resolve(data.root) : undefined;
+        debugRoot = root;
+        if (root && debugWindow && !debugWindow.webContents.isDestroyed()) debugWindow.webContents.send("agent-k:debug-root", root);
+        if (root) for (const tool of debugToolWindows.values()) if (!tool.webContents.isDestroyed()) tool.webContents.send("agent-k:debug-root", root);
+        break;
+      }
+      case "open-debug-tool": {
+        if (event.sender !== debugWindow?.webContents) throw new Error("Only the Debug window can open Debug tools");
+        const kind = data.kind;
+        if (kind !== "memory" && kind !== "registers" && kind !== "disassembly") throw new Error("Unknown Debug tool window");
+        const target = typeof data.target === "string" && data.target.length <= 4_096 ? data.target : undefined;
+        const languageServerId = typeof data.languageServerId === "string" && /^[a-z0-9][a-z0-9.-]*$/i.test(data.languageServerId) ? data.languageServerId : undefined;
+        if (!languageServerId) throw new Error("A valid Debug provider is required");
+        const sessionId = typeof data.sessionId === "string" && data.sessionId.length <= 128 ? data.sessionId : undefined;
+        openDebugToolWindow(kind, target, languageServerId, sessionId);
+        break;
+      }
+      case "open-editor-location": {
+        const debugSender = event.sender === debugWindow?.webContents || [...debugToolWindows.values()].some((tool) => event.sender === tool.webContents);
+        if (!debugSender || !mainWindow || mainWindow.webContents.isDestroyed()) return;
+        const path = typeof data.path === "string" && isAbsolute(data.path) ? resolve(data.path) : undefined;
+        if (!path) throw new Error("An absolute source path is required");
+        const workspacePath = debugRoot ? relative(debugRoot, path) : "..";
+        if (isAbsolute(workspacePath) || workspacePath === ".." || workspacePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`))
+          throw new Error("The source location is outside the Debug workspace");
+        mainWindow.webContents.send("agent-k:open-editor-location", { path, line: number(data.line), column: number(data.column ?? 1) });
+        if (data.focus !== false) {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+        break;
+      }
       case "set-size":
         window.setContentSize(number(data.width), number(data.height));
         break;

@@ -416,6 +416,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   });
   const [ready, setReady] = useState(false);
   const [themes, setThemes] = useState<ThemeDefinition[]>([]);
+  const [themesReady, setThemesReady] = useState(false);
   const settingsRef = useRef(settings);
   const settingsRevision = useRef(0);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
@@ -433,6 +434,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const refreshThemes = useCallback(async () => {
     const loaded = await desktop.listThemes();
     setThemes(loaded);
+    setThemesReady(true);
     return loaded;
   }, []);
   useEffect(() => {
@@ -452,8 +454,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }).catch(() => undefined);
   }), [refreshThemes]);
   useEffect(() => {
+    const builtIn = settings.theme === "system" || settings.theme === "light" || settings.theme === "soft-light" || settings.theme === "dark";
+    // Electron embeds the fully resolved theme in index.html. Keep that first
+    // frame intact until an asynchronously loaded custom theme is available.
+    if (!themesReady && !builtIn) return;
     applyTheme(settings.locale, activeTheme, resolvedTheme);
-  }, [activeTheme, resolvedTheme, settings.locale]);
+  }, [activeTheme, resolvedTheme, settings.locale, settings.theme, themesReady]);
   useEffect(() => {
     const openExternalLink = (event: MouseEvent) => {
       if (event.defaultPrevented || event.button !== 0) return;

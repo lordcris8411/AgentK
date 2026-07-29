@@ -23,13 +23,14 @@ test("discovers a trusted native language-server manifest", async () => {
     projectMarkers: ["example.config"],
     commands: [{ id: "active-example-projects", title: "Active Example projects", kind: "project-manager" }],
     worker: "worker.js",
-    debugServer: { protocol: "dap", adapters: [{ command: "example-debug", platforms: ["win32"] }] },
+    debugServer: { protocol: "dap", adapters: [{ command: "example-debug", platforms: ["win32"] }], providers: [{ id: "example-debug", label: "Example", languages: ["example"], fileExtensions: [".example"], projectMarkers: ["example.config"], modes: ["launch", "attach"], priority: 50 }] },
   });
   try {
     const plugins = await discoverLanguageServerPlugins(source.directory);
     assert.equal(plugins.length, 1);
     assert.equal(plugins[0]?.id, "example-lsp");
     assert.deepEqual(plugins[0]?.debugServer?.adapters, [{ command: "example-debug", platforms: ["win32"] }]);
+    assert.deepEqual(plugins[0]?.debugServer?.providers[0], { id: "example-debug", label: "Example", languages: ["example"], fileExtensions: [".example"], projectMarkers: ["example.config"], modes: ["launch", "attach"], priority: 50 });
     assert.deepEqual(plugins[0]?.commands, [{ id: "active-example-projects", title: "Active Example projects", kind: "project-manager" }]);
   } finally { await source.remove(); }
 });

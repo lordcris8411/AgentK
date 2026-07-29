@@ -1,10 +1,27 @@
-type ToolchainArchive = {
+export type ToolchainArchive = {
   asset: string;
   owner: string;
   repository: string;
   sha256: string;
   tag: string;
 };
+
+/** Portable LLDB DAP distribution used only by the trusted debug worker. */
+export function managedDebuggerArchive(platform: NodeJS.Platform, architecture: string): ToolchainArchive | undefined {
+  const common = { owner: "vadimcn", repository: "codelldb", tag: "v1.12.2" };
+  if (platform === "linux" && architecture === "x64")
+    return { ...common, asset: "codelldb-linux-x64.vsix", sha256: "b85b45a8570051d535b0927c6c9da11c39f3a056c73559064647faf7f37f637d" };
+  if (platform === "darwin" && architecture === "x64")
+    return { ...common, asset: "codelldb-darwin-x64.vsix", sha256: "8270a342929bdc0deb6d7d3931c08d5ba6018265f840dd0508c4247fb8d32e8d" };
+  if (platform === "darwin" && architecture === "arm64")
+    return { ...common, asset: "codelldb-darwin-arm64.vsix", sha256: "c836b81c6f2da467b5920a376a7bfc849dc4b4d81b19779dedf1c685cb4aa1a0" };
+  return undefined;
+}
+
+export function managedDebuggerMarker(platform: NodeJS.Platform, architecture: string): string | undefined {
+  const archive = managedDebuggerArchive(platform, architecture);
+  return archive ? `codelldb:${archive.asset}:${archive.sha256}\n` : undefined;
+}
 
 export const DEFAULT_VSWHERE_PATH = "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe";
 
@@ -49,7 +66,7 @@ export function parseWindowsEnvironment(output: string): Record<string, string> 
 
 export function toolchainArchiveFormat(path: string): "tar" | "zip" {
   const lower = path.toLocaleLowerCase("en-US");
-  if (lower.endsWith(".zip")) return "zip";
+  if (lower.endsWith(".zip") || lower.endsWith(".vsix")) return "zip";
   if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz") || lower.endsWith(".tar.xz")) return "tar";
   throw new Error(`Unsupported toolchain archive: ${path}`);
 }

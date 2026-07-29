@@ -19,6 +19,15 @@ export type LanguageServerPluginManifest = {
   worker: URL;
   debugServer?: {
     adapters: Array<{ command: string; platforms: NodeJS.Platform[] }>;
+    providers: Array<{
+      fileExtensions: string[];
+      id: string;
+      label: string;
+      languages: string[];
+      modes: Array<"attach" | "dump" | "launch">;
+      priority: number;
+      projectMarkers: string[];
+    }>;
     protocol: "dap";
   };
 };

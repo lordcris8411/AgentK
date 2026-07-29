@@ -44,6 +44,41 @@ contextBridge.exposeInMainWorld(
         ipcRenderer.on("agent-k:window-resized", wrapped);
         return () => ipcRenderer.removeListener("agent-k:window-resized", wrapped);
       },
+      onDebugRoot(listener) {
+        const wrapped = (_event, root) => listener(root);
+        ipcRenderer.on("agent-k:debug-root", wrapped);
+        return () => ipcRenderer.removeListener("agent-k:debug-root", wrapped);
+      },
+      onDebugContext(listener) {
+        const wrapped = (_event, context) => listener(context);
+        ipcRenderer.on("agent-k:debug-context", wrapped);
+        return () => ipcRenderer.removeListener("agent-k:debug-context", wrapped);
+      },
+      onDebugProviderHit(listener) {
+        const wrapped = (_event, languageServerId) => listener(languageServerId);
+        ipcRenderer.on("agent-k:debug-provider-hit", wrapped);
+        return () => ipcRenderer.removeListener("agent-k:debug-provider-hit", wrapped);
+      },
+      onDebugToolTarget(listener) {
+        const wrapped = (_event, target) => listener(target);
+        ipcRenderer.on("agent-k:debug-tool-target", wrapped);
+        return () => ipcRenderer.removeListener("agent-k:debug-tool-target", wrapped);
+      },
+      onDebugToolProvider(listener) {
+        const wrapped = (_event, languageServerId) => listener(languageServerId);
+        ipcRenderer.on("agent-k:debug-tool-provider", wrapped);
+        return () => ipcRenderer.removeListener("agent-k:debug-tool-provider", wrapped);
+      },
+      onDebugToolSession(listener) {
+        const wrapped = (_event, sessionId) => listener(sessionId);
+        ipcRenderer.on("agent-k:debug-tool-session", wrapped);
+        return () => ipcRenderer.removeListener("agent-k:debug-tool-session", wrapped);
+      },
+      onOpenEditorLocation(listener) {
+        const wrapped = (_event, location) => listener(location);
+        ipcRenderer.on("agent-k:open-editor-location", wrapped);
+        return () => ipcRenderer.removeListener("agent-k:open-editor-location", wrapped);
+      },
     }),
   }),
 );

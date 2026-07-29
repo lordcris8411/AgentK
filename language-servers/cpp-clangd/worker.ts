@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
@@ -14,14 +14,24 @@ import {
   findProjectCompilationDatabase,
   isCMakeConfigurationPath,
   prepareClangdCompilationDatabase,
+  privateClangdIndexDirectory,
   recordCompilationDatabase,
 } from "./cmake-cache.js";
-import { DEFAULT_VSWHERE_PATH, managedToolchainArchives, managedToolchainMarker, parseWindowsEnvironment, toolchainArchiveFormat } from "./toolchain.js";
+import { DEFAULT_VSWHERE_PATH, managedDebuggerArchive, managedDebuggerMarker, managedToolchainArchives, managedToolchainMarker, parseWindowsEnvironment, toolchainArchiveFormat } from "./toolchain.js";
 import { selectWorkspaceSymbols, symbolLocation, type SkillLocation as LspLocation, type SkillRange as Range, type SkillSymbol as LspSymbol } from "./skill-symbols.js";
 import { languageSkillStatusState, languageSkillUsable } from "./skill-status.js";
+import { cmakeDebugTargets, cmakeProjectRoots, prioritizeCMakeProjectRoots, type CMakeDebugTarget } from "./cmake-debug.js";
+import {
+  systemDebugAdapterLaunch,
+  type DebugAdapterLaunch,
+  type DebugStartConfiguration,
+} from "./debug-session.js";
+import { DebugSessionManager } from "./debug-session-manager.js";
 
 export type CppProjectStatus = "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped";
 export type CppProject = { root: string; name: string; status: CppProjectStatus; error?: string; indexProgress?: string; cmake: boolean; compileCommands: boolean };
+type CMakeBuildConfiguration = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
+const CMAKE_BUILD_CONFIGURATIONS = new Set<CMakeBuildConfiguration>(["Debug", "Release", "RelWithDebInfo", "MinSizeRel"]);
 export type CppLspTrace = { elapsedMs?: number; error?: string; file?: string; method: string; phase: "rejected" | "request" | "response" | "sent" | "timeout" | "write-error"; timestamp: number; version?: number };
 type PendingRequest = { file?: string; method: string; reject(reason: Error): void; resolve(value: unknown): void; startedAt: number; timeout: ReturnType<typeof setTimeout>; version?: number };
 type Entry = CppProject & { child?: ChildProcessWithoutNullStreams; diagnostics: Map<string, unknown[]>; lastIndexProgressAt: number; nextId: number; openDocuments: Set<string>; pending: Map<number, PendingRequest>; stderrTail: string; writeQueue: Promise<void> };
@@ -97,11 +107,22 @@ export class CppService {
   private readonly projects = new Map<string, Entry>();
   private provisioning?: Promise<string>;
   private provisionAbort?: AbortController;
+  private debugProvisioning?: Promise<DebugAdapterLaunch>;
+  private debugProvisionAbort?: AbortController;
+  private managedDebugAdapter?: DebugAdapterLaunch;
   private activeCommand?: ReturnType<typeof spawn>;
   private cancellationRequested = false;
   private readonly traces: CppLspTrace[] = [];
   private readonly reconfigureTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  constructor(private readonly cachePath: string, private readonly emit: (event: Record<string, unknown>) => void) {}
+  private readonly debug: DebugSessionManager;
+  private readonly debugTargetDiscovery = new Map<string, Promise<{ bin: string; build: string; environment: NodeJS.ProcessEnv; targets: CMakeDebugTarget[] }>>();
+  private readonly cmakeQueues = new Map<string, Promise<void>>();
+  constructor(private readonly cachePath: string, private readonly emit: (event: Record<string, unknown>) => void) {
+    this.debug = new DebugSessionManager(
+      (snapshot) => this.emit({ type: "debug_session", ...("sessionId" in snapshot ? { sessionId: snapshot.sessionId } : {}), snapshot }),
+      () => this.managedDebugAdapter ?? systemDebugAdapterLaunch(),
+    );
+  }
   private publish(entry: Entry) { this.emit({ type: "language_server_project", project: this.public(entry) }); }
   private public(entry: Entry): CppProject { const { root, name, status, error, indexProgress, cmake, compileCommands } = entry; return { root, name, status, ...(error ? { error } : {}), ...(indexProgress ? { indexProgress } : {}), cmake, compileCommands }; }
   list(): CppProject[] { return [...this.projects.values()].map((entry) => this.public(entry)); }
@@ -135,10 +156,113 @@ export class CppService {
       return this.public(entry);
     } catch (cause) { await rm(`${join(this.cachePath, "cpp-toolchain", process.platform, process.arch)}.partial`, { recursive: true, force: true }); if (this.cancellationRequested) { this.projects.delete(root); this.emit({ type: "language_server_project_removed", root }); return { ...this.public(entry), status: "stopped" }; } entry.status = "failed"; entry.error = cause instanceof Error ? cause.message : String(cause); this.publish(entry); this.emit({ type: "language_server_progress", stage: "failed", error: entry.error, detail: entry.error }); return this.public(entry); }
   }
-  async unload(root: string) { const entry = this.projects.get(await realpath(root)); if (!entry) return; const timer = this.reconfigureTimers.get(entry.root); if (timer) clearTimeout(timer); this.reconfigureTimers.delete(entry.root); this.stop(entry); this.projects.delete(entry.root); this.emit({ type: "language_server_project_removed", root: entry.root }); }
+  async unload(root: string) { const entry = this.projects.get(await realpath(root)); if (!entry) return; const timer = this.reconfigureTimers.get(entry.root); if (timer) clearTimeout(timer); this.reconfigureTimers.delete(entry.root); this.clearDebugTargetDiscovery(entry.root); this.stop(entry); this.projects.delete(entry.root); this.emit({ type: "language_server_project_removed", root: entry.root }); }
   async restart(root: string) { await this.unload(root); return this.load(root); }
-  shutdown() { for (const timer of this.reconfigureTimers.values()) clearTimeout(timer); this.reconfigureTimers.clear(); for (const entry of this.projects.values()) this.stop(entry); this.projects.clear(); }
-  cancel(): void { this.cancellationRequested = true; this.provisionAbort?.abort(); this.activeCommand?.kill(); }
+  shutdown() { this.debugProvisionAbort?.abort(); this.debug.shutdown(); this.debugTargetDiscovery.clear(); this.cmakeQueues.clear(); for (const timer of this.reconfigureTimers.values()) clearTimeout(timer); this.reconfigureTimers.clear(); for (const entry of this.projects.values()) this.stop(entry); this.projects.clear(); }
+  cancel(): void { this.cancellationRequested = true; this.provisionAbort?.abort(); this.debugProvisionAbort?.abort(); this.activeCommand?.kill(); }
+  debugStatus(sessionId?: string) { return this.debug.status(sessionId); }
+  debugSessions() { return this.debug.list(); }
+  debugSelectSession(sessionId: string) { return this.debug.select(sessionId); }
+  debugCloseSession(sessionId: string) { return this.debug.close(sessionId); }
+  debugDetachSession(sessionId: string) { return this.debug.detach(sessionId); }
+  async debugTargets(rootInput: string, refresh = false, configurationInput: unknown = "Debug"): Promise<CMakeDebugTarget[]> {
+    const workspace = await realpath(rootInput);
+    const configuration = this.cmakeBuildConfiguration(configurationInput);
+    const roots = await this.debugCmakeRoots(workspace);
+    if (refresh) for (const root of roots) this.debugTargetDiscovery.delete(this.debugDiscoveryKey(root, configuration));
+    const groups = await Promise.all(roots.map(async (root) => ({ root, targets: (await this.prepareDebugTargets(root, configuration)).targets })));
+    return groups.flatMap(({ root, targets }) => targets.map((target) => this.debugTarget(workspace, root, target, roots.length > 1)));
+  }
+  async debugConfigurations(rootInput: string, contextFileInput: unknown, refresh = false, configurationInput: unknown = "Debug"): Promise<CMakeDebugTarget[]> {
+    const workspace = await realpath(rootInput);
+    const configuration = this.cmakeBuildConfiguration(configurationInput);
+    const contextFile = typeof contextFileInput === "string" && isAbsolute(contextFileInput) ? resolve(contextFileInput) : undefined;
+    const roots = await this.debugCmakeRoots(workspace);
+    if (refresh) for (const root of roots) this.debugTargetDiscovery.delete(this.debugDiscoveryKey(root, configuration));
+    const ordered = prioritizeCMakeProjectRoots(roots, contextFile);
+    const groups = await Promise.all(ordered.map(async (root) => ({ root, targets: (await this.prepareDebugTargets(root, configuration)).targets })));
+    return groups.flatMap(({ root, targets }) => targets.map((target) => this.debugTarget(workspace, root, target, roots.length > 1)));
+  }
+  async debugStart(configuration: DebugStartConfiguration & { buildConfiguration?: unknown; sessionName?: string; targetId?: string }) {
+    this.managedDebugAdapter = await this.managedDebugger();
+    if (!configuration.targetId) return this.debug.start(configuration);
+    const workspace = await realpath(configuration.root);
+    const buildConfiguration = this.cmakeBuildConfiguration(configuration.buildConfiguration);
+    const roots = await this.debugCmakeRoots(workspace);
+    let selected: { prepared: Awaited<ReturnType<CppService["prepareDebugTargets"]>>; root: string; target: CMakeDebugTarget } | undefined;
+    for (const root of roots) {
+      const prepared = await this.prepareDebugTargets(root, buildConfiguration);
+      const target = prepared.targets.find((item) => this.debugTarget(workspace, root, item, roots.length > 1).id === configuration.targetId);
+      if (target) { selected = { prepared, root, target }; break; }
+    }
+    if (!selected) throw new Error("The selected CMake executable target is unavailable");
+    const { prepared, root, target } = selected;
+    const cmake = join(prepared.bin, process.platform === "win32" ? "cmake.exe" : "cmake");
+    const refreshed = await this.withCMake(root, async () => {
+      await this.run(cmake, ["--build", prepared.build, "--config", buildConfiguration, "--target", target.name], root, prepared.bin, prepared.environment);
+      return cmakeDebugTargets(prepared.build);
+    });
+    const built = refreshed.find((item) => item.id === target.id);
+    if (!built?.built) throw new Error(`CMake target '${target.name}' did not produce its declared executable`);
+    return this.debug.start({ ...configuration, program: built.program }, [prepared.build]);
+  }
+  debugStop(sessionId?: string) { return this.debug.stop(sessionId); }
+  debugCommand(command: "continue" | "pause" | "next" | "stepIn" | "stepOut", sessionId?: string) {
+    if (!["continue", "pause", "next", "stepIn", "stepOut"].includes(command)) throw new Error(`Unsupported debug command: ${command}`);
+    return this.debug.command(command, sessionId);
+  }
+  debugSetBreakpoints(file: string, lines: number[]) { return this.debug.setBreakpoints(file, lines); }
+  debugClearBreakpoints() { return this.debug.clearBreakpoints(); }
+  debugSetFunctionBreakpoints(inputs: Array<{ condition?: string; hitCondition?: string; name: string }>) { return this.debug.setFunctionBreakpoints(inputs); }
+  debugSetExceptionFilters(filters: string[]) { return this.debug.setExceptionFilters(filters); }
+  debugUpdateBreakpoint(file: string, line: number, changes: Record<string, unknown>) {
+    return this.debug.updateBreakpoint(file, line, {
+      ...(typeof changes.condition === "string" ? { condition: changes.condition } : {}),
+      ...(typeof changes.enabled === "boolean" ? { enabled: changes.enabled } : {}),
+      ...(typeof changes.hitCondition === "string" ? { hitCondition: changes.hitCondition } : {}),
+      ...(typeof changes.logMessage === "string" ? { logMessage: changes.logMessage } : {}),
+    });
+  }
+  debugSetWatches(expressions: string[]) { return this.debug.setWatches(expressions); }
+  debugSelectFrame(threadId: number, frameId: number, sessionId?: string) { return this.debug.selectFrame(threadId, frameId, sessionId); }
+  debugVariables(variablesReference: number, sessionId?: string) { return this.debug.expandVariables(variablesReference, sessionId); }
+  debugEvaluate(expression: string, context: "repl" | "watch", sessionId?: string) { return this.debug.evaluate(expression, context, sessionId); }
+  debugSetVariable(variablesReference: number, name: string, value: string, sessionId?: string) { return this.debug.setVariable(variablesReference, name, value, sessionId); }
+  debugReadMemory(memoryReference: string, offset: number, count: number, sessionId?: string) { return this.debug.readMemory(memoryReference, offset, count, sessionId); }
+  debugWriteMemory(memoryReference: string, offset: number, bytes: number[], sessionId?: string) { return this.debug.writeMemory(memoryReference, offset, bytes, sessionId); }
+  debugDisassemble(memoryReference: string, instructionOffset: number, instructionCount: number, offset: number, sessionId?: string) { return this.debug.disassemble(memoryReference, instructionOffset, instructionCount, offset, sessionId); }
+  debugSetInstructionBreakpoints(addresses: string[], sessionId?: string) { return this.debug.setInstructionBreakpoints(addresses, sessionId); }
+  debugClearOutput(sessionId?: string) { return this.debug.clearOutput(sessionId); }
+  async debugProcesses(): Promise<Array<{ command: string; name: string; pid: number }>> {
+    const command = process.platform === "win32" ? "powershell.exe" : "ps";
+    const args = process.platform === "win32"
+      ? ["-NoProfile", "-NonInteractive", "-Command", "Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine | ConvertTo-Csv -NoTypeInformation"]
+      : ["-axo", "pid=,comm=,args="];
+    const output = await new Promise<string>((resolveOutput, reject) => {
+      const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+      child.once("error", reject);
+      child.once("close", (code) => code === 0 ? resolveOutput(stdout) : reject(new Error(stderr.trim() || `Process discovery exited with code ${code}`)));
+    });
+    if (process.platform === "win32") {
+      const csv = /(?:^|,)(?:"((?:[^"]|"")*)"|([^,]*))/g;
+      return output.split(/\r?\n/).slice(1).flatMap((line) => {
+        const fields: string[] = [];
+        for (const match of line.matchAll(csv)) fields.push((match[1] ?? match[2] ?? "").replaceAll('""', '"'));
+        const pid = Number(fields[0]);
+        return Number.isInteger(pid) && pid > 0 ? [{ pid, name: fields[1] || `Process ${pid}`, command: fields[2] || fields[1] || "" }] : [];
+      }).sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return output.split(/\r?\n/).flatMap((line) => {
+      const match = /^\s*(\d+)\s+(\S+)\s*(.*)$/.exec(line);
+      if (!match) return [];
+      const pid = Number(match[1]);
+      return pid > 0 && pid !== process.pid ? [{ pid, name: match[2]!, command: match[3] || match[2]! }] : [];
+    });
+  }
   /** Declarative project action consumed by the generic terminal bridge. */
   async terminalCommand(rootInput: string, relativePath: string): Promise<string> {
     const root = await realpath(rootInput);
@@ -411,7 +535,10 @@ export class CppService {
       if (
         entry.cmake &&
         relevant.some((change) => isCMakeConfigurationPath(entry.root, resolve(change.path)))
-      ) this.scheduleReconfigure(entry.root);
+      ) {
+        this.clearDebugTargetDiscovery(entry.root);
+        this.scheduleReconfigure(entry.root);
+      }
     }
   }
   private scheduleReconfigure(root: string): void {
@@ -470,6 +597,111 @@ export class CppService {
     if (platform && marker === managedToolchainMarker(platform) && candidates.every((name) => existsSync(join(bin, `${name}${executable}`)))) { this.emit({ type: "language_server_progress", stage: "preparing", detail: "Reusing cached C++ language tools" }); return bin; }
     this.provisionAbort ??= new AbortController(); this.provisioning ??= this.provision(bin, this.provisionAbort.signal).finally(() => { this.provisioning = undefined; this.provisionAbort = undefined; });
     return this.provisioning;
+  }
+  private async managedDebugger(): Promise<DebugAdapterLaunch> {
+    const e2eAdapter = process.env.AGENT_K_E2E === "1" ? process.env.AGENT_K_E2E_DEBUG_ADAPTER : undefined;
+    if (e2eAdapter) {
+      const adapter = await realpath(e2eAdapter);
+      return { adapter: process.platform === "win32" ? "windbg" : "lldb", args: [adapter], command: process.execPath };
+    }
+    const archive = managedDebuggerArchive(process.platform, process.arch);
+    const markerValue = managedDebuggerMarker(process.platform, process.arch);
+    if (!archive || !markerValue) return systemDebugAdapterLaunch();
+    const root = join(this.cachePath, "cpp-debugger", process.platform, process.arch);
+    const command = join(root, "extension", "adapter", "codelldb");
+    const marker = await readFile(join(root, ".agent-k-debug-tools"), "utf8").catch(() => "");
+    if (marker === markerValue && existsSync(command)) return { adapter: "lldb", args: [], command };
+    this.debugProvisionAbort ??= new AbortController();
+    this.debugProvisioning ??= this.provisionDebugger(root, archive, markerValue, this.debugProvisionAbort.signal)
+      .finally(() => { this.debugProvisioning = undefined; this.debugProvisionAbort = undefined; });
+    return this.debugProvisioning;
+  }
+  private async provisionDebugger(root: string, archive: ReturnType<typeof managedDebuggerArchive> & {}, marker: string, signal: AbortSignal): Promise<DebugAdapterLaunch> {
+    const staging = `${root}.partial`;
+    const archiveCache = join(this.cachePath, "cpp-debugger-downloads", process.platform, process.arch);
+    await rm(staging, { recursive: true, force: true });
+    await Promise.all([mkdir(staging, { recursive: true }), mkdir(archiveCache, { recursive: true })]);
+    this.emit({ type: "language_server_progress", stage: "preparing", tool: "LLDB debugger", detail: "Preparing managed LLDB debugger" });
+    await this.downloadRelease(archive.owner, archive.repository, archive.tag, archive.asset, staging, archiveCache, "LLDB debugger", archive.sha256, signal);
+    const executable = await this.findExecutable(staging, "codelldb");
+    if (!executable) throw new Error("Provisioned LLDB debugger is incomplete");
+    await chmod(executable, 0o755);
+    const relativeExecutable = relative(staging, executable);
+    await writeFile(join(staging, ".agent-k-debug-tools"), marker, "utf8");
+    await rm(root, { recursive: true, force: true });
+    await rename(staging, root);
+    const command = join(root, relativeExecutable);
+    this.emit({ type: "language_server_progress", stage: "ready", tool: "LLDB debugger", detail: "Managed LLDB debugger is ready" });
+    return { adapter: "lldb", args: [], command };
+  }
+  private cmakeBuildDirectory(root: string): string {
+    const platform = process.platform as "linux" | "win32";
+    const key = createHash("sha256").update(root).update("\0").update(managedToolchainMarker(platform)).digest("hex");
+    return join(this.cachePath, "cpp-build", key);
+  }
+  private cmakeBuildConfiguration(value: unknown): CMakeBuildConfiguration {
+    const configuration = typeof value === "string" ? value : "Debug";
+    if (!CMAKE_BUILD_CONFIGURATIONS.has(configuration as CMakeBuildConfiguration))
+      throw new Error(`Unsupported CMake build configuration: ${configuration}`);
+    return configuration as CMakeBuildConfiguration;
+  }
+  private debugBuildDirectory(root: string, configuration: CMakeBuildConfiguration): string {
+    const platform = process.platform as "linux" | "win32";
+    const key = createHash("sha256").update(root).update("\0").update(managedToolchainMarker(platform)).digest("hex");
+    return join(this.cachePath, "cpp-debug", key, configuration);
+  }
+  private debugDiscoveryKey(root: string, configuration: CMakeBuildConfiguration): string {
+    return `${root}\0${configuration}`;
+  }
+  private clearDebugTargetDiscovery(root: string): void {
+    for (const key of this.debugTargetDiscovery.keys())
+      if (key.startsWith(`${root}\0`)) this.debugTargetDiscovery.delete(key);
+  }
+  private debugTarget(workspace: string, root: string, target: CMakeDebugTarget, qualify: boolean): CMakeDebugTarget {
+    const prefix = createHash("sha256").update(root).digest("hex").slice(0, 12);
+    const folder = relative(workspace, root).replaceAll("\\", "/") || ".";
+    return { ...target, id: `${prefix}:${target.id}`, name: qualify ? `${folder} · ${target.name}` : target.name };
+  }
+  private async debugCmakeRoots(workspace: string): Promise<string[]> {
+    return cmakeProjectRoots(workspace);
+  }
+  private async withCMake<T>(root: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.cmakeQueues.get(root) ?? Promise.resolve();
+    const operation = previous.catch(() => undefined).then(action);
+    const completion = operation.then(() => undefined, () => undefined);
+    this.cmakeQueues.set(root, completion);
+    try { return await operation; }
+    finally { if (this.cmakeQueues.get(root) === completion) this.cmakeQueues.delete(root); }
+  }
+  private prepareDebugTargets(root: string, configuration: CMakeBuildConfiguration): Promise<{ bin: string; build: string; environment: NodeJS.ProcessEnv; targets: CMakeDebugTarget[] }> {
+    const discoveryKey = this.debugDiscoveryKey(root, configuration);
+    const current = this.debugTargetDiscovery.get(discoveryKey);
+    if (current) return current;
+    const pending = (async () => {
+      const bin = await this.managedBin();
+      const build = this.debugBuildDirectory(root, configuration);
+      const environment = await this.cmakeEnvironment(bin);
+      const targets = await this.withCMake(root, async () => {
+        const query = join(build, ".cmake", "api", "v1", "query");
+        await mkdir(query, { recursive: true });
+        await writeFile(join(query, "codemodel-v2"), "", "utf8");
+        const cmake = join(bin, process.platform === "win32" ? "cmake.exe" : "cmake");
+        if (!existsSync(cmake)) throw new Error("Managed CMake is unavailable");
+        await this.run(cmake, ["-S", root, "-B", build, "-G", "Ninja", `-DCMAKE_BUILD_TYPE=${configuration}`, "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"], root, bin, environment);
+        return cmakeDebugTargets(build);
+      });
+      return { bin, build, environment, targets };
+    })().then((result) => {
+      // An empty result commonly means the File API query raced the project's
+      // first configure. Do not make that transient state sticky.
+      if (result.targets.length === 0) this.debugTargetDiscovery.delete(discoveryKey);
+      return result;
+    }, (cause: unknown) => {
+      this.debugTargetDiscovery.delete(discoveryKey);
+      throw cause;
+    });
+    this.debugTargetDiscovery.set(discoveryKey, pending);
+    return pending;
   }
   private async provision(bin: string, signal: AbortSignal): Promise<string> {
     if (!((process.platform === "win32" || process.platform === "linux") && process.arch === "x64")) throw new Error("Automatic C++ toolchain installation supports Windows/Linux x64 only");
@@ -591,9 +823,11 @@ export class CppService {
     }
     await this.run(process.platform === "win32" ? "tar.exe" : "tar", ["-xf", archive, "-C", directory], directory, "");
   }
-  private async configure(root: string, bin: string): Promise<{ commandsDir: string; environment: NodeJS.ProcessEnv }> {
-    const platform = process.platform as "linux" | "win32";
-    const key = createHash("sha256").update(root).update("\0").update(managedToolchainMarker(platform)).digest("hex"); const build = join(this.cachePath, "cpp-build", key);
+  private configure(root: string, bin: string): Promise<{ commandsDir: string; environment: NodeJS.ProcessEnv }> {
+    return this.withCMake(root, () => this.configureUnlocked(root, bin));
+  }
+  private async configureUnlocked(root: string, bin: string): Promise<{ commandsDir: string; environment: NodeJS.ProcessEnv }> {
+    const build = this.cmakeBuildDirectory(root);
     const snapshot = await cmakeConfigurationSnapshot(root);
     const projectCommands = await findProjectCompilationDatabase(root, snapshot);
     const cachedCommands = projectCommands ? undefined : await cachedCompilationDatabase(build, snapshot);
@@ -618,7 +852,7 @@ export class CppService {
       await this.stripMissingPrecompiledHeaders(sourceCommands);
       await recordCompilationDatabase(sourceCommands, snapshot);
     }
-    const prepared = await prepareClangdCompilationDatabase(root, sourceCommands, join(this.cachePath, "cpp-index", key));
+    const prepared = await prepareClangdCompilationDatabase(root, sourceCommands, privateClangdIndexDirectory(this.cachePath, build));
     this.emit({
       type: "language_server_progress",
       stage: "configuring",
@@ -852,6 +1086,36 @@ if (typeof process.send === "function") {
           case "skill": result = await service.skill((args[0] && typeof args[0] === "object" ? args[0] : {}) as CppSkillRequest); break;
           case "lsp": result = await service.lsp(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
           case "notify": result = await service.notify(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
+          case "debugStatus": result = service.debugStatus(typeof args[0] === "string" ? args[0] : undefined); break;
+          case "debugSessions": result = service.debugSessions(); break;
+          case "debugSelectSession": result = service.debugSelectSession(String(args[0] ?? "")); break;
+          case "debugCloseSession": result = await service.debugCloseSession(String(args[0] ?? "")); break;
+          case "debugDetachSession": result = await service.debugDetachSession(String(args[0] ?? "")); break;
+          case "debugTargets": result = await service.debugTargets(String(args[0] ?? ""), args[1] === true, args[2]); break;
+          case "debugConfigurations": result = await service.debugConfigurations(String(args[0] ?? ""), args[1], args[2] === true, args[3]); break;
+          case "debugStart": result = await service.debugStart((args[0] && typeof args[0] === "object" ? args[0] : {}) as DebugStartConfiguration); break;
+          case "debugStop": result = await service.debugStop(typeof args[0] === "string" ? args[0] : undefined); break;
+          case "debugCommand": result = await service.debugCommand(String(args[0] ?? "") as "continue" | "pause" | "next" | "stepIn" | "stepOut", typeof args[1] === "string" ? args[1] : undefined); break;
+          case "debugSetBreakpoints": result = await service.debugSetBreakpoints(String(args[0] ?? ""), Array.isArray(args[1]) ? args[1].filter((value): value is number => typeof value === "number") : []); break;
+          case "debugClearBreakpoints": result = await service.debugClearBreakpoints(); break;
+          case "debugSetFunctionBreakpoints": result = await service.debugSetFunctionBreakpoints(Array.isArray(args[0]) ? args[0].flatMap((item): Array<{ condition?: string; hitCondition?: string; name: string }> => {
+            if (!item || typeof item !== "object") return [];
+            const value = item as Record<string, unknown>;
+            return typeof value.name === "string" ? [{ name: value.name, ...(typeof value.condition === "string" ? { condition: value.condition } : {}), ...(typeof value.hitCondition === "string" ? { hitCondition: value.hitCondition } : {}) }] : [];
+          }) : []); break;
+          case "debugSetExceptionFilters": result = await service.debugSetExceptionFilters(Array.isArray(args[0]) ? args[0].filter((item): item is string => typeof item === "string") : []); break;
+          case "debugUpdateBreakpoint": result = await service.debugUpdateBreakpoint(String(args[0] ?? ""), Number(args[1]), args[2] && typeof args[2] === "object" ? args[2] as Record<string, unknown> : {}); break;
+          case "debugSetWatches": result = await service.debugSetWatches(Array.isArray(args[0]) ? args[0].filter((value): value is string => typeof value === "string") : []); break;
+          case "debugSelectFrame": result = await service.debugSelectFrame(Number(args[0]), Number(args[1]), typeof args[2] === "string" ? args[2] : undefined); break;
+          case "debugVariables": result = await service.debugVariables(Number(args[0]), typeof args[1] === "string" ? args[1] : undefined); break;
+          case "debugEvaluate": result = await service.debugEvaluate(String(args[0] ?? ""), args[1] === "watch" ? "watch" : "repl", typeof args[2] === "string" ? args[2] : undefined); break;
+          case "debugSetVariable": result = await service.debugSetVariable(Number(args[0]), String(args[1] ?? ""), String(args[2] ?? ""), typeof args[3] === "string" ? args[3] : undefined); break;
+          case "debugReadMemory": result = await service.debugReadMemory(String(args[0] ?? ""), Number(args[1] ?? 0), Number(args[2] ?? 256), typeof args[3] === "string" ? args[3] : undefined); break;
+          case "debugWriteMemory": result = await service.debugWriteMemory(String(args[0] ?? ""), Number(args[1] ?? 0), Array.isArray(args[2]) ? args[2].filter((value): value is number => typeof value === "number") : [], typeof args[3] === "string" ? args[3] : undefined); break;
+          case "debugDisassemble": result = await service.debugDisassemble(String(args[0] ?? ""), Number(args[1] ?? -32), Number(args[2] ?? 64), Number(args[3] ?? 0), typeof args[4] === "string" ? args[4] : undefined); break;
+          case "debugSetInstructionBreakpoints": result = await service.debugSetInstructionBreakpoints(Array.isArray(args[0]) ? args[0].filter((value): value is string => typeof value === "string") : [], typeof args[1] === "string" ? args[1] : undefined); break;
+          case "debugClearOutput": result = service.debugClearOutput(typeof args[0] === "string" ? args[0] : undefined); break;
+          case "debugProcesses": result = await service.debugProcesses(); break;
           case "shutdown": service.shutdown(); break;
           default: throw new Error(`Unknown language worker method: ${message.method}`);
         }

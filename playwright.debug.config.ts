@@ -1,0 +1,10 @@
+import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  fullyParallel: false,
+  reporter: "line",
+  testDir: "./test/e2e",
+  testMatch: "debug-tools.spec.ts",
+  timeout: 45_000,
+  workers: 1,
+});

@@ -43,7 +43,11 @@ export type LanguageServerPlugin = {
   editorContribution?: { description: string; editorPluginId: string; id: string; name: string; version: string };
   skill?: { markdown: string; name: string };
   commands?: Array<{ id: string; title: string; kind: "project-manager" }>;
-  debugServer?: { adapters: Array<{ command: string; platforms: string[] }>; protocol: "dap" };
+  debugServer?: {
+    adapters: Array<{ command: string; platforms: string[] }>;
+    providers: Array<{ fileExtensions: string[]; id: string; label: string; languages: string[]; modes: Array<"attach" | "dump" | "launch">; priority: number; projectMarkers: string[] }>;
+    protocol: "dap";
+  };
 };
 
 export type ClientSettings = {

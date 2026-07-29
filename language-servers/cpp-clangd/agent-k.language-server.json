@@ -24,10 +24,18 @@
   "worker": "dist/worker.js",
   "debugServer": {
     "protocol": "dap",
+    "providers": [{
+      "id": "cpp-native",
+      "label": "C/C++ Native",
+      "languages": ["c", "cpp"],
+      "fileExtensions": [".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"],
+      "projectMarkers": ["CMakeLists.txt", "compile_commands.json"],
+      "modes": ["launch", "attach", "dump"],
+      "priority": 100
+    }],
     "adapters": [
-      { "command": "windbg", "platforms": ["win32"] },
-      { "command": "lldb", "platforms": ["linux", "darwin"] },
-      { "command": "gdb", "platforms": ["linux", "darwin"] }
+      { "command": "OpenDebugAD7", "platforms": ["win32"] },
+      { "command": "codelldb", "platforms": ["linux", "darwin"] }
     ]
   }
 }

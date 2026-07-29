@@ -28,6 +28,17 @@ export const platform = {
 };
 
 export const desktopWindow = {
+  openDebug: (root: string, contextFile?: string) => window.agentK.window.invoke<void>("open-debug", { root, ...(contextFile ? { contextFile } : {}) }),
+  openDebugTool: (kind: "disassembly" | "memory" | "registers", target?: string, languageServerId?: string, sessionId?: string) => window.agentK.window.invoke<void>("open-debug-tool", { kind, ...(target ? { target } : {}), ...(languageServerId ? { languageServerId } : {}), ...(sessionId ? { sessionId } : {}) }),
+  setDebugRoot: (root?: string) => window.agentK.window.invoke<void>("set-debug-root", root ? { root } : {}),
+  openEditorLocation: (location: { column?: number; focus?: boolean; line: number; path: string }) => window.agentK.window.invoke<void>("open-editor-location", location),
+  onDebugRoot: (listener: (root: string) => void) => window.agentK.window.onDebugRoot(listener),
+  onDebugContext: (listener: (context: { contextFile?: string; root: string }) => void) => window.agentK.window.onDebugContext(listener),
+  onDebugProviderHit: (listener: (languageServerId: string) => void) => window.agentK.window.onDebugProviderHit(listener),
+  onDebugToolTarget: (listener: (target: string) => void) => window.agentK.window.onDebugToolTarget(listener),
+  onDebugToolProvider: (listener: (languageServerId: string) => void) => window.agentK.window.onDebugToolProvider(listener),
+  onDebugToolSession: (listener: (sessionId?: string) => void) => window.agentK.window.onDebugToolSession(listener),
+  onOpenEditorLocation: (listener: (location: { column: number; line: number; path: string }) => void) => window.agentK.window.onOpenEditorLocation(listener),
   setSize: (size: { width: number; height: number }) =>
     window.agentK.window.invoke<void>("set-size", size),
   isMaximized: () => window.agentK.window.invoke<boolean>("is-maximized"),

@@ -9,10 +9,14 @@ import {
   findProjectCompilationDatabase,
   isCMakeConfigurationPath,
   prepareClangdCompilationDatabase,
+  privateClangdIndexDirectory,
   recordCompilationDatabase,
 } from "./cmake-cache.ts";
+
 import {
   DEFAULT_VSWHERE_PATH,
+  managedDebuggerArchive,
+  managedDebuggerMarker,
   managedToolchainArchives,
   managedToolchainMarker,
   parseWindowsEnvironment,
@@ -20,6 +24,13 @@ import {
 } from "./toolchain.ts";
 import { selectWorkspaceSymbols } from "./skill-symbols.ts";
 import { languageSkillStatusState, languageSkillUsable } from "./skill-status.ts";
+
+test("pairs the clangd index with the private CMake build cache key", () => {
+  assert.equal(
+    privateClangdIndexDirectory(join("cache", "language-servers", "cpp-clangd"), join("cache", "language-servers", "cpp-clangd", "cpp-build", "workspace-hash")),
+    join("cache", "language-servers", "cpp-clangd", "cpp-index", "workspace-hash"),
+  );
+});
 
 test("allows C++ Language Skill queries during indexing and marks results partial", () => {
   assert.equal(languageSkillUsable("indexing", true), true);
@@ -73,6 +84,18 @@ test("uses standalone clangd on Linux and Windows", () => {
   assert.match(managedToolchainMarker("win32"), /clangd-windows-22\.1\.6\.zip/);
 });
 
+test("pins a private portable LLDB debugger for Linux x64", () => {
+  const archive = managedDebuggerArchive("linux", "x64");
+  assert.equal(archive?.owner, "vadimcn");
+  assert.equal(archive?.repository, "codelldb");
+  assert.equal(archive?.asset, "codelldb-linux-x64.vsix");
+  assert.equal(archive?.sha256, "b85b45a8570051d535b0927c6c9da11c39f3a056c73559064647faf7f37f637d");
+  assert.match(managedDebuggerMarker("linux", "x64") ?? "", /codelldb-linux-x64\.vsix/);
+  assert.equal(managedDebuggerArchive("darwin", "x64")?.asset, "codelldb-darwin-x64.vsix");
+  assert.equal(managedDebuggerArchive("darwin", "arm64")?.asset, "codelldb-darwin-arm64.vsix");
+  assert.equal(managedDebuggerArchive("win32", "x64"), undefined);
+});
+
 test("parses the Visual Studio developer environment without pseudo variables", () => {
   assert.deepEqual(parseWindowsEnvironment("Path=C:\\VS\\bin;C:\\Windows\r\nINCLUDE=C:\\VS\\include\r\n=C:=C:\\work\r\n"), {
     Path: "C:\\VS\\bin;C:\\Windows",
@@ -83,6 +106,7 @@ test("parses the Visual Studio developer environment without pseudo variables", 
 test("routes ZIP tool archives away from tar", () => {
   assert.equal(toolchainArchiveFormat("ninja-linux.zip"), "zip");
   assert.equal(toolchainArchiveFormat("clangd-linux-22.1.6.ZIP"), "zip");
+  assert.equal(toolchainArchiveFormat("codelldb-linux-x64.vsix"), "zip");
   assert.equal(toolchainArchiveFormat("cmake-linux.tar.gz"), "tar");
   assert.equal(toolchainArchiveFormat("llvm.tar.xz"), "tar");
   assert.throws(() => toolchainArchiveFormat("download.html"), /Unsupported toolchain archive/);

@@ -13,7 +13,7 @@ import {
 } from "react";
 import { desktop, type FileEntry, type LanguageServerPlugin, type LanguageServerProject } from "../../lib/desktop";
 import { desktopWindow, platform } from "../../lib/platform";
-import { ProjectConsole } from "./ProjectConsole";
+import { DevelopmentDock } from "./DevelopmentDock";
 import { DirectoryPickerDialog } from "../DirectoryPickerDialog";
 import {
   ReviewPanel,
@@ -709,15 +709,15 @@ export function InspectorPanel({
       if (typeof value.stage !== "string") return;
       const stage = value.stage;
       const rawDetail = typeof value.detail === "string" ? value.detail : undefined;
-      setCppProgress((previous) => ({
+      setCppProgress((previous) => previous ? ({
         stage, ...(typeof value.languageServerId === "string" ? { languageServerId: value.languageServerId } : {}),
         ...(rawDetail ? { detail: stage === "configuring" ? (en ? "Configuring project…" : "正在配置工程…") : rawDetail } : {}),
         ...(typeof value.bytes === "number" ? { bytes: value.bytes } : {}),
         ...(typeof value.total === "number" ? { total: value.total } : {}),
         ...(typeof value.rate === "number" ? { rate: value.rate } : {}),
         ...(typeof value.error === "string" ? { error: value.error } : {}),
-        ...(stage === "configuring" && rawDetail ? { log: `${previous?.log ?? ""}${rawDetail}`.slice(-16_000) } : {}),
-      }));
+        ...(stage === "configuring" && rawDetail ? { log: `${previous.log ?? ""}${rawDetail}`.slice(-16_000) } : {}),
+      }) : previous);
       if (value.stage === "ready") window.setTimeout(() => setCppProgress(undefined), 900);
     });
     return stop;
@@ -1230,10 +1230,11 @@ export function InspectorPanel({
     const openReferencedLine = (event: Event) => {
       const detail = (event as CustomEvent<{ column?: number; line?: number; path?: string }>).detail;
       if (!detail?.path || !detail.line) return;
+      const workspacePath = root ? relativeWorkspacePath(root, detail.path) ?? detail.path : detail.path;
       const target = {
         column: Math.max(1, Math.floor(detail.column ?? 1)),
         line: Math.max(1, Math.floor(detail.line)),
-        path: detail.path.replaceAll("\\", "/"),
+        path: workspacePath.replaceAll("\\", "/"),
         requestId: Date.now() + Math.random(),
       };
       setLineNavigation(target);
@@ -1317,6 +1318,10 @@ export function InspectorPanel({
   const current = tabsRoot.current === root
     ? tabs.find((tab) => tab.path === active)
     : undefined;
+  const currentWorkspacePath = root && current && !current.path.startsWith("web-preview:")
+    ? relativeWorkspacePath(root, current.path)
+    : undefined;
+  const currentIsWorkspaceFile = currentWorkspacePath !== undefined && currentWorkspacePath !== "";
   const currentLanguageProject = root && current
     ? languageProjects.filter((project) => {
       const file = absoluteWorkspacePath(root, current.path).replaceAll("\\", "/").toLowerCase(); const projectRoot = project.root.replaceAll("\\", "/").toLowerCase(); return file.startsWith(`${projectRoot}/`) || file === projectRoot;
@@ -2166,6 +2171,16 @@ export function InspectorPanel({
                       {t("revertFile")}
                     </button>
                   ) : null}
+                  {currentIsWorkspaceFile ? (
+                    <button
+                      onClick={() => { if (root && current) void desktopWindow.openDebug(root, absoluteWorkspacePath(root, current.path)).catch((cause) => onError(String(cause))); }}
+                      title={en ? "Open native Debug window" : "打开原生调试窗口"}
+                      type="button"
+                    >
+                      <i aria-hidden="true" className="fa-solid fa-bug" />
+                      {en ? "Debug" : "调试"}
+                    </button>
+                  ) : null}
                   <button
                     aria-pressed={settings.editorWordWrap}
                     className={settings.editorWordWrap ? "is-active" : undefined}
@@ -2266,7 +2281,7 @@ export function InspectorPanel({
           ))}
         </section>
       </div>
-      <ProjectConsole onError={onError} root={root} />
+      <DevelopmentDock onError={onError} root={root} />
       {contextMenu && (
         <div
           className="file-context-menu"
@@ -2617,7 +2632,7 @@ export function InspectorPanel({
       {cppProgress ? createPortal(
         <div className="inspector-dialog-backdrop is-viewport">
           <section aria-modal="true" className="inspector-dialog cpp-progress-dialog" role="dialog">
-            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{cppProgress.stage === "failed" ? (en ? "Language project load failed" : "语言工程加载失败") : (en ? "Preparing language project" : "正在准备语言工程")}</h2><p>{cppProgress.detail ?? cppProgress.stage}</p></div><button aria-label={cppProgress.stage === "failed" ? (en ? "Close" : "关闭") : (en ? "Cancel language project load" : "取消加载语言工程")} className="cpp-progress-close" disabled={cppProgress.stage === "cancelling"} onClick={() => { if (cppProgress.stage === "failed") { setCppProgress(undefined); return; } setCppProgress((current) => current ? { ...current, stage: "cancelling", detail: en ? "Cancelling…" : "正在取消…" } : current); if (cppProgress.languageServerId) void desktop.languageServerCall(cppProgress.languageServerId, "cancel").catch((cause) => setCppProgress({ stage: "failed", error: String(cause) })); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
+            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{cppProgress.stage === "failed" ? (en ? "Language project load failed" : "语言工程加载失败") : (en ? "Preparing language project" : "正在准备语言工程")}</h2><p>{cppProgress.detail ?? cppProgress.stage}</p></div><button aria-label={cppProgress.stage === "failed" ? (en ? "Close" : "关闭") : (en ? "Cancel language project load" : "取消加载语言工程")} className="cpp-progress-close" disabled={cppProgress.stage === "cancelling"} onClick={() => { if (cppProgress.stage === "failed") { setCppProgress(undefined); return; } setCppProgress((current) => current ? { ...current, stage: "cancelling", detail: en ? "Cancelling…" : "正在取消…" } : current); if (cppProgress.languageServerId) void desktop.languageServerCall(cppProgress.languageServerId, "cancel").then(() => setCppProgress(undefined)).catch((cause) => setCppProgress({ stage: "failed", error: String(cause) })); else setCppProgress(undefined); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
             {cppProgress.total ? <progress className="cpp-toolchain-progress" max={cppProgress.total} value={Math.min(cppProgress.bytes ?? 0, cppProgress.total)} /> : <p>{en ? "Working…" : "处理中…"}</p>}
             {cppProgress.bytes !== undefined ? <small>{formatMegabytes(cppProgress.bytes)}{cppProgress.total ? ` / ${formatMegabytes(cppProgress.total)} · ${(Math.min(cppProgress.bytes, cppProgress.total) / cppProgress.total * 100).toFixed(2)}%` : ""}{cppProgress.rate !== undefined ? ` · ${formatMegabytes(cppProgress.rate)}/s` : ""}</small> : null}
             {cppProgress.error ? <p>{cppProgress.error}</p> : null}

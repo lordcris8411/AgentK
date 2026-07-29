@@ -311,6 +311,7 @@ defineEditor((host, initial) => {
     automaticLayout: false,
     contextmenu: false,
     fontFamily: themeConfig?.fonts?.code ?? defaultCodeFont,
+    glyphMargin: true,
     inertialScroll: true,
     minimap: { enabled: false },
     model,
@@ -323,6 +324,23 @@ defineEditor((host, initial) => {
     smoothScrolling: true,
     theme: themeName(initial.theme, themeConfig),
     wordWrap: initial.wordWrap ? "on" : "off",
+  });
+  const debugDecorations = editor.createDecorationsCollection();
+  const applyDebugState = (state: { breakpoints: number[]; currentLine?: number; paused: boolean }) => {
+    debugDecorations.set([
+      ...state.breakpoints.map((line) => ({
+        range: new monaco.Range(line, 1, line, 1),
+        options: { glyphMarginClassName: "agent-k-debug-breakpoint", glyphMarginHoverMessage: { value: initial.locale === "en-US" ? "Breakpoint" : "断点" } },
+      })),
+      ...(state.paused && state.currentLine ? [{
+        range: new monaco.Range(state.currentLine, 1, state.currentLine, 1),
+        options: { glyphMarginClassName: "agent-k-debug-current-glyph", isWholeLine: true, className: "agent-k-debug-current-line" },
+      }] : []),
+    ]);
+  };
+  const debugGutter = editor.onMouseDown((event) => {
+    if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN || !event.target.position) return;
+    host.toggleBreakpoint(event.target.position.lineNumber);
   });
   const cpp = initial.language === "cpp";
   const languageStatus = cpp ? globalThis.document.createElement("div") : undefined;
@@ -793,6 +811,7 @@ defineEditor((host, initial) => {
       globalThis.window.removeEventListener("blur", hideContextMenu);
       changes.dispose();
       definitionHover.dispose(); definitionClick.dispose(); definitionLink.clear();
+      debugGutter.dispose(); debugDecorations.clear();
       languageFocus.dispose(); referenceBlur.dispose();
       hideReferences(); referencePanel.remove();
       languageStatus?.remove();
@@ -843,6 +862,9 @@ defineEditor((host, initial) => {
       model.setValue(content);
       host.updateContent(content);
       host.reportDirty(false);
+    },
+    setDebugState(state) {
+      applyDebugState(state);
     },
     setLayoutSuspended(suspended) {
       layoutSuspended = suspended;

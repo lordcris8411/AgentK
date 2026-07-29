@@ -67,6 +67,15 @@ example-lsp/
   "worker": "dist/worker.js",
   "debugServer": {
     "protocol": "dap",
+    "providers": [{
+      "id": "example-runtime",
+      "label": "Example Runtime",
+      "languages": ["example"],
+      "fileExtensions": [".example"],
+      "projectMarkers": ["example.config"],
+      "modes": ["launch", "attach"],
+      "priority": 50
+    }],
     "adapters": [
       { "command": "example-debug", "platforms": ["win32", "linux"] }
     ]
@@ -86,7 +95,7 @@ example-lsp/
 | `skill` | no | Inline Skill metadata/body displayed by the language-extension manager. For a bundled package with `SKILL.md`, the Language Skill switch also controls whether Agent K passes that package to Pi through public `--skill` loading. It does not grant worker privileges. |
 | `commands` | no | Slash-command contributions. API v1 supports `kind: "project-manager"`. |
 | `worker` | yes | Built `.js` file inside the same package. Absolute paths and traversal are rejected. |
-| `debugServer` | no | Declares a future/current DAP boundary and platform-specific adapter commands; declaration alone does not launch a debugger. |
+| `debugServer` | no | Declares one or more debug providers, the DAP boundary, and platform-specific adapter commands. A trusted worker remains responsible for discovery, launch and protocol handling. |
 
 Malformed manifests, unsupported API versions, missing workers, path traversal, duplicate IDs, and malformed optional fields
 are rejected. Every worker receives an application-owned `cache/language-servers/<id>` directory during initialization.
@@ -143,6 +152,20 @@ Project-aware workers implement these generic methods:
 | `notify(file, method, params)` | Handle an Editor notification such as `didOpen`, `didChange`, or `didClose`. |
 | `shutdown()` | Stop child services and release package state. |
 
+Debug providers use the same worker transport and expose a neutral RPC surface. `debugConfigurations(root, contextFile,
+refresh, variant)` returns launch candidates with stable `id`, display `name`, and optional `program`/`built` fields.
+`debugStart` creates a new session and returns a snapshot containing `sessionId` and `sessionLabel`; it never implicitly
+replaces an existing launch or attach. `debugSessions` and `debugSelectSession` enumerate and select those sessions;
+`debugCloseSession` terminates the target and removes the session, while `debugDetachSession` leaves the target running and
+removes the session. Session-specific execution, stack, variable, memory, register, and disassembly calls accept `sessionId`,
+while source/function/exception breakpoint configuration is shared by the provider and synchronized into every session.
+Calls without `sessionId` remain compatible by addressing the provider's currently selected session. Every
+`debug_session` event identifies its session, so a breakpoint hit can select the correct process and native tool windows
+remain bound to the process from which they were opened. The renderer selects providers from manifest metadata;
+it does not infer a debugger from a workspace-wide language. Provider launch settings are persisted separately, while
+source breakpoints are routed by their file extension. A workspace can consequently host C++, Lua, browser TypeScript,
+and Android providers without declaring one of them to be the workspace type.
+
 `list` results are augmented with `languageServerId` and `languageServerName` before reaching the UI. Project menus and slash
 commands are driven solely by manifest contributions rather than hard-coded language names. A `project-manager` slash command
 opens the project list by default and supports `trace`, `restart <root>`, and `unload <root>`.
@@ -186,8 +209,23 @@ loaded C++ projects. The worker converts workspace watcher events to
 `workspace/didChangeWatchedFiles`; project-owned CMake configuration changes
 are coalesced and rebuild the compilation database before clangd restarts.
 Generated build/dependency CMake files do not trigger reconfiguration. The
-manifest's DAP adapters reserve WinDbg on Windows and LLDB/GDB on Linux/macOS,
-but no debug adapter is launched yet.
+manifest's DAP adapters use the Visual Studio native debug adapter on Windows
+and a pinned portable CodeLLDB distribution on Linux/macOS. The LLDB adapter is
+downloaded on first debug launch into Agent K's private cache,
+verified by SHA-256, and never added to the host PATH. The Debug window launches or attaches to a
+workspace process, synchronizes source breakpoints from Monaco's glyph margin,
+and exposes execution control, threads, stack frames, locals, watches and
+adapter output. For CMake workspaces it reads executable targets from the CMake
+File API codemodel, lets the user select Debug, Release, RelWithDebInfo, or
+MinSizeRel, builds each configuration in its own Agent K private cache, and
+launches the declared artifact instead of guessing an executable path.
+Debug adapter processes stay inside this trusted worker and are never exposed
+to the sandboxed Editor frame.
+
+The Debug UI runs in its own sandboxed Electron `BrowserWindow`, not as an
+embedded pane in the main workspace DOM. The main Editor and Debug window
+exchange only validated workspace roots, source locations, and backend events
+through preload IPC; the DAP session remains owned by the trusted worker.
 
 ## Build and verification
 

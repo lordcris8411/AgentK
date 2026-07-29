@@ -12,6 +12,7 @@ import {
   type FileFormatPluginResource,
 } from "../../lib/desktop";
 import type { ThemeDefinition } from "../../lib/themes";
+import type { DebugSnapshot } from "../debug/types";
 
 const EDITOR_API_VERSION = 1;
 const EDITOR_CHANNEL = "agent-k-editor";
@@ -25,6 +26,11 @@ type PluginMessage = {
   type?: unknown;
   value?: unknown;
 };
+
+type PluginEditorThemeConfig = Pick<
+  ThemeDefinition,
+  "colors" | "components" | "monaco" | "monacoSyntax" | "fonts"
+>;
 
 export type PluginEditorHandle = {
   executeAction(action: string, parameters?: Record<string, unknown>): void;
@@ -63,7 +69,7 @@ type PluginEditorFrameProps = {
   readOnly?: boolean;
   root: string;
   theme: "light" | "soft-light" | "dark";
-  themeConfig?: Pick<ThemeDefinition, "colors" | "components" | "monaco" | "monacoSyntax" | "fonts">;
+  themeConfig?: PluginEditorThemeConfig;
   wordWrap: boolean;
 };
 
@@ -73,6 +79,28 @@ function escapeInline(value: string, closingTag: "script" | "style"): string {
 
 function escapeAttribute(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+}
+
+function initialEditorThemeStyle(config?: PluginEditorThemeConfig): string {
+  if (!config) return "";
+  const values: Record<string, string | undefined> = {
+    "--text-background": config.colors["surface-panel"],
+    "--text-raised": config.colors["surface-raised"],
+    "--text-hover": config.components.hover ?? config.colors["surface-hover"],
+    "--text-hover-foreground": config.components["hover-foreground"] ?? config.colors["text-primary"],
+    "--text-border": config.colors["border-strong"],
+    "--text-primary": config.colors["text-primary"],
+    "--text-secondary": config.colors["text-secondary"],
+    "--text-muted": config.colors["text-muted"],
+    "--text-accent": config.colors.accent,
+    "--text-scrollbar": config.colors["scrollbar-thumb"],
+    "--text-scrollbar-hover": config.colors["scrollbar-thumb-hover"],
+    "--text-ui-font": config.fonts?.ui,
+    "--text-code-font": config.fonts?.code,
+  };
+  return Object.entries(values)
+    .flatMap(([name, value]) => value ? [`${name}:${value}`] : [])
+    .join(";");
 }
 
 function runtimeFor(
@@ -142,10 +170,14 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
     const pendingSelections = useRef(new Map<string, (selection: string) => void>());
     const pendingNavigation = useRef<{ column: number; line: number } | undefined>(undefined);
     const activeLanguageProjectRef = useRef<string | undefined>(undefined);
+    const themeRef = useRef(theme);
+    const themeConfigRef = useRef(themeConfig);
     const [frameUrl, setFrameUrl] = useState<string>();
     const [ready, setReady] = useState(false);
     const readyRef = useRef(ready);
     readyRef.current = ready;
+    themeRef.current = theme;
+    themeConfigRef.current = themeConfig;
     const [loadError, setLoadError] = useState<string>();
     const serializedActions = JSON.stringify(actions);
 
@@ -204,8 +236,10 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
             assets: runtime.assets,
             javascript: runtime.javascript,
           }), "script");
+          const initialTheme = themeRef.current;
+          const initialThemeStyle = initialEditorThemeStyle(themeConfigRef.current);
           const html = `<!doctype html>
-<html><head><meta charset="utf-8">
+<html data-theme="${escapeAttribute(initialTheme)}"${initialThemeStyle ? ` style="${escapeAttribute(initialThemeStyle)}"` : ""}><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src agentk-editor:; script-src 'unsafe-inline' agentk-editor: blob:; style-src 'unsafe-inline' agentk-editor:; font-src data: blob:; img-src agentk-file: data: blob: https: http:; media-src blob:; frame-src 'self' blob:; worker-src blob:;">
 ${dependencies.map((dependency) => `<link rel="stylesheet" href="${escapeAttribute(dependency.cssUrl)}">`).join("\n")}
 <style>${escapeInline(runtime.css, "style")}</style></head>
@@ -330,6 +364,12 @@ void (async () => {
           case "dirty":
             if (typeof message.value === "boolean") onDirtyChange(message.value);
             break;
+          case "debug-toggle-breakpoint": {
+            const target = message.value as { line?: unknown };
+            if (typeof target?.line === "number")
+              window.dispatchEvent(new CustomEvent("agent-k-debug-toggle-breakpoint", { detail: { file: absolutePath, line: target.line } }));
+            break;
+          }
           case "error":
             if (typeof message.value === "string") onError(message.value);
             break;
@@ -426,6 +466,30 @@ void (async () => {
       });
       return stop;
     }, [absolutePath]);
+
+    useEffect(() => {
+      const updateDebugState = (event: Event) => {
+        const snapshot = (event as CustomEvent<DebugSnapshot>).detail;
+        if (!snapshot) return;
+        const normalized = absolutePath.replaceAll("\\", "/").toLowerCase();
+        const frame = snapshot.threads.flatMap((thread) => thread.frames)
+          .find((item) => item.id === snapshot.selectedFrameId);
+        send("set-debug-state", {
+          breakpoints: snapshot.breakpoints
+            .filter((item) => item.enabled !== false && item.file.replaceAll("\\", "/").toLowerCase() === normalized)
+            .map((item) => item.line),
+          ...(frame?.file?.replaceAll("\\", "/").toLowerCase() === normalized && frame.line ? { currentLine: frame.line } : {}),
+          paused: snapshot.state === "stopped",
+        });
+      };
+      window.addEventListener("agent-k-debug-state", updateDebugState);
+      return () => window.removeEventListener("agent-k-debug-state", updateDebugState);
+    }, [absolutePath]);
+
+    useEffect(() => {
+      if (!ready) return;
+      window.dispatchEvent(new CustomEvent("agent-k-debug-state-request", { detail: { file: absolutePath } }));
+    }, [absolutePath, ready]);
 
     useEffect(() => {
       const layout = (event: Event) => {

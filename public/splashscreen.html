@@ -3,18 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <script>
+      let initialThemeApplied = false;
       try {
-        const cached = JSON.parse(localStorage.getItem("agent-k-settings") || "{}");
-        const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-        document.documentElement.dataset.theme = cached.theme === "soft-light"
-          ? "soft-light"
-          : cached.theme === "dark" || (cached.theme === "system" && systemDark)
+        const initial = JSON.parse(new URLSearchParams(location.search).get("initial-theme") || "null");
+        if (initial && ["light", "soft-light", "dark"].includes(initial.base)) {
+          const root = document.documentElement;
+          root.dataset.theme = initial.base;
+          for (const [key, value] of Object.entries(initial.colors || {}))
+            if (typeof value === "string") root.style.setProperty("--" + key, value);
+          initialThemeApplied = true;
+        }
+      } catch {}
+      if (!initialThemeApplied) {
+        try {
+          const cached = JSON.parse(localStorage.getItem("agent-k-settings") || "{}");
+          const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.dataset.theme = cached.theme === "soft-light"
+            ? "soft-light"
+            : cached.theme === "dark" || (cached.theme === "system" && systemDark)
+              ? "dark"
+              : "light";
+        } catch {
+          document.documentElement.dataset.theme = window.matchMedia("(prefers-color-scheme: dark)").matches
             ? "dark"
             : "light";
-      } catch {
-        document.documentElement.dataset.theme = window.matchMedia("(prefers-color-scheme: dark)").matches
-          ? "dark"
-          : "light";
+        }
       }
     </script>
     <style>

@@ -5,19 +5,57 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agent K</title>
     <script>
+      let initialThemeApplied = false;
+      try {
+        const initial = JSON.parse(new URLSearchParams(location.search).get("initial-theme") || "null");
+        if (initial && ["light", "soft-light", "dark"].includes(initial.base)) {
+          const root = document.documentElement;
+          root.dataset.theme = initial.base;
+          for (const [key, value] of Object.entries(initial.colors || {}))
+            if (typeof value === "string") root.style.setProperty("--" + key, value);
+          for (const [key, value] of Object.entries(initial.components || {}))
+            if (typeof value === "string") root.style.setProperty("--component-" + key, value);
+          if (typeof initial.fonts?.ui === "string") root.style.setProperty("--font-ui", initial.fonts.ui);
+          if (typeof initial.fonts?.code === "string") root.style.setProperty("--font-code", initial.fonts.code);
+          initialThemeApplied = true;
+        }
+      } catch {}
       try {
         const cached = JSON.parse(localStorage.getItem("agent-k-settings") || "{}");
-        document.documentElement.dataset.theme = cached.theme === "soft-light"
-          ? "soft-light"
-          : cached.theme === "dark" ||
-              (cached.theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)
-            ? "dark"
-            : "light";
+        if (!initialThemeApplied) {
+          document.documentElement.dataset.theme = cached.theme === "soft-light"
+            ? "soft-light"
+            : cached.theme === "dark" ||
+                (cached.theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+              ? "dark"
+              : "light";
+        }
         document.documentElement.lang = cached.locale === "en-US" ? "en-US" : "zh-CN";
       } catch {
-        document.documentElement.dataset.theme = "light";
+        if (!initialThemeApplied) document.documentElement.dataset.theme = "light";
       }
     </script>
+    <style>
+      :root {
+        --surface-app: #f7f6f4;
+        background: var(--surface-app);
+        color-scheme: light;
+      }
+      :root[data-theme="soft-light"] {
+        --surface-app: #d9d5cf;
+        color-scheme: light;
+      }
+      :root[data-theme="dark"] {
+        --surface-app: #1f1f1f;
+        color-scheme: dark;
+      }
+      html, body, #root {
+        background: var(--surface-app);
+        height: 100%;
+        margin: 0;
+        width: 100%;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

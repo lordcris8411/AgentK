@@ -27,6 +27,12 @@ export type PreparedCompilationDatabase = {
   included: number;
 };
 
+/** Keeps the clangd index paired with the private CMake build cache without
+ * relying on a caller's transient hash variable. */
+export function privateClangdIndexDirectory(cachePath: string, buildDirectory: string): string {
+  return join(cachePath, "cpp-index", basename(buildDirectory));
+}
+
 function isIgnoredDirectory(name: string): boolean {
   const normalized = name.toLocaleLowerCase("en-US");
   return IGNORED_DIRECTORIES.has(normalized) || normalized.startsWith("cmake-build-");

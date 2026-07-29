@@ -44,7 +44,7 @@ function isInside(root: string, candidate: string): boolean {
 
 function parseDebugServer(value: unknown): LanguageServerPluginManifest["debugServer"] | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const input = value as { adapters?: unknown; protocol?: unknown };
+  const input = value as { adapters?: unknown; protocol?: unknown; providers?: unknown };
   if (input.protocol !== "dap" || !Array.isArray(input.adapters)) return undefined;
   const adapters = input.adapters.flatMap((adapter) => {
     if (!adapter || typeof adapter !== "object") return [];
@@ -52,7 +52,22 @@ function parseDebugServer(value: unknown): LanguageServerPluginManifest["debugSe
     const platforms = strings(candidate.platforms);
     return typeof candidate.command === "string" && platforms ? [{ command: candidate.command, platforms: platforms as NodeJS.Platform[] }] : [];
   });
-  return adapters.length === input.adapters.length ? { adapters, protocol: "dap" } : undefined;
+  if (adapters.length !== input.adapters.length) return undefined;
+  if (!Array.isArray(input.providers) || !input.providers.length) return undefined;
+  const providers = input.providers.flatMap((provider) => {
+    if (!provider || typeof provider !== "object") return [];
+    const candidate = provider as Record<string, unknown>;
+    const fileExtensions = strings(candidate.fileExtensions);
+    const languages = strings(candidate.languages);
+    const projectMarkers = strings(candidate.projectMarkers);
+    const modes = Array.isArray(candidate.modes) && candidate.modes.every((mode) => mode === "launch" || mode === "attach" || mode === "dump")
+      ? candidate.modes as Array<"attach" | "dump" | "launch"> : undefined;
+    const priority = typeof candidate.priority === "number" && Number.isFinite(candidate.priority) ? candidate.priority : 0;
+    return typeof candidate.id === "string" && /^[a-z0-9][a-z0-9.-]*$/i.test(candidate.id) && typeof candidate.label === "string" && candidate.label.trim() && fileExtensions && languages && projectMarkers && modes
+      ? [{ fileExtensions: fileExtensions.map((item) => item.toLowerCase()), id: candidate.id, label: candidate.label.trim(), languages, modes, priority, projectMarkers }]
+      : [];
+  });
+  return providers.length === input.providers.length ? { adapters, protocol: "dap", providers } : undefined;
 }
 function editorContribution(value: unknown): LanguageServerPluginManifest["editorContribution"] | undefined {
   if (value === undefined) return undefined;
