@@ -1,12 +1,13 @@
+import { realpath } from "node:fs/promises";
 import { basename } from "node:path";
 import { DebugSession, type DebugAdapterLaunch, type DebugBreakpoint, type DebugSnapshot, type DebugStartConfiguration } from "./debug-session.ts";
 
-export type ManagedDebugSnapshot = DebugSnapshot & { sessionId: string; sessionLabel: string };
+export type ManagedDebugSnapshot = DebugSnapshot & { sessionId: string; sessionLabel: string; workspaceRoot: string };
 
 export class DebugSessionManager {
   private readonly emit: (snapshot: DebugSnapshot | ManagedDebugSnapshot) => void;
   private readonly resolveAdapter: () => DebugAdapterLaunch;
-  private readonly sessions = new Map<string, { label: string; session: DebugSession }>();
+  private readonly sessions = new Map<string, { label: string; root: string; session: DebugSession }>();
   private readonly template: DebugSession;
   private currentId?: string;
   private nextId = 1;
@@ -26,6 +27,19 @@ export class DebugSessionManager {
     return [...this.sessions].map(([id, value]) => this.managed(id, value));
   }
 
+  listForRoot(root: string): ManagedDebugSnapshot[] {
+    return [...this.sessions].flatMap(([id, value]) => value.root === root ? [this.managed(id, value)] : []);
+  }
+
+  configuredBreakpoints(): DebugBreakpoint[] {
+    return this.template.snapshot().breakpoints;
+  }
+
+  assertSessionRoot(sessionId: string, root: string): void {
+    const entry = this.entry(sessionId, true)!;
+    if (entry.value.root !== root) throw new Error("Debug session does not belong to the requested workspace");
+  }
+
   select(sessionId: string): ManagedDebugSnapshot {
     const entry = this.entry(sessionId, true)!;
     this.currentId = entry.id;
@@ -33,6 +47,7 @@ export class DebugSessionManager {
   }
 
   async start(configuration: DebugStartConfiguration & { sessionName?: string }, trustedProgramRoots: string[] = []): Promise<ManagedDebugSnapshot> {
+    const root = await realpath(configuration.root);
     const id = `debug-${this.nextId++}`;
     const label = configuration.sessionName?.trim() || (configuration.mode === "attach"
       ? `Process ${configuration.processId ?? "?"}`
@@ -44,15 +59,15 @@ export class DebugSessionManager {
         this.sessions.delete(id);
         if (this.currentId === id) this.currentId = this.sessions.keys().next().value as string | undefined;
       }
-      this.emit({ ...snapshot, sessionId: id, sessionLabel: label });
+      this.emit({ ...snapshot, sessionId: id, sessionLabel: label, workspaceRoot: root });
       if (snapshot.state === "terminated") queueMicrotask(() => session.shutdown());
     }, this.resolveAdapter);
-    const value = { label, session };
+    const value = { label, root, session };
     this.sessions.set(id, value);
     this.currentId = id;
     try {
       await this.applyTemplate(value.session);
-      await value.session.start(configuration, trustedProgramRoots);
+      await value.session.start({ ...configuration, root }, trustedProgramRoots);
       return this.managed(id, value);
     } catch (cause) {
       value.session.shutdown();
@@ -166,11 +181,11 @@ export class DebugSessionManager {
     await session.setWatches(snapshot.watches.map((watch) => watch.expression));
   }
 
-  private managed(id: string, value: { label: string; session: DebugSession }): ManagedDebugSnapshot {
-    return { ...value.session.snapshot(), sessionId: id, sessionLabel: value.label };
+  private managed(id: string, value: { label: string; root: string; session: DebugSession }): ManagedDebugSnapshot {
+    return { ...value.session.snapshot(), sessionId: id, sessionLabel: value.label, workspaceRoot: value.root };
   }
 
-  private entry(sessionId?: string, required = true): { id: string; value: { label: string; session: DebugSession } } | undefined {
+  private entry(sessionId?: string, required = true): { id: string; value: { label: string; root: string; session: DebugSession } } | undefined {
     const id = sessionId || this.currentId;
     const value = id ? this.sessions.get(id) : undefined;
     if (!value) {

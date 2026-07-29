@@ -14,6 +14,12 @@ type Settings = {
 
 const fileFormatActionPrefix = "agent-k-file-format-action:";
 const cppLanguageServerRequestPrefix = "agent-k-cpp-language-server:";
+const nativeDebuggerRequestPrefix = "agent-k-native-debugger:";
+const protectedDebuggerActions = new Set([
+  "clear-breakpoints", "clear-output", "continue", "detach", "evaluate", "next", "pause", "select-frame", "set-breakpoints",
+  "set-exception-filters", "set-function-breakpoints", "set-instruction-breakpoints", "set-variable", "start", "step-in",
+  "step-out", "stop", "write-memory",
+]);
 
 function previewScreenshotPath(ctx: unknown): string {
   const cwd = typeof (ctx as { cwd?: unknown }).cwd === "string"
@@ -101,6 +107,69 @@ const cppLanguageServerTool = defineTool({
   },
 });
 
+const nativeDebuggerTool = defineTool({
+  name: "agent_k_native_debugger",
+  label: "Agent K native debugger",
+  description: "Control Agent K's managed LLDB/WinDbg DAP debugger for a named CMake workspace. Supports launch, attach, dump analysis, multiple sessions, breakpoints, execution control, stacks, locals, registers, expressions, memory, disassembly, and bounded output. Call status first and pass sessionId whenever more than one session exists.",
+  parameters: Type.Object({
+    action: Type.String({ description: "One of: status, configurations, processes, start, stop, detach, continue, pause, next, step-in, step-out, select-frame, stack, locals, registers, variables, evaluate, set-variable, set-breakpoints, clear-breakpoints, set-function-breakpoints, set-exception-filters, read-memory, write-memory, disassemble, set-instruction-breakpoints, output, clear-output." }),
+    workspace: Type.String({ description: "Unique CMake workspace folder name under the current Agent K workspace; do not pass a path." }),
+    sessionId: Type.Optional(Type.String({ description: "Debug session identifier returned by start or status. Required when the workspace has multiple sessions." })),
+    mode: Type.Optional(Type.String({ description: "For start: launch, attach, or dump." })),
+    targetId: Type.Optional(Type.String({ description: "CMake executable target ID returned by configurations." })),
+    buildConfiguration: Type.Optional(Type.String({ description: "CMake configuration: Debug, Release, RelWithDebInfo, or MinSizeRel." })),
+    program: Type.Optional(Type.String({ description: "Workspace-relative executable path for manual launch or matching executable for a dump." })),
+    args: Type.Optional(Type.Array(Type.String(), { description: "Program arguments for launch." })),
+    workingDirectory: Type.Optional(Type.String({ description: "Workspace-relative working directory for launch." })),
+    processId: Type.Optional(Type.Number({ description: "Positive process ID for attach." })),
+    dumpPath: Type.Optional(Type.String({ description: "Core/minidump path for dump analysis." })),
+    sessionName: Type.Optional(Type.String({ description: "Human-readable session label." })),
+    stopOnEntry: Type.Optional(Type.Boolean({ description: "Pause at the program entry point." })),
+    symbolPaths: Type.Optional(Type.Array(Type.String(), { description: "Symbol search directories." })),
+    sourceMap: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Debugger source-prefix to local-path mapping." })),
+    refresh: Type.Optional(Type.Boolean({ description: "Refresh CMake target discovery for configurations." })),
+    file: Type.Optional(Type.String({ description: "Workspace-relative source file for configurations or source breakpoints." })),
+    line: Type.Optional(Type.Number({ description: "One-based source line for a breakpoint." })),
+    lines: Type.Optional(Type.Array(Type.Number(), { description: "Complete one-based source breakpoint line list for the file." })),
+    enabled: Type.Optional(Type.Boolean({ description: "Whether the source breakpoint at line is enabled." })),
+    condition: Type.Optional(Type.String({ description: "Source breakpoint condition." })),
+    hitCondition: Type.Optional(Type.String({ description: "Source/function breakpoint hit condition." })),
+    logMessage: Type.Optional(Type.String({ description: "Source breakpoint log message." })),
+    functionBreakpoints: Type.Optional(Type.Array(Type.Object({
+      name: Type.String(),
+      condition: Type.Optional(Type.String()),
+      hitCondition: Type.Optional(Type.String()),
+    }), { description: "Complete function-breakpoint list." })),
+    exceptionFilters: Type.Optional(Type.Array(Type.String(), { description: "Complete supported exception-filter ID list." })),
+    threadId: Type.Optional(Type.Number({ description: "Thread ID for select-frame." })),
+    frameId: Type.Optional(Type.Number({ description: "Stack frame ID for select-frame." })),
+    variablesReference: Type.Optional(Type.Number({ description: "DAP variable container reference for variables or set-variable." })),
+    expression: Type.Optional(Type.String({ description: "Expression for evaluate." })),
+    context: Type.Optional(Type.String({ description: "Evaluate context: watch (default) or repl." })),
+    name: Type.Optional(Type.String({ description: "Variable name for set-variable." })),
+    value: Type.Optional(Type.String({ description: "New variable value for set-variable." })),
+    memoryReference: Type.Optional(Type.String({ description: "DAP memory reference or address for memory/disassembly actions." })),
+    offset: Type.Optional(Type.Number({ description: "Signed byte offset for memory, or signed address offset for disassembly." })),
+    count: Type.Optional(Type.Number({ description: "Byte count for read-memory or recent line count for output." })),
+    bytes: Type.Optional(Type.Array(Type.Number(), { description: "Byte values (0-255) for write-memory." })),
+    instructionOffset: Type.Optional(Type.Number({ description: "Signed instruction offset for disassembly." })),
+    instructionCount: Type.Optional(Type.Number({ description: "Instruction count for disassembly." })),
+    addresses: Type.Optional(Type.Array(Type.String(), { description: "Complete instruction-breakpoint address list." })),
+  }),
+  async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    if (!ctx.hasUI) return { content: [{ type: "text", text: "Agent K native debugger UI bridge is unavailable." }] };
+    const cwd = typeof (ctx as { cwd?: unknown }).cwd === "string"
+      ? (ctx as { cwd: string }).cwd
+      : process.cwd();
+    const payload = { ...params, cwd };
+    const response = await ctx.ui.input(`${nativeDebuggerRequestPrefix}${JSON.stringify(payload)}`);
+    if (!response) return { content: [{ type: "text", text: "Agent K native debugger request was cancelled." }], details: payload };
+    let details: unknown = response;
+    try { details = JSON.parse(response); } catch { /* Preserve a host error as text. */ }
+    return { content: [{ type: "text", text: response }], details };
+  },
+});
+
 function readJson<T>(path: string | undefined, fallback: T): T {
   if (!path) return fallback;
   try {
@@ -112,6 +181,7 @@ function readJson<T>(path: string | undefined, fallback: T): T {
 
 function summary(tool: string, input: Record<string, unknown>) {
   if (tool === "bash") return String(input.command ?? "").slice(0, 600);
+  if (tool === "agent_k_native_debugger") return `${String(input.action ?? "debug")} ${String(input.workspace ?? "")}${typeof input.sessionId === "string" ? ` (${input.sessionId})` : ""}`;
   return String(input.path ?? "unknown file");
 }
 
@@ -213,8 +283,10 @@ export default function agentKPermissions(pi: ExtensionAPI) {
   });
   pi.registerTool(fileFormatTool);
   const startupSettings = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {});
-  if (!startupSettings.disabledLanguageServerSkills?.includes("cpp-clangd"))
+  if (!startupSettings.disabledLanguageServerSkills?.includes("cpp-clangd")) {
     pi.registerTool(cppLanguageServerTool);
+    pi.registerTool(nativeDebuggerTool);
+  }
   pi.registerCommand("agent-k-internal-navigate-tree", {
     description: "Agent K internal same-session tree navigation",
     handler: async (args, ctx) => {
@@ -239,7 +311,8 @@ export default function agentKPermissions(pi: ExtensionAPI) {
         event.input.path = requested;
       }
     }
-    if (!(["bash", "write", "edit"] as string[]).includes(event.toolName)) return;
+    const debuggerAction = event.toolName === "agent_k_native_debugger" && typeof event.input.action === "string" ? event.input.action : undefined;
+    if (!(["bash", "write", "edit"] as string[]).includes(event.toolName) && !(debuggerAction && protectedDebuggerActions.has(debuggerAction))) return;
     const settings = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {});
     if (settings.permissionMode === "full") return;
     const grants = new Set(readJson<string[]>(process.env.AGENT_K_PERMISSION_STATE_PATH, []));

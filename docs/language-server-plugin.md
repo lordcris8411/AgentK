@@ -147,7 +147,7 @@ Project-aware workers implement these generic methods:
 | `cancel()` | Cancel the active preparation/download/configuration operation. |
 | `trace()` | Return bounded diagnostic transport history for the project-manager trace UI. |
 | manifest action method | Return data expected by the generic action consumer; for example, `terminalCommand(root, relativePath)` returns a command for the project PTY. |
-| optional Skill method | A package may expose a high-level structured method used by its Pi-facing Skill; the C++ package uses `skill(request)`. The generic host treats its method name and payload as opaque. |
+| optional Skill method | A package may expose high-level structured methods used by its Pi-facing Skill; the C++ package uses `skill(request)` for clangd and `debugSkill(request)` for native debugging. The generic host treats method names and payloads as opaque. |
 | `lsp(file, method, params)` | Handle an Editor request routed by language and file. |
 | `notify(file, method, params)` | Handle an Editor notification such as `didOpen`, `didChange`, or `didClose`. |
 | `shutdown()` | Stop child services and release package state. |
@@ -201,6 +201,14 @@ workspace/document symbols, diagnostics, call hierarchy, and type hierarchy. The
 loaded instead of repeatedly paying CMake configuration and clangd indexing costs. In a ready workspace these semantic
 operations take priority over shell text searches; shell remains the direct path for builds, tests, execution, Git, and
 explicitly textual or regular-expression searches.
+
+The same package exposes `agent_k_native_debugger` to Pi. The tool routes structured requests through Agent K's public Pi
+extension UI protocol to `debugSkill(request)` in the trusted worker; Pi never receives DAP transport access or a debugger
+process handle. Every request names a unique CMake workspace, and session-specific requests are rejected when the returned
+`sessionId` belongs to another workspace. The tool supports target discovery, launch, attach, dump analysis, source/function/
+exception/instruction breakpoints, execution control, stack and variable inspection, registers, expressions, memory,
+disassembly, and bounded output. Mutating operations use Agent K's existing permission policy. Source breakpoints may be
+configured before launch and persist as normal project breakpoints; live debug sessions and instruction addresses do not.
 
 The text Editor currently integrates document synchronization (including
 `didOpen`, versioned `didChange`, `didSave`, and `didClose`), diagnostics,

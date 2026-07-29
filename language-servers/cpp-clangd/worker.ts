@@ -26,7 +26,7 @@ import {
   type DebugAdapterLaunch,
   type DebugStartConfiguration,
 } from "./debug-session.js";
-import { DebugSessionManager } from "./debug-session-manager.js";
+import { DebugSessionManager, type ManagedDebugSnapshot } from "./debug-session-manager.js";
 
 export type CppProjectStatus = "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped";
 export type CppProject = { root: string; name: string; status: CppProjectStatus; error?: string; indexProgress?: string; cmake: boolean; compileCommands: boolean };
@@ -44,6 +44,48 @@ export type CppSkillRequest = {
   symbol?: unknown;
   workspace?: unknown;
 };
+export type CppDebugSkillRequest = {
+  action?: unknown;
+  addresses?: unknown;
+  args?: unknown;
+  buildConfiguration?: unknown;
+  bytes?: unknown;
+  condition?: unknown;
+  context?: unknown;
+  count?: unknown;
+  cwd?: unknown;
+  dumpPath?: unknown;
+  enabled?: unknown;
+  exceptionFilters?: unknown;
+  expression?: unknown;
+  file?: unknown;
+  frameId?: unknown;
+  functionBreakpoints?: unknown;
+  hitCondition?: unknown;
+  instructionCount?: unknown;
+  instructionOffset?: unknown;
+  line?: unknown;
+  lines?: unknown;
+  logMessage?: unknown;
+  memoryReference?: unknown;
+  mode?: unknown;
+  name?: unknown;
+  offset?: unknown;
+  processId?: unknown;
+  program?: unknown;
+  refresh?: unknown;
+  sessionId?: unknown;
+  sessionName?: unknown;
+  sourceMap?: unknown;
+  stopOnEntry?: unknown;
+  symbolPaths?: unknown;
+  targetId?: unknown;
+  threadId?: unknown;
+  value?: unknown;
+  variablesReference?: unknown;
+  workingDirectory?: unknown;
+  workspace?: unknown;
+};
 
 const RESULT_LIMIT = 200;
 const SKILL_ACTIONS = new Set([
@@ -51,14 +93,65 @@ const SKILL_ACTIONS = new Set([
   "implementation", "incoming-calls", "load", "outgoing-calls", "references",
   "status", "subtypes", "supertypes", "symbols", "type-declaration", "unload",
 ]);
+const DEBUG_SKILL_ACTIONS = new Set([
+  "clear-breakpoints", "clear-output", "configurations", "continue", "detach", "disassemble", "evaluate",
+  "locals", "next", "output", "pause", "processes", "read-memory", "registers", "select-frame",
+  "set-breakpoints", "set-exception-filters", "set-function-breakpoints", "set-instruction-breakpoints",
+  "set-variable", "stack", "start", "status", "step-in", "step-out", "stop", "variables", "write-memory",
+]);
 
 function requiredText(value: unknown, name: string): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${name} is required`);
   return value.trim();
 }
 
+function requiredString(value: unknown, name: string): string {
+  if (typeof value !== "string") throw new Error(`${name} is required`);
+  return value;
+}
+
 function optionalText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function integer(value: unknown, name: string, minimum = 0): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < minimum) throw new Error(`${name} must be an integer of at least ${minimum}`);
+  return value;
+}
+
+function stringList(value: unknown, name: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error(`${name} must be an array of strings`);
+  return value.map((item) => item.trim()).filter(Boolean);
+}
+
+function integerList(value: unknown, name: string, minimum = 0, maximum = Number.MAX_SAFE_INTEGER): number[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "number" || !Number.isInteger(item) || item < minimum || item > maximum))
+    throw new Error(`${name} must be an array of integers between ${minimum} and ${maximum}`);
+  return value;
+}
+
+function stringMap(value: unknown, name: string): Record<string, string> {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} must be an object containing string paths`);
+  const entries = Object.entries(value).filter(([from, to]) => Boolean(from.trim()) && typeof to === "string" && Boolean(to.trim()));
+  if (entries.length !== Object.keys(value).length) throw new Error(`${name} must contain only non-empty string paths`);
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function debugSessionSummary(snapshot: ManagedDebugSnapshot): Record<string, unknown> {
+  const selectedFrame = snapshot.threads.flatMap((thread) => thread.frames).find((frame) => frame.id === snapshot.selectedFrameId);
+  return {
+    sessionId: snapshot.sessionId,
+    label: snapshot.sessionLabel,
+    state: snapshot.state,
+    kind: snapshot.sessionKind,
+    ...(snapshot.adapter ? { adapter: snapshot.adapter } : {}),
+    ...(snapshot.stopReason ? { stopReason: snapshot.stopReason } : {}),
+    ...(snapshot.stopReasonKind ? { stopReasonKind: snapshot.stopReasonKind } : {}),
+    ...(selectedFrame ? { selectedFrame: { id: selectedFrame.id, name: selectedFrame.name, ...(selectedFrame.file ? { file: selectedFrame.file } : {}), ...(selectedFrame.line ? { line: selectedFrame.line } : {}), ...(selectedFrame.column ? { column: selectedFrame.column } : {}), ...(selectedFrame.instructionPointerReference ? { instructionPointerReference: selectedFrame.instructionPointerReference } : {}) } } : {}),
+    capabilities: snapshot.capabilities,
+  };
 }
 
 function isInside(root: string, candidate: string): boolean {
@@ -104,6 +197,8 @@ function deduplicateLocations(locations: LspLocation[]): LspLocation[] {
 
 /** Session-only clangd registry. Tool locations are deliberately private to app data. */
 export class CppService {
+  private readonly cachePath: string;
+  private readonly emit: (event: Record<string, unknown>) => void;
   private readonly projects = new Map<string, Entry>();
   private provisioning?: Promise<string>;
   private provisionAbort?: AbortController;
@@ -117,7 +212,9 @@ export class CppService {
   private readonly debug: DebugSessionManager;
   private readonly debugTargetDiscovery = new Map<string, Promise<{ bin: string; build: string; environment: NodeJS.ProcessEnv; targets: CMakeDebugTarget[] }>>();
   private readonly cmakeQueues = new Map<string, Promise<void>>();
-  constructor(private readonly cachePath: string, private readonly emit: (event: Record<string, unknown>) => void) {
+  constructor(cachePath: string, emit: (event: Record<string, unknown>) => void) {
+    this.cachePath = cachePath;
+    this.emit = emit;
     this.debug = new DebugSessionManager(
       (snapshot) => this.emit({ type: "debug_session", ...("sessionId" in snapshot ? { sessionId: snapshot.sessionId } : {}), snapshot }),
       () => this.managedDebugAdapter ?? systemDebugAdapterLaunch(),
@@ -262,6 +359,154 @@ export class CppService {
       const pid = Number(match[1]);
       return pid > 0 && pid !== process.pid ? [{ pid, name: match[2]!, command: match[3] || match[2]! }] : [];
     });
+  }
+  /** Structured native-debug operations exposed to Pi through Agent K's UI
+   * bridge. Workspace and session ownership are checked here before any DAP
+   * request reaches the adapter. */
+  async debugSkill(input: CppDebugSkillRequest): Promise<Record<string, unknown>> {
+    const action = requiredText(input.action, "action");
+    if (!DEBUG_SKILL_ACTIONS.has(action)) throw new Error(`Unsupported Native Debug Skill action: ${action}`);
+    const workspace = requiredText(input.workspace, "workspace");
+    const cwd = requiredText(input.cwd, "cwd");
+    const root = await this.resolveCmakeWorkspace(cwd, workspace);
+    const sessions = () => this.debug.listForRoot(root);
+    const sessionId = () => {
+      const requested = optionalText(input.sessionId);
+      const available = sessions();
+      const selected = requested ?? (available.length === 1 ? available[0]?.sessionId : undefined);
+      if (!selected) throw new Error(available.length ? "sessionId is required when the workspace has multiple debug sessions" : "The workspace has no active debug session");
+      this.debug.assertSessionRoot(selected, root);
+      return selected;
+    };
+    const snapshot = (id: string) => this.debug.status(id) as ManagedDebugSnapshot;
+    const result = (value: Record<string, unknown> = {}) => ({ ok: true, action, workspace, ...value });
+
+    if (action === "status") return result({
+      sessions: sessions().map(debugSessionSummary),
+      breakpoints: this.debug.configuredBreakpoints().filter((item) => isInside(root, item.file)),
+    });
+    if (action === "configurations") {
+      const contextFile = optionalText(input.file);
+      const file = contextFile ? await this.workspaceFile(root, contextFile) : undefined;
+      const configurations = await this.debugConfigurations(root, file, input.refresh === true, input.buildConfiguration);
+      return result({ configurations });
+    }
+    if (action === "processes") return result({ processes: await this.debugProcesses() });
+    if (action === "start") {
+      const mode = input.mode === "attach" || input.mode === "dump" ? input.mode : "launch";
+      const configuration: DebugStartConfiguration & { buildConfiguration?: unknown; sessionName?: string; targetId?: string } = {
+        root,
+        mode,
+        args: stringList(input.args, "args"),
+        ...(optionalText(input.workingDirectory) ? { cwd: optionalText(input.workingDirectory) } : {}),
+        ...(optionalText(input.program) ? { program: optionalText(input.program) } : {}),
+        ...(optionalText(input.dumpPath) ? { dumpPath: optionalText(input.dumpPath) } : {}),
+        ...(optionalText(input.targetId) ? { targetId: optionalText(input.targetId) } : {}),
+        ...(optionalText(input.sessionName) ? { sessionName: optionalText(input.sessionName) } : {}),
+        ...(input.processId === undefined ? {} : { processId: integer(input.processId, "processId", 1) }),
+        ...(input.stopOnEntry === true ? { stopOnEntry: true } : {}),
+        buildConfiguration: input.buildConfiguration,
+        symbolPaths: stringList(input.symbolPaths, "symbolPaths"),
+        sourceMap: stringMap(input.sourceMap, "sourceMap"),
+      };
+      const started = await this.debugStart(configuration);
+      return result({ session: debugSessionSummary(started) });
+    }
+    if (action === "set-breakpoints") {
+      const file = await this.workspaceFile(root, requiredText(input.file, "file"));
+      const lines = input.lines === undefined ? [integer(input.line, "line", 1)] : integerList(input.lines, "lines", 1);
+      await this.debugSetBreakpoints(file, lines);
+      if (input.line !== undefined && (input.enabled !== undefined || input.condition !== undefined || input.hitCondition !== undefined || input.logMessage !== undefined))
+        await this.debugUpdateBreakpoint(file, integer(input.line, "line", 1), {
+          ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
+          ...(typeof input.condition === "string" ? { condition: input.condition } : {}),
+          ...(typeof input.hitCondition === "string" ? { hitCondition: input.hitCondition } : {}),
+          ...(typeof input.logMessage === "string" ? { logMessage: input.logMessage } : {}),
+        });
+      return result({ file, breakpoints: this.debug.configuredBreakpoints().filter((item) => item.file === file) });
+    }
+    if (action === "clear-breakpoints") {
+      const files = [...new Set(this.debug.configuredBreakpoints().filter((item) => isInside(root, item.file)).map((item) => item.file))];
+      for (const file of files) await this.debugSetBreakpoints(file, []);
+      return result({ clearedFiles: files });
+    }
+    if (action === "set-function-breakpoints") {
+      if (!Array.isArray(input.functionBreakpoints)) throw new Error("functionBreakpoints must be an array");
+      const values = input.functionBreakpoints.map((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Each function breakpoint must be an object");
+        const value = item as Record<string, unknown>;
+        return { name: requiredText(value.name, "function breakpoint name"), ...(typeof value.condition === "string" ? { condition: value.condition } : {}), ...(typeof value.hitCondition === "string" ? { hitCondition: value.hitCondition } : {}) };
+      });
+      const next = await this.debugSetFunctionBreakpoints(values);
+      return result({ functionBreakpoints: next.functionBreakpoints });
+    }
+    if (action === "set-exception-filters") {
+      const next = await this.debugSetExceptionFilters(stringList(input.exceptionFilters, "exceptionFilters"));
+      return result({ exceptionFilters: next.exceptionFilters, supported: next.exceptionBreakpointFilters });
+    }
+
+    const id = sessionId();
+    if (action === "stop") {
+      const targetTerminated = snapshot(id).sessionKind === "live";
+      await this.debugCloseSession(id);
+      return result({ sessionId: id, removed: true, targetTerminated });
+    }
+    if (action === "detach") { await this.debugDetachSession(id); return result({ sessionId: id, removed: true, targetTerminated: false }); }
+    if (action === "continue" || action === "pause" || action === "next" || action === "step-in" || action === "step-out") {
+      const command = action === "step-in" ? "stepIn" : action === "step-out" ? "stepOut" : action;
+      const next = await this.debugCommand(command, id);
+      return result({ session: debugSessionSummary(next) });
+    }
+    if (action === "select-frame") {
+      const next = await this.debugSelectFrame(integer(input.threadId, "threadId"), integer(input.frameId, "frameId"), id);
+      return result({ session: debugSessionSummary(next) });
+    }
+    if (action === "stack") return result({
+      sessionId: id,
+      threads: snapshot(id).threads.map((thread) => ({ id: thread.id, name: thread.name, frames: thread.frames.map(({ scopes: _scopes, ...frame }) => frame) })),
+    });
+    if (action === "locals" || action === "registers") {
+      const current = snapshot(id);
+      const frame = current.threads.flatMap((thread) => thread.frames).find((item) => item.id === current.selectedFrameId);
+      if (!frame) throw new Error("The debug session has no selected stack frame");
+      const registers = (name: string, hint?: string) => hint === "registers" || /register/i.test(name);
+      const scopes = frame.scopes.filter((scope) => action === "registers" ? registers(scope.name, scope.presentationHint) : !registers(scope.name, scope.presentationHint));
+      return result({ sessionId: id, frameId: frame.id, scopes });
+    }
+    if (action === "variables") return result({
+      sessionId: id,
+      variables: await this.debugVariables(integer(input.variablesReference, "variablesReference", 1), id),
+    });
+    if (action === "evaluate") return result({
+      sessionId: id,
+      evaluation: await this.debugEvaluate(requiredText(input.expression, "expression"), input.context === "repl" ? "repl" : "watch", id),
+    });
+    if (action === "set-variable") {
+      const next = await this.debugSetVariable(integer(input.variablesReference, "variablesReference", 1), requiredText(input.name, "name"), requiredString(input.value, "value"), id);
+      return result({ session: debugSessionSummary(next) });
+    }
+    if (action === "read-memory") return result({
+      sessionId: id,
+      memory: await this.debugReadMemory(requiredText(input.memoryReference, "memoryReference"), input.offset === undefined ? 0 : integer(input.offset, "offset", Number.MIN_SAFE_INTEGER), input.count === undefined ? 256 : integer(input.count, "count", 1), id),
+    });
+    if (action === "write-memory") return result({
+      sessionId: id,
+      memory: await this.debugWriteMemory(requiredText(input.memoryReference, "memoryReference"), input.offset === undefined ? 0 : integer(input.offset, "offset", Number.MIN_SAFE_INTEGER), integerList(input.bytes, "bytes", 0, 255), id),
+    });
+    if (action === "disassemble") return result({
+      sessionId: id,
+      instructions: await this.debugDisassemble(requiredText(input.memoryReference, "memoryReference"), input.instructionOffset === undefined ? -32 : integer(input.instructionOffset, "instructionOffset", Number.MIN_SAFE_INTEGER), input.instructionCount === undefined ? 64 : integer(input.instructionCount, "instructionCount", 1), input.offset === undefined ? 0 : integer(input.offset, "offset", Number.MIN_SAFE_INTEGER), id),
+    });
+    if (action === "set-instruction-breakpoints") {
+      const next = await this.debugSetInstructionBreakpoints(stringList(input.addresses, "addresses"), id);
+      return result({ sessionId: id, instructionBreakpoints: next.instructionBreakpoints });
+    }
+    if (action === "output") {
+      const limit = input.count === undefined ? 200 : Math.min(3_000, integer(input.count, "count", 1));
+      return result({ sessionId: id, output: snapshot(id).output.split("\n").slice(-limit).join("\n"), lineLimit: limit });
+    }
+    if (action === "clear-output") { this.debugClearOutput(id); return result({ sessionId: id, cleared: true }); }
+    throw new Error(`Native Debug Skill action was not routed: ${action}`);
   }
   /** Declarative project action consumed by the generic terminal bridge. */
   async terminalCommand(rootInput: string, relativePath: string): Promise<string> {
@@ -1084,6 +1329,7 @@ if (typeof process.send === "function") {
           case "cancel": service.cancel(); break;
           case "terminalCommand": result = await service.terminalCommand(String(args[0] ?? ""), String(args[1] ?? "")); break;
           case "skill": result = await service.skill((args[0] && typeof args[0] === "object" ? args[0] : {}) as CppSkillRequest); break;
+          case "debugSkill": result = await service.debugSkill((args[0] && typeof args[0] === "object" ? args[0] : {}) as CppDebugSkillRequest); break;
           case "lsp": result = await service.lsp(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
           case "notify": result = await service.notify(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
           case "debugStatus": result = service.debugStatus(typeof args[0] === "string" ? args[0] : undefined); break;

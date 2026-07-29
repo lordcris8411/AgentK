@@ -1,9 +1,9 @@
 ---
-name: cpp-project-language-service
-description: Query Agent K's managed clangd service for an explicitly loaded CMake workspace by using the agent_k_cpp_language_server tool.
+name: cpp-project-tools
+description: Use Agent K's managed C/C++ project services for semantic clangd queries and native LLDB/WinDbg debugging. Use for CMake workspace symbols, diagnostics, definitions, references, launch or attach debugging, breakpoints, stepping, variables, registers, memory, disassembly, console output, and Linux core or Windows minidump analysis through agent_k_cpp_language_server and agent_k_native_debugger.
 ---
 
-# Agent K C++ project language service
+# Agent K C++ project tools
 
 A **C++ workspace** is a folder that Agent K can recognize as a CMake project
 because it contains `CMakeLists.txt`. Its `workspace` argument is the folder
@@ -81,3 +81,49 @@ compilation database, and index in application-owned cache directories. Use
 Pi's normal file tools for source edits and the Agent K project terminal for an
 explicit build; this skill provides language intelligence and lifecycle control,
 not file mutation or compilation.
+
+## Native debugging
+
+Use `agent_k_native_debugger` instead of shelling out to GDB, LLDB, WinDbg, or a
+DAP adapter. Agent K owns the adapter, validates workspace/session boundaries,
+and keeps managed debugger files outside the source tree. The `workspace`
+argument is the same unique CMake folder name used by the language tool.
+
+Start every debug workflow with `status`. Reuse the returned `sessionId` on all
+session-specific calls. If multiple sessions exist, never guess which one the
+user means. Ask or use the session label and status to select it explicitly.
+
+Typical live workflow:
+
+1. Call `configurations` and choose the requested CMake executable `targetId`,
+   or call `processes` when the user explicitly wants to attach.
+2. Set source breakpoints with `set-breakpoints` when needed. Its `lines` value
+   is the complete line list for that file; use `line` plus condition fields to
+   configure one breakpoint.
+3. Call `start` with `mode: launch` and the target, or `mode: attach` and a PID.
+4. Call `status`. When stopped, inspect `stack`, `locals`, `registers`, or
+   `evaluate`; use `variables` to expand a returned `variablesReference`.
+5. Use `continue`, `pause`, `next`, `step-in`, `step-out`, and `select-frame`
+   deliberately. Re-read state after an execution-control action.
+6. Call `stop` to terminate the target and remove the session. Call `detach`
+   when the target must keep running. For an attached process, prefer detach
+   unless the user explicitly asks to terminate it.
+
+For dump analysis, call `start` with `mode: dump`, `dumpPath`, and the matching
+`program` when LLDB requires it. Dump sessions are read-only: inspect state,
+memory, registers, stack, expressions, and disassembly, then use `stop` only to
+close the analysis session. Never attempt continue, stepping, variable changes,
+or memory writes on a dump.
+
+Use `read-memory` and `disassemble` only with a memory reference or instruction
+pointer returned by the debugger when possible. Use `write-memory`,
+`set-variable`, or instruction breakpoints only in a stopped live session and
+only when the user explicitly requests that mutation. Preserve exact byte order
+and report partial writes or adapter errors without pretending the change
+succeeded. Treat addresses and instruction breakpoints as session-local because
+ASLR can invalidate them after restart.
+
+`output` is bounded; request only the recent lines needed for diagnosis. Source
+breakpoints are project configuration and persist in Agent K. Instruction
+breakpoints are session-only. Debug sessions themselves are not persisted and
+are removed when the target terminates, is stopped, or is detached.

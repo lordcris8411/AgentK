@@ -73,6 +73,7 @@ const ansiSequencePattern =
 const fileFormatActionPrefix = "agent-k-file-format-action:";
 const previewConsoleRequestPrefix = "agent-k-preview-console:";
 const cppLanguageServerRequestPrefix = "agent-k-cpp-language-server:";
+const nativeDebuggerRequestPrefix = "agent-k-native-debugger:";
 
 // Extension UI strings are often authored for Pi's terminal renderer. Strip
 // ANSI CSI/OSC control sequences before displaying them in the WebView.
@@ -410,6 +411,26 @@ export function ExtensionUiProvider({ children }: { children: ReactNode }) {
               if (typeof request.action !== "string" || typeof request.workspace !== "string" || typeof request.cwd !== "string")
                 throw new Error("Invalid C++ language service request");
               const result = await desktop.languageServerCall("cpp-clangd", "skill", request);
+              respond(JSON.stringify(result, undefined, 2));
+            } catch (cause) {
+              respond(JSON.stringify({ ok: false, error: cause instanceof Error ? cause.message : String(cause) }, undefined, 2));
+            }
+          })();
+          return;
+        }
+        if (method === "input" && title.startsWith(nativeDebuggerRequestPrefix)) {
+          const requestId = typeof event.id === "string" ? event.id : "";
+          const respond = (value: string) => void desktop.extensionResponse({
+            type: "extension_ui_response",
+            id: requestId,
+            value,
+          }, runtimeId);
+          void (async () => {
+            try {
+              const request = JSON.parse(title.slice(nativeDebuggerRequestPrefix.length)) as Record<string, unknown>;
+              if (typeof request.action !== "string" || typeof request.workspace !== "string" || typeof request.cwd !== "string")
+                throw new Error("Invalid native debugger request");
+              const result = await desktop.languageServerCall("cpp-clangd", "debugSkill", request);
               respond(JSON.stringify(result, undefined, 2));
             } catch (cause) {
               respond(JSON.stringify({ ok: false, error: cause instanceof Error ? cause.message : String(cause) }, undefined, 2));
