@@ -17,10 +17,10 @@ import {
   privateClangdIndexDirectory,
   recordCompilationDatabase,
 } from "./cmake-cache.js";
-import { DEFAULT_VSWHERE_PATH, managedDebuggerArchive, managedDebuggerMarker, managedToolchainArchives, managedToolchainMarker, parseWindowsEnvironment, toolchainArchiveFormat } from "./toolchain.js";
+import { DEFAULT_VSWHERE_PATH, managedDebuggerArchive, managedDebuggerExecutable, managedDebuggerMarker, managedToolchainArchives, managedToolchainMarker, parseWindowsEnvironment, toolchainArchiveFormat } from "./toolchain.js";
 import { selectWorkspaceSymbols, symbolLocation, type SkillLocation as LspLocation, type SkillRange as Range, type SkillSymbol as LspSymbol } from "./skill-symbols.js";
 import { languageSkillStatusState, languageSkillUsable } from "./skill-status.js";
-import { cmakeDebugTargets, cmakeProjectRoots, prioritizeCMakeProjectRoots, type CMakeDebugTarget } from "./cmake-debug.js";
+import { cmakeDebugBuildDirectory, cmakeDebugTargets, cmakeProjectRoots, prioritizeCMakeProjectRoots, type CMakeDebugTarget } from "./cmake-debug.js";
 import {
   systemDebugAdapterLaunch,
   type DebugAdapterLaunch,
@@ -847,13 +847,13 @@ export class CppService {
     const e2eAdapter = process.env.AGENT_K_E2E === "1" ? process.env.AGENT_K_E2E_DEBUG_ADAPTER : undefined;
     if (e2eAdapter) {
       const adapter = await realpath(e2eAdapter);
-      return { adapter: process.platform === "win32" ? "windbg" : "lldb", args: [adapter], command: process.execPath };
+      return { adapter: "lldb", args: [adapter], command: process.execPath };
     }
     const archive = managedDebuggerArchive(process.platform, process.arch);
     const markerValue = managedDebuggerMarker(process.platform, process.arch);
     if (!archive || !markerValue) return systemDebugAdapterLaunch();
     const root = join(this.cachePath, "cpp-debugger", process.platform, process.arch);
-    const command = join(root, "extension", "adapter", "codelldb");
+    const command = join(root, "extension", "adapter", managedDebuggerExecutable(process.platform));
     const marker = await readFile(join(root, ".agent-k-debug-tools"), "utf8").catch(() => "");
     if (marker === markerValue && existsSync(command)) return { adapter: "lldb", args: [], command };
     this.debugProvisionAbort ??= new AbortController();
@@ -868,7 +868,7 @@ export class CppService {
     await Promise.all([mkdir(staging, { recursive: true }), mkdir(archiveCache, { recursive: true })]);
     this.emit({ type: "language_server_progress", stage: "preparing", tool: "LLDB debugger", detail: "Preparing managed LLDB debugger" });
     await this.downloadRelease(archive.owner, archive.repository, archive.tag, archive.asset, staging, archiveCache, "LLDB debugger", archive.sha256, signal);
-    const executable = await this.findExecutable(staging, "codelldb");
+    const executable = await this.findExecutable(staging, managedDebuggerExecutable(process.platform));
     if (!executable) throw new Error("Provisioned LLDB debugger is incomplete");
     await chmod(executable, 0o755);
     const relativeExecutable = relative(staging, executable);
@@ -892,8 +892,7 @@ export class CppService {
   }
   private debugBuildDirectory(root: string, configuration: CMakeBuildConfiguration): string {
     const platform = process.platform as "linux" | "win32";
-    const key = createHash("sha256").update(root).update("\0").update(managedToolchainMarker(platform)).digest("hex");
-    return join(this.cachePath, "cpp-debug", key, configuration);
+    return cmakeDebugBuildDirectory(this.cachePath, root, managedToolchainMarker(platform), configuration);
   }
   private debugDiscoveryKey(root: string, configuration: CMakeBuildConfiguration): string {
     return `${root}\0${configuration}`;
@@ -932,7 +931,14 @@ export class CppService {
         await writeFile(join(query, "codemodel-v2"), "", "utf8");
         const cmake = join(bin, process.platform === "win32" ? "cmake.exe" : "cmake");
         if (!existsSync(cmake)) throw new Error("Managed CMake is unavailable");
-        await this.run(cmake, ["-S", root, "-B", build, "-G", "Ninja", `-DCMAKE_BUILD_TYPE=${configuration}`, "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"], root, bin, environment);
+        await this.run(cmake, [
+          "-S", root,
+          "-B", build,
+          "-G", "Ninja",
+          `-DCMAKE_BUILD_TYPE=${configuration}`,
+          "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+          ...(process.platform === "win32" ? ["-DCMAKE_OBJECT_PATH_MAX=128"] : []),
+        ], root, bin, environment);
         return cmakeDebugTargets(build);
       });
       return { bin, build, environment, targets };

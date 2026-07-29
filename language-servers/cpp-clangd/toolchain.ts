@@ -9,6 +9,8 @@ export type ToolchainArchive = {
 /** Portable LLDB DAP distribution used only by the trusted debug worker. */
 export function managedDebuggerArchive(platform: NodeJS.Platform, architecture: string): ToolchainArchive | undefined {
   const common = { owner: "vadimcn", repository: "codelldb", tag: "v1.12.2" };
+  if (platform === "win32" && architecture === "x64")
+    return { ...common, asset: "codelldb-win32-x64.vsix", sha256: "aa3f45175da3850973632fef1a1af0ed2382866bfd3dcd836544973831388a25" };
   if (platform === "linux" && architecture === "x64")
     return { ...common, asset: "codelldb-linux-x64.vsix", sha256: "b85b45a8570051d535b0927c6c9da11c39f3a056c73559064647faf7f37f637d" };
   if (platform === "darwin" && architecture === "x64")
@@ -21,6 +23,10 @@ export function managedDebuggerArchive(platform: NodeJS.Platform, architecture: 
 export function managedDebuggerMarker(platform: NodeJS.Platform, architecture: string): string | undefined {
   const archive = managedDebuggerArchive(platform, architecture);
   return archive ? `codelldb:${archive.asset}:${archive.sha256}\n` : undefined;
+}
+
+export function managedDebuggerExecutable(platform: NodeJS.Platform): string {
+  return platform === "win32" ? "codelldb.exe" : "codelldb";
 }
 
 export const DEFAULT_VSWHERE_PATH = "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe";

@@ -16,6 +16,7 @@ import {
 import {
   DEFAULT_VSWHERE_PATH,
   managedDebuggerArchive,
+  managedDebuggerExecutable,
   managedDebuggerMarker,
   managedToolchainArchives,
   managedToolchainMarker,
@@ -84,7 +85,7 @@ test("uses standalone clangd on Linux and Windows", () => {
   assert.match(managedToolchainMarker("win32"), /clangd-windows-22\.1\.6\.zip/);
 });
 
-test("pins a private portable LLDB debugger for Linux x64", () => {
+test("pins a private portable CodeLLDB debugger for supported desktop platforms", () => {
   const archive = managedDebuggerArchive("linux", "x64");
   assert.equal(archive?.owner, "vadimcn");
   assert.equal(archive?.repository, "codelldb");
@@ -93,7 +94,10 @@ test("pins a private portable LLDB debugger for Linux x64", () => {
   assert.match(managedDebuggerMarker("linux", "x64") ?? "", /codelldb-linux-x64\.vsix/);
   assert.equal(managedDebuggerArchive("darwin", "x64")?.asset, "codelldb-darwin-x64.vsix");
   assert.equal(managedDebuggerArchive("darwin", "arm64")?.asset, "codelldb-darwin-arm64.vsix");
-  assert.equal(managedDebuggerArchive("win32", "x64"), undefined);
+  assert.equal(managedDebuggerArchive("win32", "x64")?.asset, "codelldb-win32-x64.vsix");
+  assert.equal(managedDebuggerArchive("win32", "x64")?.sha256, "aa3f45175da3850973632fef1a1af0ed2382866bfd3dcd836544973831388a25");
+  assert.equal(managedDebuggerExecutable("win32"), "codelldb.exe");
+  assert.equal(managedDebuggerExecutable("linux"), "codelldb");
 });
 
 test("parses the Visual Studio developer environment without pseudo variables", () => {

@@ -31,7 +31,7 @@ export type DebugInstructionBreakpoint = { address: string; message?: string; ve
 export type DebugMemory = { address: string; bytes: number[]; offset: number; unreadableBytes: number };
 export type DebugMemoryWrite = DebugMemory & { bytesWritten: number };
 export type DebugSnapshot = {
-  adapter?: "lldb" | "windbg";
+  adapter?: "lldb";
   breakpoints: DebugBreakpoint[];
   capabilities: Record<string, boolean>;
   error?: string;
@@ -76,14 +76,14 @@ function commandExists(command: string): boolean {
   return spawnSync(probe, [command], { stdio: "ignore", windowsHide: true }).status === 0;
 }
 
-export type DebugAdapterLaunch = { adapter: "lldb" | "windbg"; args: string[]; command: string };
+export type DebugAdapterLaunch = { adapter: "lldb"; args: string[]; command: string };
 
 export function systemDebugAdapterLaunch(): DebugAdapterLaunch {
   if (process.platform === "win32") {
-    for (const command of ["OpenDebugAD7.exe", "OpenDebugAD7"]) {
-      if (commandExists(command)) return { adapter: "windbg", args: [], command };
+    for (const command of ["codelldb.exe", "codelldb"]) {
+      if (commandExists(command)) return { adapter: "lldb", args: [], command };
     }
-    throw new Error("Windows native DAP adapter is unavailable. Install the Visual Studio C++ debugging tools and place OpenDebugAD7 on PATH.");
+    throw new Error("CodeLLDB is unavailable. Retry to provision Agent K's private debugger cache.");
   }
   for (const command of ["lldb-dap", "lldb-vscode"]) {
     if (commandExists(command)) return { adapter: "lldb", args: [], command };
@@ -140,12 +140,13 @@ export class DebugSession {
   private selectedFrameId?: number;
   private selectedThreadId?: number;
   private state: DebugSnapshot["state"] = "idle";
+  private stopRevision = 0;
   private stopReason?: string;
   private stopReasonKind?: string;
   private threads: DebugThread[] = [];
   private watches: string[] = [];
   private watchResults: DebugWatch[] = [];
-  private adapter?: "lldb" | "windbg";
+  private adapter?: "lldb";
   private error?: string;
   private initialized?: { promise: Promise<void>; resolve(): void };
   private root?: string;
@@ -207,10 +208,8 @@ export class DebugSession {
     this.adapter = launch.adapter;
     this.sessionKind = mode === "dump" ? "dump" : "live";
     this.instructionBreakpoints = [];
-    if (mode === "dump" && launch.adapter === "lldb") {
+    if (mode === "dump") {
       if (!input.program) throw new Error("A matching executable is required for LLDB core debugging");
-      program = await realpath(resolve(root, input.program));
-    } else if (mode === "dump" && input.program) {
       program = await realpath(resolve(root, input.program));
     }
     const symbolPaths = await Promise.all((input.symbolPaths ?? []).map((path) => realpath(resolve(root, path))));
@@ -222,6 +221,7 @@ export class DebugSession {
     this.threads = [];
     this.watchResults = [];
     this.state = "starting";
+    this.stopRevision += 1;
     let resolveInitialized = () => undefined;
     const initializedPromise = new Promise<void>((resolveEvent) => { resolveInitialized = resolveEvent; });
     this.initialized = { promise: initializedPromise, resolve: resolveInitialized };
@@ -248,7 +248,7 @@ export class DebugSession {
 
     try {
       const initialized = record(await this.request("initialize", {
-        adapterID: launch.adapter === "lldb" ? "lldb" : "cppvsdbg",
+        adapterID: "lldb",
         clientID: "agent-k",
         clientName: "Agent K",
         columnsStartAt1: true,
@@ -271,25 +271,28 @@ export class DebugSession {
         this.exceptionFilters = this.exceptionFilters.filter((filter) => supportedExceptionFilters.has(filter));
       else
         this.exceptionFilters = this.exceptionBreakpointFilters.filter((item) => item.default).map((item) => item.filter);
-      const startCommand: "attach" | "launch" = mode === "attach" || (mode === "dump" && launch.adapter === "lldb") ? "attach" : "launch";
+      const startCommand: "attach" | "launch" = mode === "attach" || mode === "dump" ? "attach" : "launch";
       const startArguments = mode === "launch"
         ? {
           args: input.args ?? [],
           cwd,
-          ...(launch.adapter === "lldb" ? { expressions: "native" } : {}),
+          expressions: "native",
           name: program?.split(/[\\/]/).pop() ?? "program",
           program,
           request: "launch",
-          ...(launch.adapter === "lldb"
-            ? { stopOnEntry: input.stopOnEntry === true }
-            : { stopAtEntry: input.stopOnEntry === true, type: "cppvsdbg" }),
+          stopOnEntry: input.stopOnEntry === true,
+          // Agent K talks to CodeLLDB directly and does not provide VS Code's
+          // runInTerminal reverse request. Without an explicit console on
+          // Windows the debuggee can inherit the adapter's DAP stdout pipe,
+          // interleaving ordinary program output with protocol frames.
+          terminal: "console",
         }
         : mode === "attach" ? {
-          ...(launch.adapter === "lldb" ? { expressions: "native" } : {}),
+          expressions: "native",
           pid: input.processId,
           processId: input.processId,
           request: "attach",
-        } : launch.adapter === "lldb" ? {
+        } : {
           expressions: "native",
           initCommands: symbolPaths.length ? [`settings set target.debug-file-search-paths ${symbolPaths.map(lldbArgument).join(" ")}`] : [],
           processCreateCommands: [],
@@ -297,13 +300,6 @@ export class DebugSession {
           request: "attach",
           sourceMap,
           targetCreateCommands: [`target create --core ${lldbArgument(dumpPath!)} ${lldbArgument(program!)}`],
-        } : {
-          dumpPath,
-          program,
-          request: "launch",
-          sourceFileMap: sourceMap,
-          symbolSearchPath: symbolPaths.join(";"),
-          type: "cppvsdbg",
         };
       const startRequest = this.request(startCommand, startArguments, 30_000);
       let initializedTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -658,9 +654,19 @@ export class DebugSession {
         continue;
       }
       const start = headerEnd + 4;
-      const end = start + length;
+      let payloadStart = start;
+      // Some Windows adapters may still allow a debuggee to write into the
+      // adapter pipe. Recover when that output lands between a DAP header and
+      // its JSON body instead of treating the user's stdout as malformed JSON.
+      if (this.buffer[payloadStart] !== 0x7b) {
+        const candidate = this.buffer.indexOf(0x7b, payloadStart);
+        if (candidate < 0 || this.buffer.length < candidate + length) return;
+        payloadStart = candidate;
+      }
+      const end = payloadStart + length;
       if (this.buffer.length < end) return;
-      const json = this.buffer.subarray(start, end).toString("utf8");
+      if (payloadStart > start) this.appendOutput(this.buffer.subarray(start, payloadStart).toString("utf8"));
+      const json = this.buffer.subarray(payloadStart, end).toString("utf8");
       this.buffer = this.buffer.subarray(end);
       try { this.handle(JSON.parse(json) as DapMessage); }
       catch (cause) { this.fail(new Error(`Invalid debug adapter response: ${String(cause)}`)); }
@@ -689,8 +695,10 @@ export class DebugSession {
       return;
     }
     if (message.event === "continued") {
-      if (this.sessionKind === "dump") return;
+      if (this.sessionKind === "dump" || this.state === "failed" || this.state === "terminated") return;
+      this.stopRevision += 1;
       this.state = "running";
+      this.error = undefined;
       this.stopReason = undefined;
       this.stopReasonKind = undefined;
       this.threads = [];
@@ -719,18 +727,32 @@ export class DebugSession {
       return;
     }
     if (message.event === "stopped") {
+      if (this.state === "failed" || this.state === "terminated") return;
+      const revision = ++this.stopRevision;
       this.state = "stopped";
+      this.error = undefined;
       this.stopReasonKind = text(body.reason) ?? "paused";
       this.stopReason = text(body.description) ?? this.stopReasonKind;
       this.selectedThreadId = number(body.threadId);
-      void this.refreshStoppedState().catch((cause) => this.fail(cause));
+      void this.refreshStoppedState(revision).catch((cause) => {
+        // CodeLLDB cancels stack/variable requests when execution resumes.
+        // Such a response belongs to the previous pause and must never kill
+        // the adapter or overwrite the new running state.
+        if (revision !== this.stopRevision || this.state !== "stopped") return;
+        const message = cause instanceof Error ? cause.message : String(cause);
+        if (/^<?cancel+ed>?$/iu.test(message.trim())) return;
+        this.error = message;
+        this.publish();
+      });
       return;
     }
     if (message.event === "terminated" || message.event === "exited") {
+      this.stopRevision += 1;
       this.state = "terminated";
       this.root = undefined;
       this.threads = [];
       this.publish();
+      return;
     }
   }
 
@@ -801,8 +823,10 @@ export class DebugSession {
     else this.breakpoints.delete(file);
   }
 
-  private async refreshStoppedState(): Promise<void> {
+  private async refreshStoppedState(revision?: number): Promise<void> {
+    const current = (): boolean => revision === undefined || (revision === this.stopRevision && this.state === "stopped");
     const body = record(await this.request("threads", {}));
+    if (!current()) return;
     const values = Array.isArray(body.threads) ? body.threads : [];
     this.threads = values.flatMap((item): DebugThread[] => {
       const value = record(item);
@@ -812,6 +836,7 @@ export class DebugSession {
     this.selectedThreadId ??= this.threads[0]?.id;
     await Promise.all(this.threads.map(async (thread) => {
       const stack = record(await this.request("stackTrace", { levels: 40, startFrame: 0, threadId: thread.id }));
+      if (!current()) return;
       thread.frames = (Array.isArray(stack.stackFrames) ? stack.stackFrames : []).flatMap((item): DebugStackFrame[] => {
         const value = record(item);
         const id = number(value.id);
@@ -828,21 +853,25 @@ export class DebugSession {
         }];
       });
     }));
+    if (!current()) return;
     const selectedThread = this.threads.find((thread) => thread.id === this.selectedThreadId) ?? this.threads[0];
     this.selectedThreadId = selectedThread?.id;
     this.selectedFrameId = selectedThread?.frames[0]?.id;
-    await this.refreshFrameScopes();
-    await this.refreshWatches();
-    this.publish();
+    await this.refreshFrameScopes(revision);
+    if (!current()) return;
+    await this.refreshWatches(revision);
+    if (current()) this.publish();
   }
 
-  private async refreshFrameScopes(): Promise<void> {
+  private async refreshFrameScopes(revision?: number): Promise<void> {
+    const current = (): boolean => revision === undefined || (revision === this.stopRevision && this.state === "stopped");
     if (this.selectedFrameId === undefined) return;
     const frame = this.threads.flatMap((thread) => thread.frames).find((item) => item.id === this.selectedFrameId);
     if (!frame) return;
     const body = record(await this.request("scopes", { frameId: frame.id }));
+    if (!current()) return;
     const scopes = Array.isArray(body.scopes) ? body.scopes : [];
-    frame.scopes = await Promise.all(scopes.flatMap((item): Array<Promise<DebugScope>> => {
+    const nextScopes = await Promise.all(scopes.flatMap((item): Array<Promise<DebugScope>> => {
       const value = record(item);
       const variablesReference = number(value.variablesReference);
       if (variablesReference === undefined) return [];
@@ -854,6 +883,7 @@ export class DebugSession {
         variablesReference,
       }))()];
     }));
+    if (current()) frame.scopes = nextScopes;
   }
 
   private async variables(variablesReference: number): Promise<DebugVariable[]> {
@@ -874,12 +904,14 @@ export class DebugSession {
     });
   }
 
-  private async refreshWatches(): Promise<void> {
+  private async refreshWatches(revision?: number): Promise<void> {
+    const current = (): boolean => revision === undefined || (revision === this.stopRevision && this.state === "stopped");
     if (this.state !== "stopped" || this.selectedFrameId === undefined) {
+      if (!current()) return;
       this.watchResults = this.watches.map((expression) => ({ expression }));
       return;
     }
-    this.watchResults = await Promise.all(this.watches.map(async (expression): Promise<DebugWatch> => {
+    const nextResults = await Promise.all(this.watches.map(async (expression): Promise<DebugWatch> => {
       try {
         const body = record(await this.request("evaluate", { context: "watch", expression, frameId: this.selectedFrameId }));
         return {
@@ -893,5 +925,6 @@ export class DebugSession {
         return { expression, error: cause instanceof Error ? cause.message : String(cause) };
       }
     }));
+    if (current()) this.watchResults = nextResults;
   }
 }

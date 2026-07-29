@@ -18,7 +18,7 @@
   },
   "skill": {
     "name": "C++ project tools",
-    "markdown": "---\nname: cpp-project-tools\ndescription: Use Agent K's managed C/C++ project services for semantic clangd queries and native LLDB/WinDbg debugging through agent_k_cpp_language_server and agent_k_native_debugger.\n---\n\n# Agent K C++ project tools\n\nPass a unique CMake workspace folder name, not a path. Use agent_k_cpp_language_server for semantic symbols, definitions, references, diagnostics, hover, call/type hierarchy, and explicit language-service lifecycle. Call status first and treat indexing results as partial.\n\nUse agent_k_native_debugger instead of invoking GDB, LLDB, WinDbg, or a DAP adapter from the shell. Call status first, then configurations for launch targets or processes for an explicit attach. Preserve the returned sessionId. Set breakpoints, start, inspect stack/locals/registers/expressions/memory/disassembly, and control execution through the tool. Stop terminates the target and removes the session; detach keeps the target running and removes the session. Prefer detach for attached processes unless termination was explicitly requested. Dump sessions are read-only. Only write memory or variables in a stopped live session after an explicit user request. Addresses and instruction breakpoints are session-local because ASLR can invalidate them.\n"
+    "markdown": "---\nname: cpp-project-tools\ndescription: Use Agent K's managed C/C++ project services for semantic clangd queries and native CodeLLDB debugging through agent_k_cpp_language_server and agent_k_native_debugger.\n---\n\n# Agent K C++ project tools\n\nPass a unique CMake workspace folder name, not a path. Use agent_k_cpp_language_server for semantic symbols, definitions, references, diagnostics, hover, call/type hierarchy, and explicit language-service lifecycle. Call status first and treat indexing results as partial.\n\nUse agent_k_native_debugger instead of invoking GDB, LLDB, WinDbg, or a DAP adapter from the shell. Call status first, then configurations for launch targets or processes for an explicit attach. Preserve the returned sessionId. Set breakpoints, start, inspect stack/locals/registers/expressions/memory/disassembly, and control execution through the tool. Stop terminates the target and removes the session; detach keeps the target running and removes the session. Prefer detach for attached processes unless termination was explicitly requested. Dump sessions are read-only. Only write memory or variables in a stopped live session after an explicit user request. Addresses and instruction breakpoints are session-local because ASLR can invalidate them.\n"
   },
   "commands": [{ "id": "active-cpp-projects", "title": "Active C++ projects", "kind": "project-manager" }],
   "worker": "dist/worker.js",
@@ -34,8 +34,7 @@
       "priority": 100
     }],
     "adapters": [
-      { "command": "OpenDebugAD7", "platforms": ["win32"] },
-      { "command": "codelldb", "platforms": ["linux", "darwin"] }
+      { "command": "codelldb", "platforms": ["win32", "linux", "darwin"] }
     ]
   }
 }

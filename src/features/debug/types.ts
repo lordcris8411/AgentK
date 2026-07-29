@@ -13,7 +13,7 @@ export type DebugInstructionBreakpoint = { address: string; message?: string; ve
 export type DebugMemory = { address: string; bytes: number[]; offset: number; unreadableBytes: number };
 export type DebugMemoryWrite = DebugMemory & { bytesWritten: number };
 export type DebugSnapshot = {
-  adapter?: "lldb" | "windbg";
+  adapter?: "lldb";
   breakpoints: DebugBreakpoint[];
   capabilities: Record<string, boolean>;
   error?: string;

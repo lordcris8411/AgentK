@@ -857,6 +857,7 @@ export function InspectorPanel({
   }, [root]);
   useEffect(() => {
     const normalize = (path: string) => path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
+    const normalizedRoot = root ? normalize(root).replace(/\/+$/, "") : undefined;
     const pendingDirectories = new Set<string>();
     let refreshTimer: number | undefined;
     let refreshing = false;
@@ -911,7 +912,7 @@ export function InspectorPanel({
         setAdvancedProgress(String(event.path));
         return;
       }
-      if (event.type !== "workspace_file_changed" || event.root !== root || typeof event.path !== "string" || !root) return;
+      if (event.type !== "workspace_file_changed" || typeof event.root !== "string" || normalize(event.root).replace(/\/+$/, "") !== normalizedRoot || typeof event.path !== "string" || !root) return;
       const path = event.path;
       if (event.kind === "rename") scheduleDirectoryRefresh(path);
       const tab = tabsRef.current.find((candidate) => normalize(candidate.path) === normalize(path));

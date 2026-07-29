@@ -3,7 +3,20 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { cmakeDebugTargets, cmakeProjectRoots, prioritizeCMakeProjectRoots } from "./cmake-debug.ts";
+import { cmakeDebugBuildDirectory, cmakeDebugTargets, cmakeProjectRoots, prioritizeCMakeProjectRoots } from "./cmake-debug.ts";
+
+test("keeps managed CMake debug build paths short and isolated", () => {
+  const cache = join("C:\\Users\\developer\\AppData\\Roaming\\com.example.agentk", "Cache", "language-servers", "cpp-clangd");
+  const first = cmakeDebugBuildDirectory(cache, "D:\\project\\first", "toolchain-v1", "Debug");
+  const second = cmakeDebugBuildDirectory(cache, "D:\\project\\second", "toolchain-v1", "Debug");
+  const release = cmakeDebugBuildDirectory(cache, "D:\\project\\first", "toolchain-v1", "Release");
+
+  assert.ok(first.length < cache.length + 22, first);
+  assert.notEqual(first, second);
+  assert.notEqual(first, release);
+  assert.match(first, /[\\/]d[\\/][0-9a-f]{16}[\\/]d$/u);
+  assert.match(release, /[\\/]d[\\/][0-9a-f]{16}[\\/]r$/u);
+});
 
 test("prioritizes the nested CMake project containing the active file", () => {
   const roots = ["/workspace/native", "/workspace/tools", "/workspace/site/native-addon"];

@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { readFile, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
@@ -8,6 +9,23 @@ export type CMakeDebugTarget = {
   name: string;
   program: string;
 };
+
+const DEBUG_CONFIGURATION_DIRECTORY: Record<string, string> = {
+  Debug: "d",
+  MinSizeRel: "m",
+  Release: "r",
+  RelWithDebInfo: "i",
+};
+
+/**
+ * CMake's compiler probes add several nested directories below the build
+ * directory. Keep this path deliberately short so MSVC and projects that do
+ * not enable Windows long paths can still create their temporary objects.
+ */
+export function cmakeDebugBuildDirectory(cachePath: string, root: string, toolchainMarker: string, configuration: string): string {
+  const key = createHash("sha256").update(root).update("\0").update(toolchainMarker).digest("hex").slice(0, 16);
+  return join(cachePath, "d", key, DEBUG_CONFIGURATION_DIRECTORY[configuration] ?? "d");
+}
 
 export function prioritizeCMakeProjectRoots(roots: string[], contextFile?: string): string[] {
   if (!contextFile) return [...roots];

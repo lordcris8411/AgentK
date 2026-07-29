@@ -1,6 +1,6 @@
 ---
 name: cpp-project-tools
-description: Use Agent K's managed C/C++ project services for semantic clangd queries and native LLDB/WinDbg debugging. Use for CMake workspace symbols, diagnostics, definitions, references, launch or attach debugging, breakpoints, stepping, variables, registers, memory, disassembly, console output, and Linux core or Windows minidump analysis through agent_k_cpp_language_server and agent_k_native_debugger.
+description: Use Agent K's managed C/C++ project services for semantic clangd queries and native CodeLLDB debugging. Use for CMake workspace symbols, diagnostics, definitions, references, launch or attach debugging, breakpoints, stepping, variables, registers, memory, disassembly, console output, and core or minidump analysis through agent_k_cpp_language_server and agent_k_native_debugger.
 ---
 
 # Agent K C++ project tools

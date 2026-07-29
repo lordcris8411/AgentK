@@ -9,12 +9,20 @@ const adapterSource = String.raw`
 import { appendFileSync } from 'node:fs';
 let buffer = Buffer.alloc(0);
 let launch;
+let pendingThreads;
 let memory = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]);
 const send = (message) => {
   const json = JSON.stringify(message);
   process.stdout.write('Content-Length: ' + Buffer.byteLength(json) + '\r\n\r\n' + json);
 };
+const sendAfterRawOutput = (message, output) => {
+  const json = JSON.stringify(message);
+  process.stdout.write('Content-Length: ' + Buffer.byteLength(json) + '\r\n\r\n');
+  process.stdout.write(output);
+  process.stdout.write(json);
+};
 const response = (request, body = {}) => send({ body, command: request.command, request_seq: request.seq, seq: 1000 + request.seq, success: true, type: 'response' });
+const failedResponse = (request, message) => send({ command: request.command, message, request_seq: request.seq, seq: 1000 + request.seq, success: false, type: 'response' });
 const handle = (request) => {
   if (request.command === 'initialize') { response(request, { exceptionBreakpointFilters: [{ default: true, filter: 'cpp_throw', label: 'C++ throw' }], supportsConfigurationDoneRequest: true, supportsDisassembleRequest: true, supportsFunctionBreakpoints: true, supportsInstructionBreakpoints: true, supportsReadMemoryRequest: true, supportsSetVariable: true, supportsWriteMemoryRequest: true }); return; }
   if (request.command === 'launch' || request.command === 'attach') { launch = request; if (process.env.FAKE_REQUEST_LOG) appendFileSync(process.env.FAKE_REQUEST_LOG, JSON.stringify(request) + '\n'); send({ event: 'initialized', seq: 20, type: 'event' }); return; }
@@ -23,12 +31,26 @@ const handle = (request) => {
   if (request.command === 'setInstructionBreakpoints') { response(request, { breakpoints: request.arguments.breakpoints.map(() => ({ verified: true })) }); return; }
   if (request.command === 'configurationDone') {
     response(request); response(launch);
+    if (process.env.FAKE_INTERLEAVED_STDOUT) {
+      sendAfterRawOutput({ event: 'terminated', body: {}, seq: 23, type: 'event' }, 'Hello, World!\r\n');
+      return;
+    }
     send({ event: 'output', body: { category: 'console', output: 'warning: (x86_64) /lib64/libstdc++.so.6 No LZMA support found for reading .gnu_debugdata section\n' }, seq: 20, type: 'event' });
     send({ event: 'output', body: { category: 'stdout', output: 'ready\n' }, seq: 21, type: 'event' });
     send({ event: 'stopped', body: { reason: 'breakpoint', threadId: 7 }, seq: 22, type: 'event' });
     return;
   }
-  if (request.command === 'threads') { response(request, { threads: [{ id: 7, name: 'main' }] }); return; }
+  if (request.command === 'threads') {
+    if (process.env.FAKE_CANCEL_PAUSE_REFRESH) { pendingThreads = request; return; }
+    response(request, { threads: [{ id: 7, name: 'main' }] }); return;
+  }
+  if (request.command === 'continue' && process.env.FAKE_CANCEL_PAUSE_REFRESH) {
+    response(request);
+    if (pendingThreads) { failedResponse(pendingThreads, '<cancelled>'); pendingThreads = undefined; }
+    send({ event: 'continued', body: { threadId: 7 }, seq: 24, type: 'event' });
+    setTimeout(() => send({ event: 'terminated', body: {}, seq: 25, type: 'event' }), 5);
+    return;
+  }
   if (request.command === 'stackTrace') { response(request, { stackFrames: [{ id: 11, instructionPointerReference: '0x1000', line: 3, column: 1, name: 'main', source: { path: process.env.FAKE_SOURCE } }] }); return; }
   if (request.command === 'scopes') { response(request, { scopes: [{ expensive: false, name: 'Locals', variablesReference: 9 }, { expensive: false, name: 'CPU Registers', presentationHint: 'registers', variablesReference: 12 }] }); return; }
   if (request.command === 'variables') {
@@ -68,6 +90,66 @@ test("debug output retains at most 3000 lines", () => {
   assert.equal(lines.length, 3_000);
   assert.equal(lines[0], "line 5");
   assert.equal(lines.at(-1), "line 3004");
+});
+
+test("DebugSession recovers debuggee output interleaved with a DAP frame", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "agent-k-debug-interleaved-"));
+  const program = join(temporary, "program.exe");
+  const adapter = join(temporary, "adapter.mjs");
+  await Promise.all([writeFile(program, "fake\n"), writeFile(adapter, adapterSource)]);
+  const previous = process.env.FAKE_INTERLEAVED_STDOUT;
+  process.env.FAKE_INTERLEAVED_STDOUT = "1";
+  const session = new DebugSession(() => undefined, () => ({ adapter: "lldb", args: [adapter], command: process.execPath }));
+  try {
+    await session.start({ program, root: temporary });
+    const deadline = Date.now() + 2_000;
+    while (session.snapshot().state !== "terminated" && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    const snapshot = session.snapshot();
+    assert.equal(snapshot.state, "terminated");
+    assert.match(snapshot.output, /Hello, World!/);
+    assert.equal(snapshot.error, undefined);
+  } finally {
+    session.shutdown();
+    if (previous === undefined) delete process.env.FAKE_INTERLEAVED_STDOUT;
+    else process.env.FAKE_INTERLEAVED_STDOUT = previous;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await rm(temporary, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("DebugSession ignores pause inspection requests cancelled by continue", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "agent-k-debug-cancelled-pause-"));
+  const program = join(temporary, "program.exe");
+  const adapter = join(temporary, "adapter.mjs");
+  await Promise.all([writeFile(program, "fake\n"), writeFile(adapter, adapterSource)]);
+  const previous = process.env.FAKE_CANCEL_PAUSE_REFRESH;
+  process.env.FAKE_CANCEL_PAUSE_REFRESH = "1";
+  const states: string[] = [];
+  const errors: Array<string | undefined> = [];
+  const session = new DebugSession((snapshot) => { states.push(snapshot.state); errors.push(snapshot.error); }, () => ({ adapter: "lldb", args: [adapter], command: process.execPath }));
+  try {
+    await session.start({ program, root: temporary, stopOnEntry: true });
+    const stoppedDeadline = Date.now() + 2_000;
+    while (session.snapshot().selectedThreadId === undefined && Date.now() < stoppedDeadline)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(session.snapshot().state, "stopped");
+    assert.equal(session.snapshot().selectedThreadId, 7);
+    await session.command("continue");
+    const deadline = Date.now() + 2_000;
+    while (session.snapshot().state !== "terminated" && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(session.snapshot().state, "terminated");
+    assert.equal(session.snapshot().error, undefined);
+    assert.equal(states.includes("failed"), false, states.join(", "));
+    assert.equal(errors.some(Boolean), false, errors.filter(Boolean).join(", "));
+  } finally {
+    session.shutdown();
+    if (previous === undefined) delete process.env.FAKE_CANCEL_PAUSE_REFRESH;
+    else process.env.FAKE_CANCEL_PAUSE_REFRESH = previous;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await rm(temporary, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
 });
 
 test("DebugSession performs DAP launch, breakpoint, stack, locals and watch flow", async () => {
@@ -214,37 +296,6 @@ test("DebugSession maps LLDB core dumps and enforces read-only sessions", async 
     assert.deepEqual(attach?.arguments.processCreateCommands, []);
     assert.deepEqual(attach?.arguments.sourceMap, { "/build/src": temporary });
     assert.match(String((attach?.arguments.targetCreateCommands as string[] | undefined)?.[0]), /target create --core/);
-    await session.stop();
-  } finally {
-    session.shutdown();
-    if (previousSource === undefined) delete process.env.FAKE_SOURCE; else process.env.FAKE_SOURCE = previousSource;
-    if (previousLog === undefined) delete process.env.FAKE_REQUEST_LOG; else process.env.FAKE_REQUEST_LOG = previousLog;
-    await rm(temporary, { recursive: true, force: true });
-  }
-});
-
-test("DebugSession maps OpenDebugAD7 minidump configuration", async () => {
-  if (process.platform === "win32") return;
-  const temporary = await mkdtemp(join(tmpdir(), "agent-k-minidump-"));
-  const dump = join(temporary, "program.dmp");
-  const symbols = join(temporary, "symbols");
-  const adapter = join(temporary, "adapter.mjs");
-  const log = join(temporary, "requests.jsonl");
-  await mkdir(symbols);
-  await Promise.all([writeFile(dump, "dump\n"), writeFile(adapter, adapterSource)]);
-  const previousSource = process.env.FAKE_SOURCE;
-  const previousLog = process.env.FAKE_REQUEST_LOG;
-  process.env.FAKE_SOURCE = join(temporary, "main.cpp");
-  process.env.FAKE_REQUEST_LOG = log;
-  const session = new DebugSession(() => undefined, () => ({ adapter: "windbg", args: [adapter], command: process.execPath }));
-  try {
-    await session.start({ dumpPath: dump, mode: "dump", root: temporary, sourceMap: { "C:\\build": temporary }, symbolPaths: [symbols] });
-    const requests = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { arguments: Record<string, unknown>; command: string });
-    const launch = requests.find((request) => request.command === "launch");
-    assert.equal(launch?.arguments.dumpPath, dump);
-    assert.equal(launch?.arguments.symbolSearchPath, symbols);
-    assert.deepEqual(launch?.arguments.sourceFileMap, { "C:\\build": temporary });
-    assert.equal(launch?.arguments.type, "cppvsdbg");
     await session.stop();
   } finally {
     session.shutdown();

@@ -4,6 +4,7 @@ import { desktopWindow, platform } from "../../lib/platform";
 import { useSettings } from "../settings/SettingsContext";
 import { emptyDebugSnapshot, type DebugBreakpoint, type DebugProcess, type DebugSnapshot, type DebugVariable, type DebugWatch } from "./types";
 import { appendConsoleHistory, debugLayoutGeometry, defaultDebugProject, loadDebugProject, loadDebugProviderConfiguration, navigateConsoleHistory, saveDebugProject, saveDebugProviderConfiguration, type DebugPanelId } from "./persistence";
+import { isLocalDebugScope } from "./scopes";
 
 const DebugServerContext = createContext("");
 const DebugSessionContext = createContext<string | undefined>(undefined);
@@ -621,7 +622,7 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
     if (value && !snapshot.watches.some((watch) => watch.expression === value))
       void call("debugSetWatches", [...snapshot.watches.map((watch) => watch.expression), value]);
   };
-  const localScopes = selectedFrame?.scopes.filter((scope) => scope.presentationHint !== "registers" && !/register/i.test(scope.name)) ?? [];
+  const localScopes = selectedFrame?.scopes.filter(isLocalDebugScope) ?? [];
   const localVariables = localScopes.flatMap((scope) => scope.variables.filter((variable) => !registerGroup(variable)).map((variable) => ({ scope, variable })));
   const selectSession = async (nextId: string) => {
     setSessionId(nextId);

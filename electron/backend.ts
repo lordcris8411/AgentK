@@ -49,6 +49,7 @@ import { LanguageServerRegistry } from "./language-server-registry.js";
 import type { WorkspaceFileChange } from "./language-server-host.js";
 import { agentKBashRcConfig, agentKStarshipConfig } from "./terminal-profile.js";
 import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
+import { mergeWorkspaceWatchKind, type WorkspaceWatchKind } from "./workspace-watch.js";
 
 export interface DesktopBackendOptions {
   appDataPath: string;
@@ -91,6 +92,7 @@ export class DesktopBackend {
   private settingsWatchTimer?: ReturnType<typeof setTimeout>;
   private workspaceWatchRoot?: string;
   private readonly workspaceWatchTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly workspaceWatchKinds = new Map<string, WorkspaceWatchKind>();
   private readonly workspaceLanguageChanges = new Map<string, WorkspaceFileChange>();
   private workspaceLanguageChangeTimer?: ReturnType<typeof setTimeout>;
 
@@ -505,6 +507,7 @@ export class DesktopBackend {
     this.workspaceWatcher?.close(); this.workspaceWatcher = undefined; this.workspaceWatchRoot = undefined;
     for (const timer of this.workspaceWatchTimers.values()) clearTimeout(timer);
     this.workspaceWatchTimers.clear();
+    this.workspaceWatchKinds.clear();
     if (this.workspaceLanguageChangeTimer) clearTimeout(this.workspaceLanguageChangeTimer);
     this.workspaceLanguageChangeTimer = undefined;
     this.workspaceLanguageChanges.clear();
@@ -535,14 +538,18 @@ export class DesktopBackend {
         const absolute = resolve(root, String(name));
         if (!isPathInside(root, absolute)) return;
         const path = relative(root, absolute).replaceAll("\\", "/");
+        const mergedKind = mergeWorkspaceWatchKind(this.workspaceWatchKinds.get(path), kind);
+        this.workspaceWatchKinds.set(path, mergedKind);
         const previous = this.workspaceWatchTimers.get(path); if (previous) clearTimeout(previous);
         this.workspaceWatchTimers.set(path, setTimeout(() => {
           this.workspaceWatchTimers.delete(path);
+          const eventKind = this.workspaceWatchKinds.get(path) ?? kind;
+          this.workspaceWatchKinds.delete(path);
           if (this.workspaceWatchRoot !== root) return;
-          const changeType: WorkspaceFileChange["type"] = kind === "change"
+          const changeType: WorkspaceFileChange["type"] = eventKind === "change"
             ? 2
             : existsSync(absolute) ? 1 : 3;
-          this.options.emit({ type: "workspace_file_changed", root, path, kind, changeType });
+          this.options.emit({ type: "workspace_file_changed", root, path, kind: eventKind, changeType });
           this.queueLanguageServerFileChange({ path: absolute, type: changeType });
         }, 80));
       });

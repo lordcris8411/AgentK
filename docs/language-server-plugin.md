@@ -217,8 +217,8 @@ loaded C++ projects. The worker converts workspace watcher events to
 `workspace/didChangeWatchedFiles`; project-owned CMake configuration changes
 are coalesced and rebuild the compilation database before clangd restarts.
 Generated build/dependency CMake files do not trigger reconfiguration. The
-manifest's DAP adapters use the Visual Studio native debug adapter on Windows
-and a pinned portable CodeLLDB distribution on Linux/macOS. The LLDB adapter is
+manifest's DAP adapters use one pinned portable CodeLLDB distribution on Windows,
+Linux, and macOS. The LLDB adapter is
 downloaded on first debug launch into Agent K's private cache,
 verified by SHA-256, and never added to the host PATH. The Debug window launches or attaches to a
 workspace process, synchronizes source breakpoints from Monaco's glyph margin,
