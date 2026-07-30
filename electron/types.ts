@@ -7,6 +7,7 @@ export interface ClientSettings {
   permissionMode: "ask" | "full";
   browserId: string;
   cacheDirectory: string;
+  localModelDirectory: string;
   piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
   autoCompactEnabled: boolean;

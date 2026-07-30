@@ -1,0 +1,37 @@
+name: Local Model Real
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Native runner used for the requested llama.cpp backends
+        required: true
+        type: choice
+        default: windows-latest
+        options:
+          - windows-latest
+          - ubuntu-latest
+          - self-hosted-windows-gpu
+          - self-hosted-linux-rocm
+      backends:
+        description: Comma-separated backends available on the runner
+        required: true
+        type: string
+        default: cpu
+
+jobs:
+  real-local-model:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.2
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check:desktop
+      - name: Run MiniCPM llama.cpp and Pi tool-call loop
+        env:
+          AGENT_K_LOCAL_MODEL_TEST_BACKENDS: ${{ inputs.backends }}
+        run: npm run test:local-model:real

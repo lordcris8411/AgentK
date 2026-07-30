@@ -22,6 +22,7 @@ const fallback: ClientSettings = {
   permissionMode: "ask",
   browserId: "default",
   cacheDirectory: "",
+  localModelDirectory: "",
   piExecutable: "",
   workerPoolSize: 4,
   autoCompactEnabled: true,

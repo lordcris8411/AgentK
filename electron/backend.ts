@@ -50,6 +50,13 @@ import type { WorkspaceFileChange } from "./language-server-host.js";
 import { agentKBashRcConfig, agentKStarshipConfig } from "./terminal-profile.js";
 import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
 import { mergeWorkspaceWatchKind, type WorkspaceWatchKind } from "./workspace-watch.js";
+import {
+  LOCAL_MODEL_PROVIDER_ID,
+  LocalModelManager,
+  type LocalModelBackend,
+  type LocalModelSource,
+  type LocalModelRuntimeConfig,
+} from "./local-models.js";
 
 export interface DesktopBackendOptions {
   appDataPath: string;
@@ -60,6 +67,7 @@ export interface DesktopBackendOptions {
   bundledThemesSource: string;
   bundledPiCli: string;
   cachePath: string;
+  localModelRoot?: string;
   permissionExtensionSource: string;
   emit(event: JsonObject): void;
   emitProjectConsole(event: JsonObject): void;
@@ -82,6 +90,7 @@ export class DesktopBackend {
   private firstPartyEditorPlugins: FileFormatPluginResource[] = [];
   private piLaunch?: PiLaunch;
   private pool?: RpcPool;
+  private localModels?: LocalModelManager;
   private readonly projectConsoles = new Map<string, ProjectConsoleProcess>();
   private readonly webProjects = new Map<string, ReturnType<typeof spawn>>();
   private readonly languageServers: LanguageServerRegistry;
@@ -143,6 +152,35 @@ export class DesktopBackend {
     this.piLaunch = resolvePiLaunch(settings.piExecutable, this.options.bundledPiCli);
     this.startSettingsWatch();
     await this.startThemeWatch();
+    this.localModels = new LocalModelManager({
+      cachePath: this.options.cachePath,
+      rootPath: this.options.localModelRoot,
+      emit: this.options.emit,
+      piBusy: () => this.pool?.hasActiveAgentTasks() ?? false,
+      verifyPiBusy: async () => this.pool?.hasActiveAgentTasksVerified() ?? false,
+      reloadPi: async () => this.pool?.reload(),
+      migrateModelReferences: async (previous, next) => {
+        const current = await loadClientSettings(this.options.appDataPath);
+        const oldKey = previous ? `${LOCAL_MODEL_PROVIDER_ID}/${previous}` : undefined;
+        const nextKey = next ? `${LOCAL_MODEL_PROVIDER_ID}/${next}` : undefined;
+        await saveClientSettings(this.options.appDataPath, {
+          ...current,
+          defaultModel: oldKey && current.defaultModel === oldKey ? nextKey ?? "" : current.defaultModel,
+          sessionModels: Object.fromEntries(Object.entries(current.sessionModels).flatMap(([path, model]) => oldKey && model === oldKey ? nextKey ? [[path, nextKey]] : [] : [[path, model]])),
+        });
+      },
+      ...(process.env.AGENT_K_E2E === "1" && process.env.AGENT_K_E2E_LOCAL_MODEL_ENDPOINT
+        ? { endpoints: {
+            huggingface: process.env.AGENT_K_E2E_LOCAL_MODEL_ENDPOINT,
+            modelscope: process.env.AGENT_K_E2E_LOCAL_MODEL_ENDPOINT,
+            github: process.env.AGENT_K_E2E_LOCAL_MODEL_ENDPOINT,
+          } }
+        : {}),
+      ...(process.env.AGENT_K_E2E === "1" && process.env.AGENT_K_E2E_LOCAL_MODEL_RUNTIME && process.env.AGENT_K_E2E_LOCAL_MODEL_NODE
+        ? { runtimeOverride: { executable: process.env.AGENT_K_E2E_LOCAL_MODEL_NODE, args: [process.env.AGENT_K_E2E_LOCAL_MODEL_RUNTIME] } }
+        : {}),
+    });
+    await this.localModels.initialize();
     this.pool = new RpcPool({
       appDataPath: this.options.appDataPath,
       bundledExtensionsDirectory: this.bundledExtensionsDirectory,
@@ -330,6 +368,37 @@ export class DesktopBackend {
         return detectLocalService(requiredString(args.baseUrl, "baseUrl"));
       case "discover_local_models":
         return discoverLocalModels(requiredString(args.baseUrl, "baseUrl"), args.ollama === true);
+      case "local_models_list":
+        await this.pool?.hasActiveAgentTasksVerified();
+        return this.requireLocalModels().snapshot();
+      case "local_models_search":
+        return this.requireLocalModels().search(requiredLocalModelHub(args.source), requiredString(args.query, "query"));
+      case "local_models_inspect":
+        return this.requireLocalModels().inspectRepository(requiredLocalModelHub(args.source), requiredString(args.repository, "repository"));
+      case "local_models_download":
+        return this.requireLocalModels().enqueue(requiredLocalModelHub(args.source), requiredString(args.repository, "repository"), requiredString(args.file, "file"));
+      case "local_models_download_pause":
+        return this.requireLocalModels().pauseDownload(requiredString(args.id, "id"));
+      case "local_models_download_resume":
+        return this.requireLocalModels().resumeDownload(requiredString(args.id, "id"));
+      case "local_models_download_cancel":
+        return this.requireLocalModels().cancelDownload(requiredString(args.id, "id"));
+      case "local_models_import":
+        return this.requireLocalModels().importGguf(requiredString(args.path, "path"));
+      case "local_models_verify":
+        return this.requireLocalModels().verify(requiredString(args.id, "id"));
+      case "local_models_activate":
+        return this.requireLocalModels().activate(requiredString(args.id, "id"));
+      case "local_models_run":
+        return this.requireLocalModels().run(requiredString(args.id, "id"));
+      case "local_models_stop":
+        return this.requireLocalModels().stop();
+      case "local_models_update":
+        return this.requireLocalModels().updateConfig(requiredString(args.id, "id"), requiredLocalModelConfig(args.config));
+      case "local_models_delete":
+        return this.requireLocalModels().delete(requiredString(args.id, "id"));
+      case "local_models_logs":
+        return this.requireLocalModels().logsSnapshot();
       case "list_projects":
         return this.files.listProjects();
       case "add_workspace":
@@ -364,8 +433,27 @@ export class DesktopBackend {
         return pool.prepare(requiredString(args.cwd, "cwd"));
       case "create_session":
         return pool.createSession(requiredString(args.runtimeId, "runtimeId"));
-      case "pi_command":
-        return pool.command(asObject(args.command), optionalString(args.runtimeId));
+      case "pi_command": {
+        const piCommand = asObject(args.command);
+        if (piCommand.type === "set_model" && piCommand.provider === LOCAL_MODEL_PROVIDER_ID) {
+          const active = this.requireLocalModels().snapshot().activeModelId;
+          if (typeof piCommand.modelId !== "string" || piCommand.modelId !== active)
+            throw new Error("Local models can only be switched in Agent K Settings");
+          try {
+            return await pool.command(piCommand, optionalString(args.runtimeId));
+          } catch (cause) {
+            const message = cause instanceof Error ? cause.message : String(cause);
+            if (!/^Model not found:\s*agent-k-llama-cpp\//i.test(message)) throw cause;
+            // models.json is authoritative, but an already-running Pi process
+            // can still hold the catalog loaded before the active local model
+            // changed. Reload once and retry instead of exposing that transient
+            // split-brain state to the conversation UI.
+            await pool.reload();
+            return pool.command(piCommand, optionalString(args.runtimeId));
+          }
+        }
+        return pool.command(piCommand, optionalString(args.runtimeId));
+      }
       case "pi_abort":
         return pool.abort(optionalString(args.runtimeId));
       case "close_pi_runtime":
@@ -493,12 +581,13 @@ export class DesktopBackend {
     }
   }
 
-  shutdown(): void {
+  async shutdown(): Promise<void> {
     this.stopWorkspaceWatch();
     for (const id of this.projectConsoles.keys()) this.stopProjectConsole(id);
     for (const child of this.webProjects.values()) child.kill();
     this.webProjects.clear();
     this.pool?.shutdown();
+    await this.localModels?.shutdown();
     this.languageServers.shutdown();
     this.files.shutdown();
   }
@@ -697,6 +786,11 @@ export class DesktopBackend {
     return this.pool;
   }
 
+  private requireLocalModels(): LocalModelManager {
+    if (!this.localModels) throw new Error("Local model manager is not initialized");
+    return this.localModels;
+  }
+
   private requirePiLaunch(): PiLaunch {
     if (!this.piLaunch) throw new Error("Pi runtime is not initialized");
     return this.piLaunch;
@@ -733,6 +827,23 @@ function requiredString(value: unknown, name: string): string {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function requiredLocalModelHub(value: unknown): Exclude<LocalModelSource, "import"> {
+  if (value === "huggingface" || value === "modelscope") return value;
+  throw new Error("source must be huggingface or modelscope");
+}
+
+function requiredLocalModelConfig(value: unknown): Partial<LocalModelRuntimeConfig> {
+  const source = asObject(value);
+  const result: Partial<LocalModelRuntimeConfig> = {};
+  if (typeof source.backend === "string") result.backend = source.backend as LocalModelBackend;
+  if (typeof source.contextSize === "number") result.contextSize = source.contextSize as LocalModelRuntimeConfig["contextSize"];
+  if (typeof source.gpuLayers === "number") result.gpuLayers = source.gpuLayers;
+  if (typeof source.threads === "number") result.threads = source.threads;
+  if (typeof source.maxOutputTokens === "number") result.maxOutputTokens = source.maxOutputTokens;
+  if (typeof source.reasoning === "boolean") result.reasoning = source.reasoning;
+  return result;
 }
 
 function requiredNumber(value: unknown, name: string): number {

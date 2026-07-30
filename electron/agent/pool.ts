@@ -54,6 +54,27 @@ export class RpcPool {
     return { total, idle, busy: total - idle, minimum: this.minimum };
   }
 
+  hasActiveAgentTasks(): boolean {
+    this.removeClosed();
+    return [...this.workers.values()].some((worker) => worker.hasActiveAgentTask());
+  }
+
+  async hasActiveAgentTasksVerified(): Promise<boolean> {
+    this.removeClosed();
+    const workers = [...this.workers.values()];
+    const states = await Promise.all(workers.map(async (worker) => {
+      try {
+        return await worker.refreshActiveAgentTask();
+      } catch {
+        // A runtime that cannot report its state stays conservatively busy if
+        // its last known state was busy. Never unlock a model switch on an RPC
+        // transport failure.
+        return worker.hasActiveAgentTask();
+      }
+    }));
+    return states.some(Boolean);
+  }
+
   async spawn(cwd: string): Promise<string> {
     this.starting += 1;
     try {

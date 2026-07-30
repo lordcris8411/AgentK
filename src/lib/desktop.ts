@@ -57,6 +57,7 @@ export type ClientSettings = {
   permissionMode: "ask" | "full";
   browserId: string;
   cacheDirectory: string;
+  localModelDirectory: string;
   piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
   autoCompactEnabled: boolean;
@@ -189,6 +190,7 @@ export type ProviderCatalogItem = {
   configured: boolean;
   authMethods: Array<"api_key" | "oauth">;
   models: Array<{ id: string; name?: string }>;
+  agentKManaged?: boolean;
 };
 
 export type ProviderDraft = {
@@ -233,6 +235,23 @@ export type LocalServiceInfo = {
   kind: "ollama" | "vllm" | "lm-studio" | "openai-compatible";
   displayName: string;
 };
+
+export type LocalModelSource = "huggingface" | "modelscope" | "import";
+export type LocalModelBackend = "auto" | "cpu" | "vulkan" | "rocm" | "cuda12" | "cuda13";
+export type LocalModelCompatibility = "unverified" | "verifying-tools" | "tool-compatible" | "tool-incompatible";
+export type LocalModelStatus = "queued" | "downloading" | "paused" | "verifying-download" | "ready" | "provisioning" | "loading" | "verifying-tools" | "running" | "stopping" | "failed" | "missing";
+export type LocalModelRuntimeConfig = { backend: LocalModelBackend; contextSize: number; gpuLayers: number; threads: number; maxOutputTokens: number; reasoning: boolean };
+export type LocalModelRecord = {
+  id: string; name: string; source: LocalModelSource; repository?: string; revision?: string;
+  files: Array<{ name: string; path: string; size: number; sha256: string }>;
+  size: number; sha256: string; architecture?: string; quantization?: string; parameterCount?: number; trainingContext?: number; blockCount?: number;
+  compatibility: LocalModelCompatibility; compatibilityError?: string; verifiedAt?: number; config: LocalModelRuntimeConfig; status: LocalModelStatus; error?: string; createdAt: number; updatedAt: number;
+};
+export type LocalModelDownloadTask = { id: string; source: Exclude<LocalModelSource, "import">; repository: string; revision: string; files: Array<{ name: string; url: string; size: number; sha256?: string; etag?: string }>; completedBytes: number; totalBytes: number; bytesPerSecond?: number; status: "queued" | "downloading" | "paused" | "verifying-download" | "failed"; error?: string; createdAt: number; updatedAt: number };
+export type RuntimeDownloadProgress = { modelId: string; backend: Exclude<LocalModelBackend, "auto">; source: string; fileName: string; phase: "downloading" | "verifying" | "extracting"; completedBytes: number; totalBytes: number; bytesPerSecond: number };
+export type LocalModelSnapshot = { activeModelId?: string; runningModelId?: string; models: LocalModelRecord[]; downloads: LocalModelDownloadTask[]; hardware: { platform: string; architecture: string; totalMemory: number; availableBackends: LocalModelBackend[]; gpu?: string; vram?: number }; proxyUrl: string; storagePath: string; defaultStoragePath: string; piBusy: boolean; runtimeDownload?: RuntimeDownloadProgress; verificationStage?: { modelId: string; phase: "preparing-runtime" | "loading-model" | "checking-template" | "requesting-tool-call" | "checking-tool-result" }; providerConflict?: string };
+export type HubModelResult = { source: Exclude<LocalModelSource, "import">; repository: string; name: string; description?: string; downloads?: number; gated: boolean; private: boolean };
+export type HubGgufFile = { name: string; size: number; sha256?: string; group: string; shardIndex: number; shardCount: number };
 
 export const desktop = {
   runtimeInfo: () => invoke<RuntimeInfo>("get_runtime_info"),
@@ -291,6 +310,21 @@ export const desktop = {
     invoke<LocalServiceInfo>("detect_local_service", { baseUrl }),
   discoverModels: (baseUrl: string, ollama = false) =>
     invoke<string[]>("discover_local_models", { baseUrl, ollama }),
+  localModels: () => invoke<LocalModelSnapshot>("local_models_list"),
+  searchLocalModels: (source: Exclude<LocalModelSource, "import">, query: string) => invoke<HubModelResult[]>("local_models_search", { source, query }),
+  inspectLocalModelRepository: (source: Exclude<LocalModelSource, "import">, repository: string) => invoke<{ repository: string; revision: string; files: HubGgufFile[]; downloadable: boolean; reason?: string }>("local_models_inspect", { source, repository }),
+  downloadLocalModel: (source: Exclude<LocalModelSource, "import">, repository: string, file: string) => invoke<string>("local_models_download", { source, repository, file }),
+  pauseLocalModelDownload: (id: string) => invoke<void>("local_models_download_pause", { id }),
+  resumeLocalModelDownload: (id: string) => invoke<void>("local_models_download_resume", { id }),
+  cancelLocalModelDownload: (id: string) => invoke<void>("local_models_download_cancel", { id }),
+  importLocalModel: (path: string) => invoke<string>("local_models_import", { path }),
+  verifyLocalModel: (id: string) => invoke<void>("local_models_verify", { id }),
+  activateLocalModel: (id: string) => invoke<void>("local_models_activate", { id }),
+  runLocalModel: (id: string) => invoke<void>("local_models_run", { id }),
+  stopLocalModel: () => invoke<void>("local_models_stop"),
+  updateLocalModel: (id: string, config: Partial<LocalModelRuntimeConfig>) => invoke<void>("local_models_update", { id, config }),
+  deleteLocalModel: (id: string) => invoke<void>("local_models_delete", { id }),
+  localModelLogs: () => invoke<string[]>("local_models_logs"),
   listProjects: () => invoke<ProjectSummary[]>("list_projects"),
   addWorkspace: (cwd: string) => invoke<string>("add_workspace", { cwd }),
   removeWorkspace: (cwd: string) => invoke<void>("remove_workspace", { cwd }),

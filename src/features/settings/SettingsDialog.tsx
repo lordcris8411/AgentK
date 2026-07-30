@@ -18,6 +18,7 @@ import type { ThemeDefinition } from "../../lib/themes";
 import { modelIsEnabled, modelKey } from "../../lib/modelAvailability";
 import { DirectoryPickerDialog } from "../../components/DirectoryPickerDialog";
 import { AgentKLogo } from "../../components/AgentKLogo";
+import { LocalModelsSettings } from "./LocalModelsSettings";
 
 export type SettingsPage = "models" | "appearance" | "agentSettings" | "skills" | "extensions" | "editors" | "permissions" | "about";
 
@@ -279,6 +280,11 @@ export function SettingsDialog({
       setBusy(false);
     }
   };
+  useEffect(() => {
+    const changed = () => void refresh(true);
+    window.addEventListener("agent-k-model-catalog-changed", changed);
+    return () => window.removeEventListener("agent-k-model-catalog-changed", changed);
+  }, []);
   const reloadModelConfiguration = async () => {
     await desktop.reloadPiRuntimes();
     await refresh();
@@ -499,7 +505,7 @@ export function SettingsDialog({
     window.dispatchEvent(new Event("agent-k-permission"));
   };
   const grouped = useMemo(() => {
-    const custom = providers.filter((item) => item.source === "custom");
+    const custom = providers.filter((item) => item.source === "custom" && !(item.id === "agent-k-llama-cpp" && item.agentKManaged));
     const builtIn = providers.filter((item) => item.source !== "custom");
     return { custom, builtIn };
   }, [providers]);
@@ -1194,6 +1200,7 @@ export function SettingsDialog({
                 <div className="model-current-row">
                   <label>{t("defaultModel")}<select value={settings.defaultModel} onChange={(event) => void update({ defaultModel: event.target.value })}><option value="">—</option>{enabledModels.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name ?? model.id} · {model.provider === "ollama" ? "Ollama" : model.provider === "vllm" ? "vLLM" : model.provider}</option>)}</select></label>
                 </div>
+                <LocalModelsSettings />
                 {providers.length > 0 && <div className="provider-actions"><button onClick={() => { setDraft({ id: "", name: "", baseUrl: "https://", api: "openai-completions", apiKey: "", models: [], local: false }); setEditor("provider"); }} type="button"><i className="fa-solid fa-plus" /> {t("providerAdd")}</button><button onClick={() => { setDraft({ id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKey: "ollama", models: [], local: true }); setEditor("local"); }} type="button"><i className="fa-solid fa-desktop" /> {t("localAdd")}</button></div>}
                 {[...grouped.custom, ...grouped.builtIn].map((provider) => {
                   const providerEnabled = !settings.disabledModelProviders.includes(provider.id);

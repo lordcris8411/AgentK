@@ -32,6 +32,7 @@ const DEFAULT_SETTINGS: ClientSettings = {
   permissionMode: "ask",
   browserId: "default",
   cacheDirectory: "",
+  localModelDirectory: "",
   piExecutable: "",
   workerPoolSize: 4,
   autoCompactEnabled: true,
@@ -130,6 +131,11 @@ export function parseClientSettings(value: unknown): ClientSettings {
     source.cacheDirectory.length <= 4096 &&
     (!source.cacheDirectory.trim() || isAbsolute(source.cacheDirectory.trim()))
   ) settings.cacheDirectory = source.cacheDirectory.trim();
+  if (
+    typeof source.localModelDirectory === "string" &&
+    source.localModelDirectory.length <= 4096 &&
+    (!source.localModelDirectory.trim() || isAbsolute(source.localModelDirectory.trim()))
+  ) settings.localModelDirectory = source.localModelDirectory.trim();
   if (typeof source.piExecutable === "string" && source.piExecutable.length <= 4096)
     settings.piExecutable = source.piExecutable.trim();
   if ([2, 3, 4].includes(Number(source.workerPoolSize)))
@@ -204,6 +210,7 @@ export async function saveClientSettings(
     settings.permissionMode === original.permissionMode &&
     settings.browserId === original.browserId &&
     settings.cacheDirectory === original.cacheDirectory &&
+    settings.localModelDirectory === original.localModelDirectory &&
     settings.piExecutable === original.piExecutable &&
     settings.workerPoolSize === original.workerPoolSize &&
     settings.autoCompactEnabled === original.autoCompactEnabled &&
@@ -660,6 +667,7 @@ export async function providerCatalog(available: unknown): Promise<JsonObject[]>
       configured: Object.hasOwn(auth, id) || Boolean(asString(value.apiKey)) || modelsByProvider.has(id),
       authMethods: ["api_key"],
       models: configuredModels.length ? configuredModels : modelsByProvider.get(id) ?? [],
+      ...(value.agentKManaged === true ? { agentKManaged: true } : {}),
     });
     modelsByProvider.delete(id);
   }

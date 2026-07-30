@@ -21,6 +21,27 @@ import { AgentKLogo } from "./components/AgentKLogo";
 
 const DRAFT_SESSION_PATH = "__new__";
 
+type LocalModelRunUi = {
+  transactionId: string;
+  modelName: string;
+  phase: string;
+  completed: number;
+  total: number;
+  bytesCompleted?: number;
+  bytesTotal?: number;
+};
+
+const localModelRunPhaseText: Record<string, [string, string]> = {
+  "preparing-runtime": ["准备私有运行时", "Preparing private runtime"],
+  "downloading-runtime": ["下载私有运行时", "Downloading private runtime"],
+  "verifying-runtime": ["校验私有运行时", "Verifying private runtime"],
+  "extracting-runtime": ["解压私有运行时", "Extracting private runtime"],
+  "starting-server": ["启动 llama.cpp 服务", "Starting llama.cpp server"],
+  "loading-model": ["加载 GGUF 模型", "Loading GGUF model"],
+  "health-check": ["等待模型就绪", "Waiting for model readiness"],
+  ready: ["模型已就绪", "Model ready"],
+};
+
 function SettingsOverlay({
   activeRef,
   onClose,
@@ -66,6 +87,8 @@ export function App() {
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [bootMessage, setBootMessage] = useState<string>();
   const [busyMessage, setBusyMessage] = useState<string>();
+  const [localModelRun, setLocalModelRun] = useState<LocalModelRunUi>();
+  const localModelRunTimer = useRef<number | undefined>(undefined);
   const busyVersion = useRef(0);
   const busyTimer = useRef<number | undefined>(undefined);
   const busyFrame = useRef<number | undefined>(undefined);
@@ -176,6 +199,12 @@ export function App() {
       }
     };
   };
+  useEffect(() => {
+    if (!busyMessage) return;
+    const completedReload = /(?:Reloading Pi workers|正在重载 Pi worker)[^(（]*[（(](\d+)\/(\d+)[）)]/.exec(busyMessage);
+    if (completedReload && completedReload[1] === completedReload[2])
+      setBusyMessage(undefined);
+  }, [busyMessage]);
   const closeSettings = (
     changes: PiResourceChange[],
     editorSettingsChanged: boolean,
@@ -471,8 +500,55 @@ export function App() {
   };
 
   useEffect(() => {
-    let finishReload: (() => void) | undefined;
+    let reloadBusyVersion: number | undefined;
+    const startReloadBusy = (message: string) => {
+      if (busyTimer.current !== undefined) {
+        window.clearTimeout(busyTimer.current);
+        busyTimer.current = undefined;
+      }
+      if (busyFrame.current !== undefined) {
+        window.cancelAnimationFrame(busyFrame.current);
+        busyFrame.current = undefined;
+      }
+      reloadBusyVersion = ++busyVersion.current;
+      setBusyMessage(message);
+    };
+    const updateReloadBusy = (message: string) => {
+      if (reloadBusyVersion === busyVersion.current) setBusyMessage(message);
+    };
+    const finishReloadBusy = () => {
+      const version = reloadBusyVersion;
+      reloadBusyVersion = undefined;
+      if (version !== undefined && version === busyVersion.current)
+        setBusyMessage(undefined);
+    };
     const stop = desktop.onEvent((event) => {
+      if (event.type === "local_model_run_progress") {
+        const transactionId = typeof event.transactionId === "string" ? event.transactionId : undefined;
+        const modelName = typeof event.modelName === "string" ? event.modelName : undefined;
+        if (!transactionId || !modelName) return;
+        if (localModelRunTimer.current !== undefined) {
+          window.clearTimeout(localModelRunTimer.current);
+          localModelRunTimer.current = undefined;
+        }
+        const next: LocalModelRunUi = {
+          transactionId,
+          modelName,
+          phase: typeof event.phase === "string" ? event.phase : "preparing-runtime",
+          completed: typeof event.completed === "number" ? event.completed : 0,
+          total: typeof event.total === "number" && event.total > 0 ? event.total : 4,
+          ...(typeof event.bytesCompleted === "number" ? { bytesCompleted: event.bytesCompleted } : {}),
+          ...(typeof event.bytesTotal === "number" ? { bytesTotal: event.bytesTotal } : {}),
+        };
+        setLocalModelRun(next);
+        if (event.status === "complete" || event.status === "failed" || event.status === "cancelled") {
+          localModelRunTimer.current = window.setTimeout(() => {
+            localModelRunTimer.current = undefined;
+            setLocalModelRun((current) => current?.transactionId === transactionId ? undefined : current);
+          }, event.status === "complete" ? 320 : 120);
+        }
+        return;
+      }
       if (event.type === "pi_reload_progress") {
         const total = typeof event.total === "number" && event.total > 0
           ? Math.floor(event.total)
@@ -485,13 +561,10 @@ export function App() {
           ? `Reloading Pi workers (${completed}/${total})…`
           : `正在重载 Pi worker（${completed}/${total}）…`;
         if (completed === 0) {
-          finishReload?.();
-          finishReload = beginBusy(message, 0, 420);
-        } else setBusyMessage(message);
-        if (completed >= total) {
-          finishReload?.();
-          finishReload = undefined;
-        }
+          finishReloadBusy();
+          startReloadBusy(message);
+        } else if (completed >= total) finishReloadBusy();
+        else updateReloadBusy(message);
         return;
       }
       const runtimeId =
@@ -555,7 +628,11 @@ export function App() {
     });
     return () => {
       stop();
-      finishReload?.();
+      finishReloadBusy();
+      if (localModelRunTimer.current !== undefined) {
+        window.clearTimeout(localModelRunTimer.current);
+        localModelRunTimer.current = undefined;
+      }
     };
   }, [en]);
   const nameNewSession = (message: string) => {
@@ -985,13 +1062,18 @@ export function App() {
           session={active}
         />
       </AppShell>
-      {(booting || busyMessage) && (
+      {(booting || busyMessage || localModelRun) && (
         <div aria-live="polite" className="startup-splash">
           <div className="splash-card">
             <AgentKLogo className="splash-mark" />
             <div>
-              <strong>Agent K</strong>
-              <p>{busyMessage ?? bootMessage ?? (en ? "Preloading sessions and workspaces…" : "正在预加载会话与工作区…")}</p>
+              <strong>{localModelRun ? (en ? "Local model run transaction" : "本地模型运行事务") : "Agent K"}</strong>
+              {localModelRun ? <>
+                <p className="splash-transaction-model">{localModelRun.modelName}</p>
+                <small className="splash-transaction-status"><span>{(localModelRunPhaseText[localModelRun.phase] ?? [localModelRun.phase, localModelRun.phase])[en ? 1 : 0]}</span><span>{en ? "Progress" : "进度"} {localModelRun.completed}/{localModelRun.total}</span></small>
+                <span className="splash-transaction-id">{en ? "Transaction" : "事务"} {localModelRun.transactionId}</span>
+                <span className="splash-progress-track"><i style={{ width: `${Math.min(100, Math.max(0, localModelRun.bytesTotal && localModelRun.bytesTotal > 0 ? (localModelRun.bytesCompleted ?? 0) / localModelRun.bytesTotal * 25 : localModelRun.completed / localModelRun.total * 100))}%` }} /></span>
+              </> : <p>{busyMessage ?? bootMessage ?? (en ? "Preloading sessions and workspaces…" : "正在预加载会话与工作区…")}</p>}
             </div>
             <span aria-hidden="true" className="splash-loader" />
           </div>

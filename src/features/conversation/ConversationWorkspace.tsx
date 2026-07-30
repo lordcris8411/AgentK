@@ -21,6 +21,7 @@ import { desktopWindow, platform } from "../../lib/platform";
 import { modelIsEnabled, modelKey } from "../../lib/modelAvailability";
 import type { ReviewCall } from "./ReviewPanel";
 import { highlightCode } from "./codeHighlight";
+import { contextTokens, latestContextTokens } from "./contextUsage";
 import { displayUserContent } from "./messageContent";
 import { useSettings } from "../settings/SettingsContext";
 import {
@@ -526,29 +527,6 @@ function itemOf(message: Record<string, unknown>, id: string): Item {
         ? message.toolCallId
         : undefined,
   };
-}
-
-function contextTokens(message: Record<string, unknown>): number | undefined {
-  const usage = message.usage;
-  if (!usage || typeof usage !== "object") return undefined;
-  const value = usage as Record<string, unknown>;
-  const total = Number(value.totalTokens);
-  if (Number.isFinite(total) && total > 0) return total;
-  const parts = [value.input, value.output, value.cacheRead, value.cacheWrite]
-    .map(Number)
-    .filter(Number.isFinite);
-  const calculated = parts.reduce((sum, part) => sum + part, 0);
-  return calculated > 0 ? calculated : undefined;
-}
-
-function latestContextTokens(messages: Array<Record<string, unknown>>): number | undefined {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message.role !== "assistant") continue;
-    const tokens = contextTokens(message);
-    if (tokens !== undefined) return tokens;
-  }
-  return undefined;
 }
 
 function formatContextTokens(tokens: number): string {
@@ -3015,6 +2993,7 @@ export function ConversationWorkspace({
       clearSessionUi();
       await desktop.command({ type: "new_session" }, session?.runtimeId);
       setItems([]);
+      setReportedContextTokens(undefined);
       window.dispatchEvent(new CustomEvent("agent-k-session-name", {
         detail: { name: "New session" },
       }));
@@ -3173,7 +3152,9 @@ export function ConversationWorkspace({
           { type: "get_messages" },
           session.runtimeId,
         ) as { messages?: Array<Record<string, unknown>> };
-        setItems(toItems(page.messages ?? []));
+        const messages = page.messages ?? [];
+        setItems(toItems(messages));
+        setReportedContextTokens(latestContextTokens(messages));
         pushNotification(en ? "Session tree position changed" : "已切换会话树位置");
         return;
       }
@@ -3405,7 +3386,9 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
       )) as {
         messages?: Array<Record<string, unknown>>;
       };
-      setItems(toItems(page.messages ?? []));
+      const messages = page.messages ?? [];
+      setItems(toItems(messages));
+      setReportedContextTokens(latestContextTokens(messages));
       commitDraft(query);
       requestAnimationFrame(() => placeCaretAtEnd(composerRef.current));
     } catch (cause) {
@@ -3461,7 +3444,9 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
         { type: "get_messages" },
         session.runtimeId,
       ) as { messages?: Array<Record<string, unknown>> };
-      setItems(toItems(page.messages ?? []));
+      const messages = page.messages ?? [];
+      setItems(toItems(messages));
+      setReportedContextTokens(latestContextTokens(messages));
       commitDraft("");
       setPendingMessageDelete(undefined);
       pushNotification(

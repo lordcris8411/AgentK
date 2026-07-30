@@ -91,6 +91,8 @@ const previousDebugStates = new Map<string, string | undefined>();
 let backend: DesktopBackend | undefined;
 let backendReady: Promise<void> | undefined;
 let quitting = false;
+let shutdownComplete = false;
+let shutdownStarted = false;
 const pendingAssistantEvents = new Map<string, {
   event: JsonObject;
   timer: NodeJS.Timeout;
@@ -921,6 +923,7 @@ async function start(): Promise<void> {
       ? join(process.resourcesPath, "pi-runtime", "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js")
       : projectPath("node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js"),
     cachePath,
+    localModelRoot: startupSettings.localModelDirectory || undefined,
     permissionExtensionSource: projectPath("agent-k-permissions.ts"),
     emit: emitBackendEvent,
     emitProjectConsole: sendProjectConsoleEvent,
@@ -945,12 +948,19 @@ else {
     mainWindow.show();
     mainWindow.focus();
   });
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
+    if (shutdownComplete) return;
+    event.preventDefault();
+    if (shutdownStarted) return;
+    shutdownStarted = true;
     quitting = true;
     for (const pending of pendingAssistantEvents.values())
       clearTimeout(pending.timer);
     pendingAssistantEvents.clear();
-    backend?.shutdown();
+    void (backend?.shutdown() ?? Promise.resolve()).finally(() => {
+      shutdownComplete = true;
+      app.quit();
+    });
   });
   app.on("window-all-closed", () => app.quit());
   void start();

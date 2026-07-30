@@ -310,6 +310,23 @@ export class RpcBridge {
     );
   }
 
+  hasActiveAgentTask(): boolean {
+    return !this.closed && (this.agentRunning || this.pendingUi.size > 0);
+  }
+
+  async refreshActiveAgentTask(): Promise<boolean> {
+    const response = await this.request({ type: "get_state" });
+    if (response.success === false)
+      throw new Error(asString(response.error) ?? "Unable to read Pi runtime state");
+    const state = asObject(response.data);
+    const pendingMessageCount = typeof state.pendingMessageCount === "number"
+      ? state.pendingMessageCount
+      : 0;
+    this.agentRunning = state.isStreaming === true || state.isCompacting === true || pendingMessageCount > 0;
+    if (!this.agentRunning) this.pendingUi.clear();
+    return this.hasActiveAgentTask();
+  }
+
   tryReserve(): boolean {
     if (!this.isAvailable()) return false;
     this.reserved = true;
@@ -369,6 +386,9 @@ export class RpcBridge {
       });
       if (startsAgent && response.success === false) this.agentRunning = false;
       return response;
+    } catch (cause) {
+      if (startsAgent) this.agentRunning = false;
+      throw cause;
     } finally {
       this.inFlight -= 1;
     }
@@ -396,11 +416,22 @@ export class RpcBridge {
         );
         killer.unref();
       } else {
+        const pid = this.child.pid;
         try {
-          process.kill(-this.child.pid, "SIGTERM");
+          process.kill(-pid, "SIGTERM");
         } catch {
           this.child.kill("SIGTERM");
         }
+        const forceKill = setTimeout(() => {
+          if (this.child.exitCode !== null || this.child.signalCode !== null)
+            return;
+          try {
+            process.kill(-pid, "SIGKILL");
+          } catch {
+            this.child.kill("SIGKILL");
+          }
+        }, 2_000);
+        forceKill.unref();
       }
     }
     this.rejectPending(new Error("Pi RPC connection closed"));
@@ -429,6 +460,10 @@ export class RpcBridge {
     if (value.type === "agent_start") this.agentRunning = true;
     if (value.type === "agent_settled") {
       this.agentRunning = false;
+      // `agent_settled` is Pi's authoritative idle boundary. A renderer reload,
+      // cancelled prompt, or interrupted session can leave an old UI request
+      // without a matching response; it must not keep this runtime busy forever.
+      this.pendingUi.clear();
       void this.nameUnnamedSession();
     }
     if (
