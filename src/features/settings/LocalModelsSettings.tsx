@@ -4,6 +4,7 @@ import {
   type HubGgufFile,
   type HubModelResult,
   type LocalModelRecord,
+  type LocalModelKvCacheType,
   type LocalModelRuntimeConfig,
   type LocalModelSnapshot,
   type LocalModelSource,
@@ -17,6 +18,8 @@ const statusText: Record<string, [string, string]> = {
   loading: ["加载中", "Loading"], "verifying-tools": ["验证工具调用", "Verifying tools"], running: ["运行中", "Running"],
   stopping: ["停止中", "Stopping"], failed: ["失败", "Failed"], missing: ["文件缺失", "Missing"],
 };
+
+const kvCacheTypes: LocalModelKvCacheType[] = ["f32", "f16", "bf16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl"];
 
 function bytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "—";
@@ -106,7 +109,7 @@ function ModelCard({ model, snapshot, en, act }: { model: LocalModelRecord; snap
     <div className="local-model-actions">
       <button disabled={model.status === "verifying-tools"} onClick={() => guardedAct(() => desktop.verifyLocalModel(model.id))} type="button"><i className="fa-solid fa-flask" /> {compatible ? (en ? "Reverify" : "重新验证") : (en ? "Verify tools" : "验证工具")}</button>
       <button disabled={!compatible || active} onClick={() => guardedAct(() => desktop.activateLocalModel(model.id))} type="button"><i className="fa-solid fa-circle-check" /> {en ? "Set current" : "设为当前"}</button>
-      {serverActive ? <button onClick={() => act(() => desktop.stopLocalModel())} type="button"><i className="fa-solid fa-stop" /> {en ? "Stop" : "停止"}</button> : <button disabled={!active || !compatible} onClick={() => act(() => desktop.runLocalModel(model.id))} type="button"><i className="fa-solid fa-play" /> {en ? "Run" : "运行"}</button>}
+      {serverActive ? <button disabled={snapshot.piBusy} onClick={() => act(() => desktop.stopLocalModel())} title={snapshot.piBusy ? (en ? "Stop Pi before unloading the local model" : "请先停止 Pi，再卸载本地模型") : undefined} type="button"><i className="fa-solid fa-stop" /> {en ? "Stop" : "停止"}</button> : <button disabled={!active || !compatible} onClick={() => act(() => desktop.runLocalModel(model.id))} type="button"><i className="fa-solid fa-play" /> {en ? "Run" : "运行"}</button>}
       {model.status === "failed" && model.config.backend !== "cpu" && <button onClick={() => act(async () => { await desktop.updateLocalModel(model.id, { backend: "cpu" }); await desktop.verifyLocalModel(model.id); })} type="button"><i className="fa-solid fa-microchip" /> {en ? "Retry with CPU" : "使用 CPU 重试"}</button>}
       <button aria-expanded={advanced} className={advanced ? "is-expanded" : undefined} onClick={() => setAdvanced((value) => !value)} type="button">
         <i className={`fa-solid ${advanced ? "fa-chevron-up" : "fa-sliders"}`} /> {advanced ? (en ? "Collapse" : "收起") : (en ? "Advanced" : "高级")}
@@ -124,6 +127,8 @@ function ModelCard({ model, snapshot, en, act }: { model: LocalModelRecord; snap
       <label>{en ? `Context (tokens${model.trainingContext ? ` · trained ${model.trainingContext.toLocaleString()}` : ""})` : `上下文（tokens${model.trainingContext ? ` · 训练值 ${model.trainingContext.toLocaleString()}` : ""}）`}<input className="local-model-context-input" max="1048576" min="512" step="512" type="number" value={config.contextSize} onChange={(event) => setNumber("contextSize", event.target.value)} /></label>
       <label>{en ? "GPU layers (-1 auto)" : "GPU 层（-1 自动）"}<input max="10000" min="-1" type="number" value={config.gpuLayers} onChange={(event) => setNumber("gpuLayers", event.target.value)} /></label>
       <label>{en ? "Threads (0 auto)" : "线程（0 自动）"}<input max="512" min="0" type="number" value={config.threads} onChange={(event) => setNumber("threads", event.target.value)} /></label>
+      <label title={en ? "Data type used by the key side of the KV cache. Lower-bit types use less memory but can reduce quality." : "KV cache 中 Key 缓存的数据类型。低位量化可减少内存占用，但可能降低质量。"}>{en ? "K cache type" : "K 缓存类型"}<select className="local-model-cache-type-k" value={config.cacheTypeK} onChange={(event) => setConfig({ ...config, cacheTypeK: event.target.value as LocalModelKvCacheType })}>{kvCacheTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+      <label title={en ? "Data type used by the value side of the KV cache. Lower-bit types use less memory but can reduce quality." : "KV cache 中 Value 缓存的数据类型。低位量化可减少内存占用，但可能降低质量。"}>{en ? "V cache type" : "V 缓存类型"}<select className="local-model-cache-type-v" value={config.cacheTypeV} onChange={(event) => setConfig({ ...config, cacheTypeV: event.target.value as LocalModelKvCacheType })}>{kvCacheTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
       <label>{en ? "Max output" : "最大输出"}<input max="65536" min="64" type="number" value={config.maxOutputTokens} onChange={(event) => setNumber("maxOutputTokens", event.target.value)} /></label>
       <label title={en ? "When enabled, conversations can switch this model between Off and High reasoning." : "启用后，可在对话中为该模型切换关闭或高推理。"}><span>{en ? "Reasoning controls" : "推理控制"}</span><span className="local-model-check"><input checked={config.reasoning} onChange={(event) => setConfig({ ...config, reasoning: event.target.checked })} type="checkbox" /> {en ? "Available in chat" : "允许对话控制"}</span></label>
       </div>

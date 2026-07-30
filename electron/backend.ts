@@ -841,6 +841,8 @@ function requiredLocalModelConfig(value: unknown): Partial<LocalModelRuntimeConf
   if (typeof source.contextSize === "number") result.contextSize = source.contextSize as LocalModelRuntimeConfig["contextSize"];
   if (typeof source.gpuLayers === "number") result.gpuLayers = source.gpuLayers;
   if (typeof source.threads === "number") result.threads = source.threads;
+  if (typeof source.cacheTypeK === "string") result.cacheTypeK = source.cacheTypeK as LocalModelRuntimeConfig["cacheTypeK"];
+  if (typeof source.cacheTypeV === "string") result.cacheTypeV = source.cacheTypeV as LocalModelRuntimeConfig["cacheTypeV"];
   if (typeof source.maxOutputTokens === "number") result.maxOutputTokens = source.maxOutputTokens;
   if (typeof source.reasoning === "boolean") result.reasoning = source.reasoning;
   return result;

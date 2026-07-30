@@ -118,7 +118,7 @@ export function SettingsDialog({
   runtimeId?: string;
   sessionId?: string;
 }) {
-  const { settings, update, t, themes, refreshThemes } = useSettings();
+  const { settings, update, t, themes, refreshThemes, resolvedTheme } = useSettings();
   const [page, setPage] = useState<SettingsPage>(initialPage);
   const [resources, setResources] = useState<PiResource[]>([]);
   const [resourceChanges, setResourceChanges] = useState<PiResourceChange[]>([]);
@@ -179,9 +179,12 @@ export function SettingsDialog({
   const providerDisplayName = (provider: Pick<ProviderCatalogItem, "id" | "name">) =>
     provider.id === "ollama" ? "Ollama" : provider.id === "vllm" ? "vLLM" : provider.name || provider.id;
   useEffect(() => {
-    const selected = themes.findIndex((theme) => theme.id === settings.theme);
+    const configured = themes.findIndex((theme) => theme.id === settings.theme);
+    const selected = configured >= 0
+      ? configured
+      : themes.findIndex((theme) => theme.id === resolvedTheme);
     if (selected >= 0) setThemeSlideIndex(selected);
-  }, [settings.theme, themes]);
+  }, [resolvedTheme, settings.theme, themes]);
   const selectThemeSlide = (index: number) => {
     const theme = themes[index];
     if (!theme) return;
@@ -1231,18 +1234,15 @@ export function SettingsDialog({
                         {provider.authMethods.includes("oauth") && <button disabled={busy} onClick={() => void authenticate(provider, "oauth")} type="button">{t("oauth")}</button>}
                         {provider.configured && <button disabled={busy} onClick={() => void logout(provider)} type="button">{t("logout")}</button>}
                         {provider.source === "custom" && <button aria-label={t("delete")} onClick={() => setPendingDelete(provider)} type="button"><i className="fa-regular fa-trash-can" /></button>}
-                        <div className="resource-switch">
-                          <span>{t("providerAvailability")}</span>
-                          <button
-                            aria-checked={providerEnabled}
-                            aria-label={`${providerDisplayName(provider)} · ${providerEnabled ? t("enabled") : t("disabled")}`}
-                            className={providerEnabled ? "resource-toggle is-active" : "resource-toggle"}
-                            disabled={busy}
-                            onClick={() => void toggleProviderAvailability(provider.id)}
-                            role="switch"
-                            type="button"
-                          ><span /></button>
-                        </div>
+                        <button
+                          aria-checked={providerEnabled}
+                          aria-label={`${providerDisplayName(provider)} · ${providerEnabled ? t("enabled") : t("disabled")}`}
+                          className={providerEnabled ? "resource-toggle is-active" : "resource-toggle"}
+                          disabled={busy}
+                          onClick={() => void toggleProviderAvailability(provider.id)}
+                          role="switch"
+                          type="button"
+                        ><span /></button>
                       </div>
                       {expanded && provider.models.length > 0 && (
                         <div className="provider-model-list">

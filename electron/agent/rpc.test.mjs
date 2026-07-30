@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import test from "node:test";
+import { RpcPool } from "../../.electron-dist/agent/pool.js";
 import { RpcBridge } from "../../.electron-dist/agent/rpc.js";
 
 function bridgeFixture() {
@@ -93,4 +94,38 @@ test("authoritative Pi state clears stale active-task event state", async () => 
   respondWithState(child, { isStreaming: false, isCompacting: false, pendingMessageCount: 1 });
   assert.equal(await bridge.refreshActiveAgentTask(), true);
   close();
+});
+
+test("pool abort waits for Pi to acknowledge that the session is idle", async () => {
+  const pool = new RpcPool({
+    appDataPath: "/tmp/agent-k-rpc-test",
+    bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
+    bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
+    firstPartyEditorExtensions: [],
+    firstPartyLanguageServerSkills: [],
+    launch: { executable: "pi", args: [] },
+    minimum: 2,
+    permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
+    emit() {},
+  });
+  let acknowledge;
+  let command;
+  const fakeBridge = {
+    isClosed: () => false,
+    request: (value) => {
+      command = value;
+      return new Promise((resolve) => { acknowledge = resolve; });
+    },
+    stop() {},
+  };
+  pool.workers.set("runtime-test", fakeBridge);
+  let completed = false;
+  const pending = pool.abort("runtime-test").then(() => { completed = true; });
+  await flushLines();
+  assert.deepEqual(command, { type: "abort" });
+  assert.equal(completed, false);
+  acknowledge({ type: "response", success: true, data: "abort" });
+  await pending;
+  assert.equal(completed, true);
+  pool.shutdown();
 });

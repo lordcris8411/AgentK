@@ -26,6 +26,7 @@ const VERIFY_TIMEOUT_MS = 90_000;
 
 export type LocalModelSource = "huggingface" | "modelscope" | "import";
 export type LocalModelBackend = "auto" | "cpu" | "vulkan" | "rocm" | "cuda12" | "cuda13";
+export type LocalModelKvCacheType = "f32" | "f16" | "bf16" | "q8_0" | "q4_0" | "q4_1" | "iq4_nl" | "q5_0" | "q5_1";
 export type LocalModelCompatibility = "unverified" | "verifying-tools" | "tool-compatible" | "tool-incompatible";
 export type LocalModelStatus = "queued" | "downloading" | "paused" | "verifying-download" | "ready" | "provisioning" | "loading" | "verifying-tools" | "running" | "stopping" | "failed" | "missing";
 
@@ -34,6 +35,8 @@ export interface LocalModelRuntimeConfig {
   contextSize: number;
   gpuLayers: number;
   threads: number;
+  cacheTypeK: LocalModelKvCacheType;
+  cacheTypeV: LocalModelKvCacheType;
   maxOutputTokens: number;
   reasoning: boolean;
 }
@@ -217,6 +220,8 @@ const DEFAULT_CONFIG: LocalModelRuntimeConfig = {
   contextSize: 32_768,
   gpuLayers: -1,
   threads: 0,
+  cacheTypeK: "f16",
+  cacheTypeV: "f16",
   maxOutputTokens: 8_192,
   reasoning: false,
 };
@@ -266,6 +271,8 @@ function boundedInteger(value: unknown, minimum: number, maximum: number, fallba
 
 function validateConfig(value: Partial<LocalModelRuntimeConfig>, previous = DEFAULT_CONFIG): LocalModelRuntimeConfig {
   const backend = ["auto", "cpu", "vulkan", "rocm", "cuda12", "cuda13"].includes(String(value.backend)) ? value.backend as LocalModelBackend : previous.backend;
+  const cacheTypeK = ["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"].includes(String(value.cacheTypeK)) ? value.cacheTypeK as LocalModelKvCacheType : previous.cacheTypeK;
+  const cacheTypeV = ["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"].includes(String(value.cacheTypeV)) ? value.cacheTypeV as LocalModelKvCacheType : previous.cacheTypeV;
   const context = boundedInteger(value.contextSize, 512, 1_048_576, previous.contextSize);
   const requestedOutput = boundedInteger(value.maxOutputTokens, 64, 65_536, previous.maxOutputTokens);
   return {
@@ -273,6 +280,8 @@ function validateConfig(value: Partial<LocalModelRuntimeConfig>, previous = DEFA
     contextSize: context,
     gpuLayers: boundedInteger(value.gpuLayers, -1, 10_000, previous.gpuLayers),
     threads: boundedInteger(value.threads, 0, 512, previous.threads),
+    cacheTypeK,
+    cacheTypeV,
     maxOutputTokens: Math.min(context, requestedOutput),
     reasoning: typeof value.reasoning === "boolean" ? value.reasoning : previous.reasoning,
   };
@@ -719,7 +728,7 @@ export class LocalModelManager {
   }
 
   async run(id: string): Promise<void> { const model = this.model(id); if (this.registry.activeModelId !== id || model.compatibility !== "tool-compatible" || model.compatibilityKey !== this.compatibilityKey(model)) throw new Error("Only the current tool-compatible local model can run"); await this.startModel(model, false); await this.saveAndEmit(); }
-  async stop(): Promise<void> { this.serverStartAbort?.abort(); await this.serverStarting?.promise.catch(() => undefined); await this.stopServer(); await this.saveAndEmit(); }
+  async stop(): Promise<void> { if (await this.piBusy()) throw new Error("Wait for Pi to stop before unloading the local model"); this.serverStartAbort?.abort(); await this.serverStarting?.promise.catch(() => undefined); await this.stopServer(); await this.saveAndEmit(); }
 
   async delete(id: string): Promise<void> {
     const model = this.model(id); const wasActive = this.registry.activeModelId === id;
@@ -744,7 +753,7 @@ export class LocalModelManager {
     return selectAutomaticBackend(process.platform, this.hardware.availableBackends);
   }
   private resolvedGpuLayers(model: LocalModelRecord, backend: Exclude<LocalModelBackend, "auto">): number | "auto" { return resolveGpuLayers(backend, model.config.gpuLayers); }
-  private compatibilityKey(model: LocalModelRecord): string { const backend = this.resolvedBackend(model); const runtime = LLAMA_RUNTIME_ASSETS[`${process.platform}-${backend}`]; return createHash("sha256").update(JSON.stringify({ files: model.files.map((file) => file.sha256), build: LLAMA_CPP_BUILD, runtime: runtime ? runtimeAssetChain(runtime).map((asset) => asset.sha256) : [], backend, contextSize: model.config.contextSize, gpuLayers: this.resolvedGpuLayers(model, backend), threads: model.config.threads, maxOutputTokens: model.config.maxOutputTokens, reasoning: model.config.reasoning, jinja: true })).digest("hex"); }
+  private compatibilityKey(model: LocalModelRecord): string { const backend = this.resolvedBackend(model); const runtime = LLAMA_RUNTIME_ASSETS[`${process.platform}-${backend}`]; return createHash("sha256").update(JSON.stringify({ files: model.files.map((file) => file.sha256), build: LLAMA_CPP_BUILD, runtime: runtime ? runtimeAssetChain(runtime).map((asset) => asset.sha256) : [], backend, contextSize: model.config.contextSize, gpuLayers: this.resolvedGpuLayers(model, backend), threads: model.config.threads, cacheTypeK: model.config.cacheTypeK, cacheTypeV: model.config.cacheTypeV, maxOutputTokens: model.config.maxOutputTokens, reasoning: model.config.reasoning, jinja: true })).digest("hex"); }
   private async runtimeIsProvisioned(model: LocalModelRecord): Promise<boolean> {
     if (this.options.runtimeOverride) return existsSync(this.options.runtimeOverride.executable);
     const backend = this.resolvedBackend(model);
@@ -951,7 +960,7 @@ export class LocalModelManager {
     signal.throwIfAborted();
     if (!temporary) this.emitRunProgress("starting-server", 1, 4);
     const deadline = Date.now() + timeout;
-    const port = await randomPort(); const token = randomBytes(32).toString("hex"); const args = [...(runtime?.args ?? []), "--model", model.files[0]?.path ?? "", "--host", "127.0.0.1", "--port", String(port), "--api-key", token, "--alias", model.id, "--ctx-size", String(model.config.contextSize), "--n-gpu-layers", String(backend === "cpu" ? 0 : model.config.gpuLayers), "--jinja", "--cache-prompt"];
+    const port = await randomPort(); const token = randomBytes(32).toString("hex"); const args = [...(runtime?.args ?? []), "--model", model.files[0]?.path ?? "", "--host", "127.0.0.1", "--port", String(port), "--api-key", token, "--alias", model.id, "--ctx-size", String(model.config.contextSize), "--n-gpu-layers", String(backend === "cpu" ? 0 : model.config.gpuLayers), "--cache-type-k", model.config.cacheTypeK, "--cache-type-v", model.config.cacheTypeV, "--jinja", "--cache-prompt"];
     args[args.indexOf("--n-gpu-layers") + 1] = String(this.resolvedGpuLayers(model, backend));
     if (model.config.threads > 0) args.push("--threads", String(model.config.threads));
     const environment = { ...process.env };

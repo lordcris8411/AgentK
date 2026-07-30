@@ -1658,6 +1658,7 @@ export function ConversationWorkspace({
   }>();
   const manualCompactionRef = useRef(false);
   const compactionAbortRequestedRef = useRef(false);
+  const abortPendingRef = useRef(false);
   const [stopping, setStopping] = useState(false);
   const [liveNow, setLiveNow] = useState(() => Date.now());
   const [submitting, setSubmitting] = useState(false);
@@ -2464,6 +2465,7 @@ export function ConversationWorkspace({
           setRunning(false);
           setRunStartedAt(undefined);
           setSubmitting(false);
+          abortPendingRef.current = false;
           streamingId.current = undefined;
           const modelError = pendingModelError.current;
           pendingModelError.current = undefined;
@@ -2561,6 +2563,7 @@ export function ConversationWorkspace({
         ) {
           const message = event.message as Record<string, unknown>;
           if (message.role === "assistant") {
+            if (abortPendingRef.current) return;
             const firstUpdate = streamingId.current === undefined;
             const id = streamingId.current ?? crypto.randomUUID();
             streamingId.current = id;
@@ -3309,12 +3312,11 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
   const stopGeneration = async () => {
     if (!session || !connected || stopping || (!running && !compaction)) return;
     if (compaction) compactionAbortRequestedRef.current = true;
+    abortPendingRef.current = true;
     setStopping(true);
-    // Reflect the user's intent immediately. Pi lifecycle events remain the
-    // authority and can set running=true again if another queued turn starts.
-    setRunning(false);
-    setCompaction(undefined);
-    setSubmitting(false);
+    // Do not announce an idle session until Pi acknowledges `abort`. The RPC
+    // response is sent only after AgentSession.waitForIdle(), which also closes
+    // an in-flight local-model request instead of letting it restart llama.cpp.
     discardAssistantUpdate();
     streamingId.current = undefined;
     setItems((current) =>
@@ -3329,8 +3331,15 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
         desktop.abort(session?.runtimeId),
         cancelExtensionUi(),
       ]);
-      if (abortResult.status === "rejected") onError(String(abortResult.reason));
+      if (abortResult.status === "rejected") {
+        abortPendingRef.current = false;
+        onError(String(abortResult.reason));
+      }
     } finally {
+      // A successful abort response is itself an authoritative idle boundary;
+      // do not depend on a separate agent_settled event to re-enable streaming
+      // for the next prompt.
+      abortPendingRef.current = false;
       setStopping(false);
     }
   };
@@ -3694,15 +3703,17 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
           )}
         </div>
         <button
-          className={running || compaction ? "header-action is-running" : "header-action"}
-          disabled={!connected}
+          className={running || compaction || stopping ? "header-action is-running" : "header-action"}
+          disabled={!connected || stopping}
           onClick={() => void stopGeneration()}
           type="button"
         >
           <span className="status-dot" />
           {connecting
             ? (en ? "Loading" : "正在加载")
-            : compaction
+            : stopping
+              ? (en ? "Stopping" : "正在停止")
+              : compaction
               ? (en ? "Compacting (stop)" : "正在压缩（停止）")
               : running
                 ? (en ? "Stop" : "停止生成")

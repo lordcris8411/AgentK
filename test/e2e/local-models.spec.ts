@@ -35,8 +35,11 @@ test("Settings manages one verified llama.cpp model without exposing other local
   });
   const hubPort = await new Promise<number>((resolve, reject) => { hub.once("error", reject); hub.listen(0, "127.0.0.1", () => { const address = hub.address(); if (!address || typeof address === "string") reject(new Error("No hub port")); else resolve(address.port); }); });
   const executable = join(userData, "fake-llama-server.mjs");
-  writeFileSync(executable, `import http from 'node:http';
+  const launchArgsLog = join(userData, "llama-launch-args.jsonl");
+  writeFileSync(executable, `import http from 'node:http';import { appendFileSync } from 'node:fs';
 const args=process.argv.slice(2);const get=n=>args[args.indexOf(n)+1];const key=get('--api-key');
+appendFileSync(${JSON.stringify(launchArgsLog)},JSON.stringify(args)+'\\n');
+if(!get('--cache-type-k')||!get('--cache-type-v')){console.error('missing KV cache types');process.exit(2)}
 const started=Date.now();console.error('fixture llama-server started');http.createServer(async(req,res)=>{if(req.headers.authorization!=='Bearer '+key){res.statusCode=401;return res.end()}if(req.url==='/health')return res.end(JSON.stringify({status:Date.now()-started<600?'loading model':'ok'}));if(req.url==='/props')return res.end(JSON.stringify({chat_template:'{{ messages }}'}));let raw='';for await(const c of req)raw+=c;const body=raw?JSON.parse(raw):{};res.setHeader('content-type','application/json');if(body.tool_choice&&body.tool_choice!=='none')return res.end(JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[{id:'call-1',type:'function',function:{name:'agent_k_tool_probe',arguments:'{"value":37}'}}]}}]}));return res.end(JSON.stringify({choices:[{message:{role:'assistant',content:'continued'}}]}))}).listen(Number(get('--port')),'127.0.0.1');`, "utf8");
   const isolatedHome = join(userData, "home"); mkdirSync(isolatedHome, { recursive: true });
   const environment = { ...process.env }; delete environment.ELECTRON_RUN_AS_NODE;
@@ -97,8 +100,10 @@ const started=Date.now();console.error('fixture llama-server started');http.crea
     }
     await backendSelect.selectOption(linuxCudaAvailable ? "cuda12" : "cpu");
     await card.locator(".local-model-context-input").fill("65536");
+    await card.locator(".local-model-cache-type-k").selectOption("q8_0");
+    await card.locator(".local-model-cache-type-v").selectOption("q4_0");
     await card.locator(".local-model-advanced-footer button").click();
-    await expect.poll(() => main.evaluate(() => window.agentK.invoke<{ models: Array<{ config: { contextSize: number } }> }>("local_models_list", {}).then((snapshot) => snapshot.models[0]?.config.contextSize))).toBe(65_536);
+    await expect.poll(() => main.evaluate(() => window.agentK.invoke<{ models: Array<{ config: { contextSize: number; cacheTypeK: string; cacheTypeV: string } }> }>("local_models_list", {}).then((snapshot) => snapshot.models[0]?.config))).toEqual(expect.objectContaining({ contextSize: 65_536, cacheTypeK: "q8_0", cacheTypeV: "q4_0" }));
     await card.locator("button", { hasText: /验证工具|Verify tools/ }).click();
     if (linuxCudaAvailable) {
       const consent = main.locator(".local-runtime-consent");
@@ -109,6 +114,7 @@ const started=Date.now();console.error('fixture llama-server started');http.crea
       await expect(consent).toHaveCount(0);
     }
     await expect(card).toContainText(/工具协议兼容|Tool protocol compatible/, { timeout: 20_000 });
+    await expect.poll(() => readFileSync(launchArgsLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]).some((args) => args[args.indexOf("--cache-type-k") + 1] === "q8_0" && args[args.indexOf("--cache-type-v") + 1] === "q4_0")).toBe(true);
     await main.evaluate(() => window.addEventListener("agent-k-model-changed", () => { document.body.dataset.localModelCatalogRefresh = "yes"; }, { once: true }));
     await card.locator("button", { hasText: /设为当前|Set current/ }).click();
     await expect(card).toContainText(/当前|Current/, { timeout: 15_000 });
@@ -158,6 +164,7 @@ const started=Date.now();console.error('fixture llama-server started');http.crea
     await imported.locator(".local-model-advanced-footer button").click();
     await imported.locator("button", { hasText: /验证工具|Verify tools/ }).click();
     await expect(imported).toContainText(/工具协议兼容|Tool protocol compatible/, { timeout: 20_000 });
+    await expect.poll(() => readFileSync(launchArgsLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]).some((args) => args[args.indexOf("--cache-type-k") + 1] === "f16" && args[args.indexOf("--cache-type-v") + 1] === "f16")).toBe(true);
     await imported.locator("button", { hasText: /设为当前|Set current/ }).click();
     await expect.poll(async () => ({
       activeModelId: await main.evaluate(() => window.agentK.invoke<{ activeModelId?: string }>("local_models_list", {}).then((snapshot) => snapshot.activeModelId)),

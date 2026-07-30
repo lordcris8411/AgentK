@@ -49,12 +49,23 @@ function normalize(input: unknown, builtin = false): ThemeDefinition {
   const source = asObject(input); const id = asString(source.id); const name = asString(source.name); const base = asString(source.base);
   if (!id || !name || !base) throw new Error("Invalid theme metadata");
   if (!(builtin ? validId(id) : validCustomId(id)) || name.length > 80 || !["light", "soft-light", "dark"].includes(base)) throw new Error("Invalid theme metadata");
-  const group = (value: unknown, keys: string[], label: string) => {
+  const group = (
+    value: unknown,
+    keys: string[],
+    label: string,
+    fallbacks: Record<string, string | undefined> = {},
+  ) => {
     const record = asObject(value); const result: Record<string, string> = {};
-    for (const key of keys) { const color = asString(record[key]); if (!color || !validColor(color)) throw new Error(`Invalid ${label}.${key}`); result[key] = color; }
+    for (const key of keys) { const color = asString(record[key]) ?? fallbacks[key]; if (!color || !validColor(color)) throw new Error(`Invalid ${label}.${key}`); result[key] = color; }
     return result;
   };
-  const colors = group(source.colors, COLOR_KEYS, "colors");
+  const colorSource = asObject(source.colors);
+  const colors = group(colorSource, COLOR_KEYS, "colors", {
+    // These icon colors were added after custom themes were introduced. Keep
+    // existing themes usable while retaining strict validation for new values.
+    "icon-primary": asString(colorSource.accent),
+    "icon-secondary": asString(colorSource["surface-raised"]),
+  });
   const fallbackComponents: Record<string, string> = {
     "primary-action": colors["surface-active"]!, "primary-action-foreground": colors["text-primary"]!,
     "active-item": colors["surface-active"]!, "active-item-foreground": colors["text-primary"]!,

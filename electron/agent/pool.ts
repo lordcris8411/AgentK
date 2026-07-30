@@ -205,8 +205,12 @@ export class RpcPool {
     return response;
   }
 
-  abort(runtimeId?: string): void {
-    this.bridge(runtimeId).sendNotification({ type: "abort" });
+  async abort(runtimeId?: string): Promise<void> {
+    // Pi's abort handler resolves only after AgentSession.waitForIdle().  Keep
+    // this as a request (rather than a fire-and-forget notification) so the
+    // renderer cannot report an idle session while the model request is still
+    // alive and able to restart an explicitly stopped local model server.
+    await this.requestData(this.bridge(runtimeId), { type: "abort" });
   }
 
   extensionResponse(response: JsonObject, runtimeId?: string): void {
