@@ -25,7 +25,10 @@ for (const entry of await readdir(packages, { withFileTypes: true })) {
     logLevel: "warn",
     publicDir: false,
     root,
-    ssr: { noExternal: ["extract-zip"] },
+    // Language workers are copied to extraResources and launched from outside
+    // app.asar. They cannot resolve dependencies from the host application's
+    // packaged node_modules, so every non-Node dependency must be bundled.
+    ssr: { noExternal: true },
     build: {
       emptyOutDir: true,
       ssr: source,

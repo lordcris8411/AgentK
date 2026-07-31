@@ -109,6 +109,11 @@ export class LanguageServerHost {
         silent: true,
       });
       this.child = child;
+      let stderrTail = "";
+      child.stderr?.setEncoding("utf8");
+      child.stderr?.on("data", (chunk: string) => {
+        stderrTail = `${stderrTail}${chunk}`.slice(-8 * 1024);
+      });
       const fail = (cause: unknown) => {
         if (this.child === child) this.child = undefined;
         const error = cause instanceof Error ? cause : new Error(String(cause));
@@ -119,7 +124,10 @@ export class LanguageServerHost {
       child.once("error", fail);
       child.once("exit", (code, signal) => {
         if (this.child === child) this.child = undefined;
-        if (code !== 0 && signal !== "SIGTERM") fail(new Error(`${this.manifest.id} language worker exited (${code ?? signal ?? "unknown"})`));
+        if (code !== 0 && signal !== "SIGTERM") {
+          const detail = stderrTail.trim();
+          fail(new Error(`${this.manifest.id} language worker exited (${code ?? signal ?? "unknown"})${detail ? `\n${detail}` : ""}`));
+        }
       });
       child.on("message", (message: WorkerMessage) => {
         if (message.type === "event") {

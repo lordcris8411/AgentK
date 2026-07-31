@@ -416,8 +416,9 @@ http.createServer(async(req,res)=>{ if(req.headers.authorization!=='Bearer '+key
     assert.equal(recovered.status, 200);
     assert.match(await recovered.text(), /hello/);
     const activeOutput = manager.snapshot().models.find((model) => model.id === downloaded.id).config.maxOutputTokens;
+    const changedOutput = activeOutput === 2_048 ? 4_096 : 2_048;
     failReload = true;
-    await assert.rejects(manager.updateConfig(downloaded.id, { maxOutputTokens: 2_048 }), /fixture reload failure/);
+    await assert.rejects(manager.updateConfig(downloaded.id, { maxOutputTokens: changedOutput }), /fixture reload failure/);
     failReload = false;
     const activeAfterRollback = manager.snapshot().models.find((model) => model.id === downloaded.id);
     assert.equal(activeAfterRollback.config.maxOutputTokens, activeOutput);
@@ -445,7 +446,8 @@ http.createServer(async(req,res)=>{ if(req.headers.authorization!=='Bearer '+key
     const rolledBackProvider = JSON.parse(await readFile(join(process.env.HOME, ".pi", "agent", "models.json"), "utf8")).providers[LOCAL_MODEL_PROVIDER_ID];
     assert.deepEqual(rolledBackProvider.models.map((model) => model.id), [downloaded.id]);
     assert.deepEqual(migrations.slice(-2), [[downloaded.id, compatibleSecondId], [compatibleSecondId, downloaded.id]]);
-    await manager.updateConfig(compatibleSecondId, { maxOutputTokens: 2_048 });
+    const secondOutput = manager.snapshot().models.find((model) => model.id === compatibleSecondId).config.maxOutputTokens;
+    await manager.updateConfig(compatibleSecondId, { maxOutputTokens: secondOutput === 2_048 ? 4_096 : 2_048 });
     assert.equal(manager.snapshot().models.find((model) => model.id === compatibleSecondId).compatibility, "unverified");
     const timeoutPath = join(root, "timeout.gguf");
     await writeFile(timeoutPath, modelBytes);
