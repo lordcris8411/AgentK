@@ -29,7 +29,7 @@
     "check:language-servers": "node script/build-language-server-plugins.mjs --check",
     "check:editors": "tsc -p editor/tsconfig.json",
     "prepare:native": "node script/prepare-native.mjs",
-    "test": "npm run build:desktop && npm run build:language-servers && node --test extensions/k-plan/index.test.ts electron/agent/rpc.test.mjs electron/file-formats.test.mjs electron/language-server-registry.test.mjs electron/local-models.test.mjs electron/skill-hub.test.mjs electron/terminal-profile.test.mjs electron/workspace-watch.test.mjs language-servers/cpp-clangd/cmake-debug.test.ts language-servers/cpp-clangd/debug-session-manager.test.ts language-servers/cpp-clangd/debug-session.test.ts language-servers/cpp-clangd/debug-skill.test.ts language-servers/cpp-clangd/worker.test.ts skills/weather/scripts/weather.test.mjs test/contextUsage.test.ts test/debugPersistence.test.ts test/debugProviders.test.ts test/debugScopes.test.ts test/messageContent.test.ts test/modelAvailability.test.ts test/projectActivity.test.ts test/terminalPalette.test.ts",
+    "test": "npm run build:desktop && npm run build:language-servers && node --test extensions/k-plan/index.test.ts electron/agent/rpc.test.mjs electron/file-formats.test.mjs electron/language-server-registry.test.mjs electron/local-models.test.mjs electron/packaging.test.mjs electron/skill-hub.test.mjs electron/terminal-profile.test.mjs electron/workspace-watch.test.mjs language-servers/cpp-clangd/cmake-debug.test.ts language-servers/cpp-clangd/debug-session-manager.test.ts language-servers/cpp-clangd/debug-session.test.ts language-servers/cpp-clangd/debug-skill.test.ts language-servers/cpp-clangd/worker.test.ts skills/weather/scripts/weather.test.mjs test/contextUsage.test.ts test/debugPersistence.test.ts test/debugProviders.test.ts test/debugScopes.test.ts test/messageContent.test.ts test/modelAvailability.test.ts test/projectActivity.test.ts test/terminalPalette.test.ts",
     "test:debug:e2e": "npm run build && playwright test --config playwright.debug.config.ts",
     "test:local-model:e2e": "npm run build && playwright test --config playwright.local-model.config.ts",
     "test:debug:integration": "node --test language-servers/cpp-clangd/debug-session.integration.test.ts language-servers/cpp-clangd/debug-session.windows.integration.test.ts",
@@ -52,7 +52,6 @@
     "@xterm/xterm": "6.0.0",
     "electron": "43.1.1",
     "electron-builder": "26.15.3",
-    "extract-zip": "2.0.1",
     "highlight.js": "11.11.1",
     "katex": "0.18.0",
     "lucide-react": "1.25.0",
@@ -141,6 +140,7 @@
     }
   },
   "dependencies": {
+    "extract-zip": "2.0.1",
     "node-pty": "1.1.0"
   }
 }
