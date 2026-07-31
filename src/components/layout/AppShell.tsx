@@ -19,6 +19,13 @@ import {
   desktopWindow,
   type WindowResizeDirection,
 } from "../../lib/platform";
+import {
+  fitPanelWidths,
+  LEFT_PANEL_MINIMUM,
+  RESIZERS_WIDTH,
+  RIGHT_PANEL_MINIMUM,
+  WORKSPACE_MINIMUM,
+} from "./panelLayout";
 
 interface AppShellProps {
   sidebar: ReactNode;
@@ -36,10 +43,6 @@ interface FrozenPanelContent {
   willChange: string;
 }
 
-const LEFT_PANEL_MINIMUM = 240;
-const RIGHT_PANEL_MINIMUM = 420;
-const WORKSPACE_MINIMUM = 700;
-const RESIZERS_WIDTH = 12;
 const PANEL_POINTER_INTERVAL_MS = 1000 / 60;
 const PANEL_TOGGLE_LAYOUT_DELAY_MS = 260;
 const WINDOW_RESIZE_LAYOUT_IDLE_MS = 120;
@@ -149,20 +152,39 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
     restoredLayoutRef.current = true;
     restoringWindowRef.current = true;
 
-    leftWidthRef.current = settings.leftPanelWidth;
-    rightWidthRef.current = settings.rightPanelWidth;
+    const applyRestoredPanelWidths = (windowWidth: number) => {
+      const fitted = fitPanelWidths(
+        windowWidth,
+        settings.leftPanelWidth,
+        settings.rightPanelWidth,
+      );
+      leftWidthRef.current = fitted.left;
+      rightWidthRef.current = fitted.right;
+      leftRatioRef.current = fitted.left / windowWidth;
+      rightRatioRef.current = fitted.right / windowWidth;
+      setLeftWidth(fitted.left);
+      setRightWidth(fitted.right);
+      return fitted;
+    };
+    applyRestoredPanelWidths(window.innerWidth);
     leftHiddenRef.current = settings.leftPanelHidden;
     rightHiddenRef.current = settings.rightPanelHidden;
-    leftRatioRef.current = settings.leftPanelWidth / settings.windowWidth;
-    rightRatioRef.current = settings.rightPanelWidth / settings.windowWidth;
-    setLeftWidth(settings.leftPanelWidth);
-    setRightWidth(settings.rightPanelWidth);
     setLeftHidden(settings.leftPanelHidden);
     setRightHidden(settings.rightPanelHidden);
 
     void appWindow
       .setSize({ width: settings.windowWidth, height: settings.windowHeight })
       .then(async () => {
+        const fitted = applyRestoredPanelWidths(window.innerWidth);
+        if (
+          fitted.left !== Math.round(settings.leftPanelWidth) ||
+          fitted.right !== Math.round(settings.rightPanelWidth)
+        ) {
+          await updateSettingsRef.current({
+            leftPanelWidth: fitted.left,
+            rightPanelWidth: fitted.right,
+          });
+        }
         if (settings.windowMaximized) await appWindow.maximize();
         else if (await appWindow.isMaximized()) await appWindow.unmaximize();
       })
@@ -258,20 +280,16 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
       animationFrame = requestAnimationFrame(() => {
         const windowWidth = window.innerWidth;
         if (windowWidth === windowWidthRef.current || drag.current) return;
-        const available = windowWidth - WORKSPACE_MINIMUM - RESIZERS_WIDTH;
-        const nextLeft = Math.max(
-          LEFT_PANEL_MINIMUM,
-          Math.min(available - RIGHT_PANEL_MINIMUM, windowWidth * leftRatioRef.current),
+        const fitted = fitPanelWidths(
+          windowWidth,
+          windowWidth * leftRatioRef.current,
+          windowWidth * rightRatioRef.current,
         );
-        const nextRight = Math.max(
-          RIGHT_PANEL_MINIMUM,
-          Math.min(available - nextLeft, windowWidth * rightRatioRef.current),
-        );
-        leftWidthRef.current = nextLeft;
-        rightWidthRef.current = nextRight;
+        leftWidthRef.current = fitted.left;
+        rightWidthRef.current = fitted.right;
         windowWidthRef.current = windowWidth;
-        setLeftWidth(nextLeft);
-        setRightWidth(nextRight);
+        setLeftWidth(fitted.left);
+        setRightWidth(fitted.right);
       });
     };
     window.addEventListener("resize", resize);
