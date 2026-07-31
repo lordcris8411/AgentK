@@ -83,7 +83,6 @@
     "productName": "Agent K",
     "beforePack": "./script/prepare-pi-runtime.mjs",
     "asar": true,
-    "electronDist": "node_modules/electron/dist",
     "npmRebuild": false,
     "directories": {
       "output": "release"
