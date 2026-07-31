@@ -4968,14 +4968,22 @@ body.is-tree-dragging * {
   white-space: nowrap;
 }
 .review-file-header button {
-  background: #fff;
-  border: 1px solid #e1dcd6;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
   border-radius: 7px;
-  color: #6e5143;
+  color: var(--text-primary);
   flex: 0 0 auto;
   font-size: 11px;
   margin-left: 8px;
   padding: 5px 8px;
+}
+.review-file-header button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+}
+.review-file-header button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
 }
 .review-diff {
   color: #4d4843;

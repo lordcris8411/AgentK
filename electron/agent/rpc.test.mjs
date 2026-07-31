@@ -137,3 +137,43 @@ test("pool abort waits for Pi to acknowledge that the session is idle", async ()
   assert.equal(completed, true);
   pool.shutdown();
 });
+
+test("pool synchronizes Pi native auto-compaction across existing runtimes", async () => {
+  const pool = new RpcPool({
+    appDataPath: "/tmp/agent-k-rpc-test",
+    bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
+    bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
+    firstPartyEditorExtensions: [],
+    firstPartyLanguageServerSkills: [],
+    launch: { executable: "pi", args: [] },
+    minimum: 2,
+    permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
+    emit() {},
+  });
+  const commands = [];
+  const fakeBridge = (runtimeId) => ({
+    runtimeId,
+    isClosed: () => false,
+    request: async (value) => {
+      commands.push({ runtimeId, value });
+      return { success: true };
+    },
+    stop() {},
+  });
+  pool.workers.set("runtime-a", fakeBridge("runtime-a"));
+  pool.workers.set("runtime-b", fakeBridge("runtime-b"));
+
+  await pool.setAutoCompaction(false);
+
+  assert.deepEqual(commands, [
+    {
+      runtimeId: "runtime-a",
+      value: { type: "set_auto_compaction", enabled: false },
+    },
+    {
+      runtimeId: "runtime-b",
+      value: { type: "set_auto_compaction", enabled: false },
+    },
+  ]);
+  pool.shutdown();
+});

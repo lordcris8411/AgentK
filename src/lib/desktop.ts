@@ -62,7 +62,6 @@ export type ClientSettings = {
   workerPoolSize: 2 | 3 | 4;
   environmentPromptEnabled: boolean;
   autoCompactEnabled: boolean;
-  autoCompactThreshold: number;
   autoCompactPrompt: string;
   editorWordWrap: boolean;
   disabledFileEditors: string[];

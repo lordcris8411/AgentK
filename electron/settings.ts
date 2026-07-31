@@ -26,7 +26,7 @@ export interface ProviderDraft {
 }
 
 const DEFAULT_SETTINGS: ClientSettings = {
-  version: 11,
+  version: 12,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
@@ -37,7 +37,6 @@ const DEFAULT_SETTINGS: ClientSettings = {
   workerPoolSize: 4,
   environmentPromptEnabled: false,
   autoCompactEnabled: true,
-  autoCompactThreshold: 45,
   autoCompactPrompt: "",
   editorWordWrap: false,
   disabledFileEditors: [],
@@ -145,8 +144,6 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.environmentPromptEnabled = source.environmentPromptEnabled;
   if (typeof source.autoCompactEnabled === "boolean")
     settings.autoCompactEnabled = source.autoCompactEnabled;
-  if (Number(source.autoCompactThreshold) >= 40 && Number(source.autoCompactThreshold) <= 90)
-    settings.autoCompactThreshold = Math.round(Number(source.autoCompactThreshold));
   if (typeof source.autoCompactPrompt === "string" && source.autoCompactPrompt.length <= 4_000)
     settings.autoCompactPrompt = source.autoCompactPrompt;
   if (typeof source.editorWordWrap === "boolean")
@@ -191,7 +188,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.windowHeight = Number(source.windowHeight);
   if (typeof source.windowMaximized === "boolean")
     settings.windowMaximized = source.windowMaximized;
-  settings.version = Math.max(11, Number(source.version) || 11);
+  settings.version = Math.max(12, Number(source.version) || 12);
   return settings;
 }
 
@@ -218,7 +215,6 @@ export async function saveClientSettings(
     settings.workerPoolSize === original.workerPoolSize &&
     settings.environmentPromptEnabled === original.environmentPromptEnabled &&
     settings.autoCompactEnabled === original.autoCompactEnabled &&
-    settings.autoCompactThreshold === original.autoCompactThreshold &&
     settings.autoCompactPrompt === original.autoCompactPrompt &&
     settings.editorWordWrap === original.editorWordWrap &&
     sameStringArray(original.disabledFileEditors, settings.disabledFileEditors) &&

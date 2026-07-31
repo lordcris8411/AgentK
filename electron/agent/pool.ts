@@ -19,6 +19,7 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
 
 export interface RpcPoolOptions {
   appDataPath: string;
+  autoCompactionEnabled?: boolean;
   bundledExtensionsDirectory: string;
   bundledSkillsDirectory: string;
   firstPartyEditorExtensions: Array<{ directory: string; id: string }>;
@@ -33,6 +34,7 @@ export class RpcPool {
   private readonly options: RpcPoolOptions;
   private readonly workers = new Map<string, RpcBridge>();
   private activeRuntime?: string;
+  private autoCompactionEnabled: boolean;
   private minimum: number;
   private starting = 0;
   private poolCwd?: string;
@@ -40,6 +42,7 @@ export class RpcPool {
 
   constructor(options: RpcPoolOptions) {
     this.options = options;
+    this.autoCompactionEnabled = options.autoCompactionEnabled !== false;
     this.minimum = Math.max(2, Math.min(4, options.minimum));
     this.reaper = setInterval(() => void this.maintain(), 2_000);
     this.reaper.unref();
@@ -86,6 +89,10 @@ export class RpcPool {
       });
       try {
         await this.requestData(bridge, { type: "get_state" });
+        await this.requestData(bridge, {
+          type: "set_auto_compaction",
+          enabled: this.autoCompactionEnabled,
+        });
       } catch (cause) {
         bridge.stop();
         throw new Error(`Pi RPC did not become ready: ${errorMessage(cause)}`);
@@ -109,6 +116,35 @@ export class RpcPool {
       await Promise.all(Array.from({ length: missing }, () => this.spawn(cwd)));
     }
     return this.status();
+  }
+
+  async setAutoCompaction(enabled: boolean): Promise<void> {
+    this.removeClosed();
+    const previous = this.autoCompactionEnabled;
+    const workers = [...this.workers.values()];
+    const results = await Promise.allSettled(
+      workers.map((worker) => this.requestData(worker, {
+        type: "set_auto_compaction",
+        enabled,
+      })),
+    );
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failure) {
+      await Promise.allSettled(
+        workers.map((worker, index) =>
+          results[index]?.status === "fulfilled"
+            ? this.requestData(worker, {
+                type: "set_auto_compaction",
+                enabled: previous,
+              })
+            : Promise.resolve(),
+        ),
+      );
+      throw failure.reason;
+    }
+    this.autoCompactionEnabled = enabled;
   }
 
   async connect(
@@ -264,6 +300,10 @@ export class RpcPool {
               replacement.setSessionFile(sessionFile);
             }
             await this.requestData(replacement, { type: "get_state" });
+            await this.requestData(replacement, {
+              type: "set_auto_compaction",
+              enabled: this.autoCompactionEnabled,
+            });
             return { old, replacement };
           } catch (cause) {
             replacement.stop();

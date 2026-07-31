@@ -223,6 +223,7 @@ export class DesktopBackend {
     }
     this.pool = new RpcPool({
       appDataPath: this.options.appDataPath,
+      autoCompactionEnabled: settings.autoCompactEnabled,
       bundledExtensionsDirectory: this.bundledExtensionsDirectory,
       bundledSkillsDirectory: this.bundledSkillsDirectory,
       firstPartyEditorExtensions: this.firstPartyEditorPlugins.map((plugin) => ({
@@ -326,6 +327,8 @@ export class DesktopBackend {
           const current = await loadClientSettings(this.options.appDataPath);
           const environmentPromptChanged =
             input.environmentPromptEnabled !== current.environmentPromptEnabled;
+          const autoCompactionChanged =
+            input.autoCompactEnabled !== current.autoCompactEnabled;
           if (environmentPromptChanged && pool.status().busy > 0)
             throw new Error("Wait for active Pi tasks and dialogs to finish before changing the environment prompt");
           const manager = this.requireLocalModels();
@@ -335,11 +338,16 @@ export class DesktopBackend {
             : [...new Set([...requestedDisabledProviders, LOCAL_MODEL_PROVIDER_ID])];
           const saved = await saveClientSettings(this.options.appDataPath, { ...input, disabledModelProviders });
           for (const plugin of this.languageServers.list()) this.languageServers.setEnabled(plugin.id, !saved.disabledLanguageServers.includes(plugin.id));
-          if (environmentPromptChanged) {
+          if (environmentPromptChanged || autoCompactionChanged) {
             try {
-              await pool.reload();
+              if (autoCompactionChanged)
+                await pool.setAutoCompaction(saved.autoCompactEnabled);
+              if (environmentPromptChanged)
+                await pool.reload();
             } catch (cause) {
               await saveClientSettings(this.options.appDataPath, current);
+              if (autoCompactionChanged)
+                await pool.setAutoCompaction(current.autoCompactEnabled).catch(() => undefined);
               throw cause;
             }
           }

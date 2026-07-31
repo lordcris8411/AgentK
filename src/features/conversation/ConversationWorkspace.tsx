@@ -3690,13 +3690,10 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
                   className="context-usage-bar"
                   role="progressbar"
                   title={en
-                    ? `Used ${contextPercent.toFixed(1)}%; automatic compaction at ${settings.autoCompactThreshold}%`
-                    : `已用 ${contextPercent.toFixed(1)}%；自动整理阈值 ${settings.autoCompactThreshold}%`}
+                    ? `Used ${contextPercent.toFixed(1)}%; Pi native automatic compaction is ${settings.autoCompactEnabled ? "enabled" : "disabled"}`
+                    : `已用 ${contextPercent.toFixed(1)}%；Pi 原生自动整理已${settings.autoCompactEnabled ? "启用" : "关闭"}`}
                 >
                   <i style={{ width: `${contextPercent}%` }} />
-                  {settings.autoCompactEnabled && (
-                    <b style={{ left: `${settings.autoCompactThreshold}%` }} />
-                  )}
                 </span>
               )}
             </div>

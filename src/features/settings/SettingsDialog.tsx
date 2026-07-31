@@ -918,19 +918,8 @@ export function SettingsDialog({
                     />
                   </label>
                   <p className="settings-inline-description">{t("autoCompactDescription")}</p>
-                  <label htmlFor="settings-auto-compact-threshold">{t("autoCompactThreshold")} · {settings.autoCompactThreshold}%</label>
-                  <input
-                    disabled={!settings.autoCompactEnabled}
-                    id="settings-auto-compact-threshold"
-                    max="90"
-                    min="40"
-                    onChange={(event) => void update({ autoCompactThreshold: Number(event.target.value) })}
-                    type="range"
-                    value={settings.autoCompactThreshold}
-                  />
                   <label htmlFor="settings-auto-compact-prompt">{t("autoCompactPrompt")}</label>
                   <textarea
-                    disabled={!settings.autoCompactEnabled}
                     id="settings-auto-compact-prompt"
                     onBlur={(event) => void update({ autoCompactPrompt: event.target.value })}
                     placeholder={t("autoCompactPromptPlaceholder")}

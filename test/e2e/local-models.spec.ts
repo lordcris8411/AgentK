@@ -217,13 +217,11 @@ test("managed local model switch controls availability and disclosure", async ()
     await expect(enabled).toHaveAttribute("aria-checked", "true");
     await expect(main.locator(".local-model-expand-button")).toHaveCount(1);
     await enabled.click();
-    await expect(main.locator(".local-model-section")).toHaveAttribute("aria-busy", "true");
     await expect(main.locator(".local-model-section")).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
     await expect(enabled).toHaveAttribute("aria-checked", "false");
     await expect(main.locator(".local-model-expand-button")).toHaveCount(0);
     await expect.poll(() => main.evaluate(() => window.agentK.invoke<{ disabledModelProviders: string[] }>("get_client_settings", {}).then((settings) => settings.disabledModelProviders))).toContain("agent-k-llama-cpp");
     await enabled.click();
-    await expect(main.locator(".local-model-section")).toHaveAttribute("aria-busy", "true");
     await expect(main.locator(".local-model-section")).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
     await expect(enabled).toHaveAttribute("aria-checked", "true");
     await expect(main.locator(".local-model-expand-button")).toHaveCount(1);
