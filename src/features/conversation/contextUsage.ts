@@ -1,3 +1,20 @@
+export const PI_DEFAULT_COMPACTION_RESERVE_TOKENS = 16_384;
+
+export function piCompactionThreshold(contextWindow: number): {
+  percent: number;
+  tokens: number;
+} | undefined {
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) return undefined;
+  const tokens = Math.max(
+    0,
+    Math.floor(contextWindow) - PI_DEFAULT_COMPACTION_RESERVE_TOKENS,
+  );
+  return {
+    percent: Math.max(0, Math.min(100, (tokens / contextWindow) * 100)),
+    tokens,
+  };
+}
+
 export function contextTokens(message: Record<string, unknown>): number | undefined {
   const usage = message.usage;
   if (!usage || typeof usage !== "object") return undefined;

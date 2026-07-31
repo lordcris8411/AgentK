@@ -21,7 +21,11 @@ import { desktopWindow, platform } from "../../lib/platform";
 import { modelIsEnabled, modelKey } from "../../lib/modelAvailability";
 import type { ReviewCall } from "./ReviewPanel";
 import { highlightCode } from "./codeHighlight";
-import { contextTokens, latestContextTokens } from "./contextUsage";
+import {
+  contextTokens,
+  latestContextTokens,
+  piCompactionThreshold,
+} from "./contextUsage";
 import { displayUserContent } from "./messageContent";
 import { useSettings } from "../settings/SettingsContext";
 import {
@@ -2249,6 +2253,18 @@ export function ConversationWorkspace({
   const contextPercent = reportedContextTokens !== undefined && contextWindow
     ? Math.max(0, Math.min(100, (reportedContextTokens / contextWindow) * 100))
     : undefined;
+  const autoCompactionThreshold = contextWindow
+    ? piCompactionThreshold(contextWindow)
+    : undefined;
+  const contextTooltip = contextPercent === undefined
+    ? undefined
+    : en
+      ? settings.autoCompactEnabled && autoCompactionThreshold
+        ? `Used ${contextPercent.toFixed(1)}%; Pi compacts at about ${autoCompactionThreshold.percent.toFixed(1)}% (${formatContextTokens(autoCompactionThreshold.tokens)}, with 16.4k tokens reserved)`
+        : `Used ${contextPercent.toFixed(1)}%; Pi native automatic compaction is disabled`
+      : settings.autoCompactEnabled && autoCompactionThreshold
+        ? `已用 ${contextPercent.toFixed(1)}%；Pi 约在 ${autoCompactionThreshold.percent.toFixed(1)}%（${formatContextTokens(autoCompactionThreshold.tokens)}，预留 16.4k tokens）开始整理`
+        : `已用 ${contextPercent.toFixed(1)}%；Pi 原生自动整理已关闭`;
   const modelSupportsImages = Boolean(selectedModel?.input?.includes("image"));
   const addAttachmentPaths = (paths: string[]) => {
     if (!paths.length) return;
@@ -3697,17 +3713,19 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
               <span>{contextUsageLabel ?? plainUiText(contextStatus!.text)}</span>
               {contextPercent !== undefined && (
                 <span
-                  aria-label={en ? "Context usage" : "上下文用量"}
+                  aria-label={contextTooltip}
                   aria-valuemax={100}
                   aria-valuemin={0}
                   aria-valuenow={Math.round(contextPercent)}
                   className="context-usage-bar"
+                  data-tooltip={contextTooltip}
                   role="progressbar"
-                  title={en
-                    ? `Used ${contextPercent.toFixed(1)}%; Pi native automatic compaction is ${settings.autoCompactEnabled ? "enabled" : "disabled"}`
-                    : `已用 ${contextPercent.toFixed(1)}%；Pi 原生自动整理已${settings.autoCompactEnabled ? "启用" : "关闭"}`}
+                  tabIndex={0}
                 >
                   <i style={{ width: `${contextPercent}%` }} />
+                  {settings.autoCompactEnabled && autoCompactionThreshold && (
+                    <b style={{ left: `${autoCompactionThreshold.percent}%` }} />
+                  )}
                 </span>
               )}
             </div>

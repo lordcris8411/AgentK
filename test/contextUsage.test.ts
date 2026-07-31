@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { latestContextTokens } from "../src/features/conversation/contextUsage.ts";
+import {
+  latestContextTokens,
+  piCompactionThreshold,
+} from "../src/features/conversation/contextUsage.ts";
+
+test("places the Pi default compaction marker at the reserved-token boundary", () => {
+  assert.deepEqual(piCompactionThreshold(272_000), {
+    percent: (255_616 / 272_000) * 100,
+    tokens: 255_616,
+  });
+  assert.deepEqual(piCompactionThreshold(8_192), { percent: 0, tokens: 0 });
+  assert.equal(piCompactionThreshold(0), undefined);
+});
 
 test("uses the latest assistant context usage on the active message path", () => {
   const messages = [

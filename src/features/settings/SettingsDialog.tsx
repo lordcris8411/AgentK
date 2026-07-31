@@ -892,31 +892,37 @@ export function SettingsDialog({
                   </div>
                 </div>
                 <div className="settings-section">
-                  <label className="settings-toggle-label" htmlFor="settings-environment-prompt">
-                    <span>{t("environmentPrompt")}</span>
-                    <input
-                      checked={settings.environmentPromptEnabled}
+                  <div className="settings-toggle-label">
+                    <span id="settings-environment-prompt-label">{t("environmentPrompt")}</span>
+                    <button
+                      aria-checked={settings.environmentPromptEnabled}
+                      aria-labelledby="settings-environment-prompt-label"
+                      className={settings.environmentPromptEnabled ? "resource-toggle is-active" : "resource-toggle"}
                       id="settings-environment-prompt"
-                      onChange={(event) => {
+                      onClick={() => {
                         setError(undefined);
-                        void update({ environmentPromptEnabled: event.target.checked })
+                        void update({ environmentPromptEnabled: !settings.environmentPromptEnabled })
                           .catch((cause) => setError(String(cause)));
                       }}
-                      type="checkbox"
-                    />
-                  </label>
+                      role="switch"
+                      type="button"
+                    ><span /></button>
+                  </div>
                   <p className="settings-inline-description">{t("environmentPromptDescription")}</p>
                 </div>
                 <div className="settings-section">
-                  <label className="settings-toggle-label" htmlFor="settings-auto-compact">
-                    <span>{t("autoCompact")}</span>
-                    <input
-                      checked={settings.autoCompactEnabled}
+                  <div className="settings-toggle-label">
+                    <span id="settings-auto-compact-label">{t("autoCompact")}</span>
+                    <button
+                      aria-checked={settings.autoCompactEnabled}
+                      aria-labelledby="settings-auto-compact-label"
+                      className={settings.autoCompactEnabled ? "resource-toggle is-active" : "resource-toggle"}
                       id="settings-auto-compact"
-                      onChange={(event) => void update({ autoCompactEnabled: event.target.checked })}
-                      type="checkbox"
-                    />
-                  </label>
+                      onClick={() => void update({ autoCompactEnabled: !settings.autoCompactEnabled })}
+                      role="switch"
+                      type="button"
+                    ><span /></button>
+                  </div>
                   <p className="settings-inline-description">{t("autoCompactDescription")}</p>
                   <label htmlFor="settings-auto-compact-prompt">{t("autoCompactPrompt")}</label>
                   <textarea
