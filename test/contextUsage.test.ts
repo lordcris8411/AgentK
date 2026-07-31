@@ -23,3 +23,31 @@ test("recomputes context usage when conversation history is rewound", () => {
   assert.equal(latestContextTokens(beforeRewind.slice(0, 1)), 1_200);
   assert.equal(latestContextTokens([]), undefined);
 });
+
+test("does not restore stale pre-compaction usage after a session reload", () => {
+  const compacted = [
+    {
+      role: "compactionSummary",
+      summary: "Older work",
+      timestamp: 2_000,
+      tokensBefore: 250_000,
+    },
+    {
+      role: "assistant",
+      timestamp: 1_500,
+      usage: { totalTokens: 248_000 },
+    },
+  ];
+  assert.equal(latestContextTokens(compacted), undefined);
+  assert.equal(
+    latestContextTokens([
+      ...compacted,
+      {
+        role: "assistant",
+        timestamp: 2_500,
+        usage: { totalTokens: 31_000 },
+      },
+    ]),
+    31_000,
+  );
+});

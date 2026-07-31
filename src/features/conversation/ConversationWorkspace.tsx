@@ -2042,8 +2042,10 @@ export function ConversationWorkspace({
       void Promise.all([
         desktop.command({ type: "get_state" }, session?.runtimeId),
         desktop.command({ type: "get_available_models" }, session?.runtimeId),
+        desktop.command({ type: "get_session_stats" }, session?.runtimeId)
+          .catch(() => null),
       ])
-        .then(([state, available]) => {
+        .then(([state, available, stats]) => {
           const model = (
             state as {
               model?: Partial<ModelOption>;
@@ -2067,6 +2069,10 @@ export function ConversationWorkspace({
             (entry) =>
               entry.provider === model?.provider && entry.id === model?.id,
           );
+          const contextTokens = stats === null
+            ? undefined
+            : (stats as { contextUsage?: { tokens?: unknown } })
+              .contextUsage?.tokens;
           if (!cancelled) {
             setRunning(isStreaming === true);
             setAvailableModels(models);
@@ -2080,6 +2086,14 @@ export function ConversationWorkspace({
                 ? model.contextWindow
                 : listed?.contextWindow,
             );
+            if (stats !== null)
+              setReportedContextTokens(
+                typeof contextTokens === "number" &&
+                    Number.isFinite(contextTokens) &&
+                    contextTokens >= 0
+                  ? contextTokens
+                  : undefined,
+              );
             setAvailableThinkingLevels(
               supportedThinkingLevels(listed ?? model),
             );
