@@ -83,6 +83,8 @@
     "productName": "Agent K",
     "beforePack": "./script/prepare-pi-runtime.mjs",
     "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "npmRebuild": false,
     "directories": {
       "output": "release"
     },
@@ -126,19 +128,17 @@
       "target": [
         "AppImage"
       ],
+      "artifactName": "Agent-K-${version}-linux-x86_64.${ext}",
       "category": "Development",
       "icon": "assets/icons/icon.png",
       "syncDesktopName": true
     },
     "win": {
       "target": [
-        "nsis"
+        "portable"
       ],
+      "artifactName": "Agent-K-${version}-windows-x64-portable.${ext}",
       "icon": "assets/icons/icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
     }
   },
   "dependencies": {

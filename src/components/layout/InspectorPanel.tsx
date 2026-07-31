@@ -663,6 +663,7 @@ export function InspectorPanel({
   }>();
   const [pluginMenuActions, setPluginMenuActions] = useState<PluginMenuAction[]>([]);
   const [cppProgress, setCppProgress] = useState<{ languageServerId?: string; detail?: string; error?: string; log?: string; rate?: number; stage: string; bytes?: number; total?: number }>();
+  const [languageServerConfirmation, setLanguageServerConfirmation] = useState<{ languageServerId: string; message: string; requestId: string; title: string }>();
   const [cppDiagnostics, setCppDiagnostics] = useState<Record<string, Array<Record<string, unknown>>>>({});
   const [languageProjects, setLanguageProjects] = useState<LanguageServerProject[]>([]);
   const languageProjectsByTreePath = useMemo(() => {
@@ -704,6 +705,16 @@ export function InspectorPanel({
   explorerWidthRef.current = explorerWidth;
   useEffect(() => {
     const stop = desktop.onEvent((event) => {
+      if (event.type === "language_server_confirmation_request") {
+        if (typeof event.languageServerId !== "string" || typeof event.requestId !== "string") return;
+        setLanguageServerConfirmation({
+          languageServerId: event.languageServerId,
+          requestId: event.requestId,
+          title: typeof event.title === "string" ? event.title : (en ? "Confirm download" : "确认下载"),
+          message: typeof event.message === "string" ? event.message : (en ? "The language extension needs to download additional tools." : "语言扩展需要下载额外工具。"),
+        });
+        return;
+      }
       if (event.type !== "language_server_progress") return;
       const value = event as { bytes?: unknown; detail?: unknown; error?: unknown; languageServerId?: unknown; rate?: unknown; stage?: unknown; total?: unknown };
       if (typeof value.stage !== "string") return;
@@ -2630,7 +2641,56 @@ export function InspectorPanel({
           </form>
         </div>
       ) : null}
-      {cppProgress ? createPortal(
+      {languageServerConfirmation ? createPortal(
+        <div className="inspector-dialog-backdrop is-viewport">
+          <section
+            aria-modal="true"
+            className="inspector-dialog language-server-confirmation"
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              const request = languageServerConfirmation;
+              setLanguageServerConfirmation(undefined);
+              setCppProgress(undefined);
+              void desktop.languageServerCall(request.languageServerId, "respondConfirmation", request.requestId, false).catch((cause) => onError(String(cause)));
+            }}
+            role="dialog"
+          >
+            <header>
+              <span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-download" /></span>
+              <div><h2>{languageServerConfirmation.title}</h2><p>{en ? "Download only after your approval" : "确认后才会开始下载"}</p></div>
+              <button
+                aria-label={en ? "Cancel" : "取消"}
+                className="inspector-dialog-close"
+                onClick={() => {
+                  const request = languageServerConfirmation;
+                  setLanguageServerConfirmation(undefined);
+                  setCppProgress(undefined);
+                  void desktop.languageServerCall(request.languageServerId, "respondConfirmation", request.requestId, false).catch((cause) => onError(String(cause)));
+                }}
+                type="button"
+              ><i aria-hidden="true" className="fa-solid fa-xmark" /></button>
+            </header>
+            <p className="language-server-confirmation-message">{languageServerConfirmation.message}</p>
+            <footer>
+              <button onClick={() => {
+                const request = languageServerConfirmation;
+                setLanguageServerConfirmation(undefined);
+                setCppProgress(undefined);
+                void desktop.languageServerCall(request.languageServerId, "respondConfirmation", request.requestId, false).catch((cause) => onError(String(cause)));
+              }} type="button">{en ? "Cancel" : "取消"}</button>
+              <button autoFocus className="primary" onClick={() => {
+                const request = languageServerConfirmation;
+                setLanguageServerConfirmation(undefined);
+                void desktop.languageServerCall(request.languageServerId, "respondConfirmation", request.requestId, true).catch((cause) => {
+                  setCppProgress({ stage: "failed", error: String(cause) });
+                });
+              }} type="button">{en ? "Download" : "下载"}</button>
+            </footer>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
+      {cppProgress && !languageServerConfirmation ? createPortal(
         <div className="inspector-dialog-backdrop is-viewport">
           <section aria-modal="true" className="inspector-dialog cpp-progress-dialog" role="dialog">
             <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{cppProgress.stage === "failed" ? (en ? "Language project load failed" : "语言工程加载失败") : (en ? "Preparing language project" : "正在准备语言工程")}</h2><p>{cppProgress.detail ?? cppProgress.stage}</p></div><button aria-label={cppProgress.stage === "failed" ? (en ? "Close" : "关闭") : (en ? "Cancel language project load" : "取消加载语言工程")} className="cpp-progress-close" disabled={cppProgress.stage === "cancelling"} onClick={() => { if (cppProgress.stage === "failed") { setCppProgress(undefined); return; } setCppProgress((current) => current ? { ...current, stage: "cancelling", detail: en ? "Cancelling…" : "正在取消…" } : current); if (cppProgress.languageServerId) void desktop.languageServerCall(cppProgress.languageServerId, "cancel").then(() => setCppProgress(undefined)).catch((cause) => setCppProgress({ stage: "failed", error: String(cause) })); else setCppProgress(undefined); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>

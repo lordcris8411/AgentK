@@ -14,13 +14,12 @@ import {
 } from "./cmake-cache.ts";
 
 import {
-  DEFAULT_VSWHERE_PATH,
   managedDebuggerArchive,
   managedDebuggerExecutable,
   managedDebuggerMarker,
   managedToolchainArchives,
+  managedToolchainDownloadPrompt,
   managedToolchainMarker,
-  parseWindowsEnvironment,
   toolchainArchiveFormat,
 } from "./toolchain.ts";
 import { selectWorkspaceSymbols } from "./skill-symbols.ts";
@@ -67,11 +66,7 @@ test("selects only exact clangd workspace symbols for semantic skill actions", (
   assert.deepEqual(selectWorkspaceSymbols(symbols, "render", true), []);
 });
 
-test("uses the standard Visual Studio Installer path when vswhere is not discoverable", () => {
-  assert.equal(DEFAULT_VSWHERE_PATH, "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe");
-});
-
-test("uses standalone clangd on Linux and Windows", () => {
+test("pins standalone clangd and a complete managed LLVM compiler toolchain", () => {
   const linux = managedToolchainArchives("linux");
   const windows = managedToolchainArchives("win32");
 
@@ -83,6 +78,14 @@ test("uses standalone clangd on Linux and Windows", () => {
   assert.doesNotMatch(linux.clangd.asset, /LLVM-Linux|clang\+llvm/i);
   assert.doesNotMatch(windows.clangd.asset, /LLVM-Linux|clang\+llvm/i);
   assert.match(managedToolchainMarker("win32"), /clangd-windows-22\.1\.6\.zip/);
+  assert.equal(windows.llvm.owner, "mstorsjo");
+  assert.equal(windows.llvm.repository, "llvm-mingw");
+  assert.equal(windows.llvm.asset, "llvm-mingw-20260616-ucrt-x86_64.zip");
+  assert.equal(windows.llvm.bytes, 187_504_083);
+  assert.equal(linux.llvm.owner, "llvm");
+  assert.equal(linux.llvm.repository, "llvm-project");
+  assert.equal(linux.llvm.asset, "LLVM-22.1.8-Linux-X64.tar.xz");
+  assert.match(managedToolchainMarker("win32"), /llvm-mingw-20260616-ucrt-x86_64\.zip/);
 });
 
 test("pins a private portable CodeLLDB debugger for supported desktop platforms", () => {
@@ -100,13 +103,6 @@ test("pins a private portable CodeLLDB debugger for supported desktop platforms"
   assert.equal(managedDebuggerExecutable("linux"), "codelldb");
 });
 
-test("parses the Visual Studio developer environment without pseudo variables", () => {
-  assert.deepEqual(parseWindowsEnvironment("Path=C:\\VS\\bin;C:\\Windows\r\nINCLUDE=C:\\VS\\include\r\n=C:=C:\\work\r\n"), {
-    Path: "C:\\VS\\bin;C:\\Windows",
-    INCLUDE: "C:\\VS\\include",
-  });
-});
-
 test("routes ZIP tool archives away from tar", () => {
   assert.equal(toolchainArchiveFormat("ninja-linux.zip"), "zip");
   assert.equal(toolchainArchiveFormat("clangd-linux-22.1.6.ZIP"), "zip");
@@ -114,6 +110,14 @@ test("routes ZIP tool archives away from tar", () => {
   assert.equal(toolchainArchiveFormat("cmake-linux.tar.gz"), "tar");
   assert.equal(toolchainArchiveFormat("llvm.tar.xz"), "tar");
   assert.throws(() => toolchainArchiveFormat("download.html"), /Unsupported toolchain archive/);
+});
+
+test("describes the isolated LLVM download before provisioning", () => {
+  const llvm = managedToolchainArchives("win32").llvm;
+  const prompt = managedToolchainDownloadPrompt([{ archive: llvm, tool: "llvm" }]);
+  assert.equal(prompt.title, "下载 C++ 工具链");
+  assert.match(prompt.message, /LLVM\/Clang compiler \(178\.8 MB\)/);
+  assert.match(prompt.message, /不会修改系统 PATH/);
 });
 
 test("reuses a fresh compilation database from a conventional project build directory", async (context) => {

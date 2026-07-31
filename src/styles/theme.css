@@ -4301,6 +4301,9 @@ body.is-tree-dragging * {
 .cpp-toolchain-progress::-webkit-progress-bar { background: var(--surface-active); border: 1px solid var(--border-strong); border-radius: 4px; }
 .cpp-toolchain-progress::-webkit-progress-value { background: color-mix(in srgb, var(--accent) 60%, #65b8ee); border-radius: 3px; }
 .cpp-progress-dialog { padding: 20px; width: min(430px, 100%); }
+.language-server-confirmation { width: min(430px, 100%); }
+.language-server-confirmation > header { padding-right: 28px; }
+.language-server-confirmation > .language-server-confirmation-message { color: var(--text-secondary); font-size: 11px; line-height: 1.55; margin: 0; white-space: pre-line; }
 .cpp-progress-dialog > header { align-items: start; display: grid; gap: 11px; grid-template-columns: 32px minmax(0, 1fr); margin-bottom: 16px; padding-right: 27px; }
 .cpp-progress-dialog > header > div { min-width: 0; }
 .cpp-progress-dialog > header p { display: -webkit-box; line-clamp: 2; overflow: hidden; -webkit-box-orient: vertical; }
