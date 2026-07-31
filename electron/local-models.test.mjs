@@ -381,6 +381,14 @@ http.createServer(async(req,res)=>{ if(req.headers.authorization!=='Bearer '+key
     assert.equal(provider.models[0].reasoning, true);
     assert.deepEqual(provider.models[0].thinkingLevelMap, { off: "off", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null });
     assert.deepEqual(provider.models[0].compat, { supportsDeveloperRole: false, supportsReasoningEffort: false, thinkingFormat: "qwen-chat-template" });
+    await manager.setEnabled(false);
+    assert.equal(manager.snapshot().enabled, false);
+    assert.equal(JSON.parse(await readFile(join(process.env.HOME, ".pi", "agent", "models.json"), "utf8")).providers[LOCAL_MODEL_PROVIDER_ID], undefined);
+    const disabledRequest = await fetch(`${provider.baseUrl}/chat/completions`, { method: "POST", headers: { authorization: `Bearer ${provider.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: downloaded.id, messages: [] }) });
+    assert.equal(disabledRequest.status, 503);
+    await manager.setEnabled(true);
+    assert.equal(manager.snapshot().enabled, true);
+    assert.equal(JSON.parse(await readFile(join(process.env.HOME, ".pi", "agent", "models.json"), "utf8")).providers[LOCAL_MODEL_PROVIDER_ID].models[0].id, downloaded.id);
     const unauthorized = await fetch(`${provider.baseUrl}/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: downloaded.id, messages: [] }) });
     assert.equal(unauthorized.status, 401);
     const unsupportedEndpoint = await fetch(`${provider.baseUrl}/models`, { headers: { authorization: `Bearer ${provider.apiKey}` } });

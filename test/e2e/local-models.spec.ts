@@ -51,7 +51,9 @@ const started=Date.now();console.error('fixture llama-server started');http.crea
     await main.evaluate((cwd) => window.agentK.invoke("prepare_session", { cwd }), userData);
     await main.evaluate(() => window.dispatchEvent(new CustomEvent("agent-k-open-settings", { detail: { page: "models" } })));
     await expect(main.locator(".local-model-section")).toBeVisible();
-    const localModelsToggle = main.locator(".local-model-heading-toggle");
+    const localModelsEnabled = main.locator(".local-model-heading .resource-toggle");
+    await expect(localModelsEnabled).toHaveAttribute("aria-checked", "true");
+    const localModelsToggle = main.locator(".local-model-expand-button");
     await expect(localModelsToggle).toHaveAttribute("aria-expanded", "false");
     await expect(main.locator(".local-model-discovery")).toHaveCount(0);
     await localModelsToggle.click();
@@ -158,13 +160,14 @@ const started=Date.now();console.error('fixture llama-server started');http.crea
     await main.locator(".local-model-logs header button").click();
     const defaultModel = main.locator(".model-current-row select");
     await defaultModel.selectOption("agent-k-llama-cpp/tool-model-q4_k_m");
+    await expect.poll(() => main.evaluate(() => window.agentK.invoke<{ defaultModel: string }>("get_client_settings", {}).then((settings) => settings.defaultModel))).toBe("agent-k-llama-cpp/tool-model-q4_k_m");
     await main.evaluate(async () => { const settings = await window.agentK.invoke<Record<string, unknown>>("get_client_settings", {}); await window.agentK.invoke("save_client_settings", { settings: { ...settings, sessionModels: { "/fixture/session.jsonl": "agent-k-llama-cpp/tool-model-q4_k_m" } } }); });
     await imported.locator("button", { hasText: /高级|Advanced/ }).click();
     await imported.locator(".local-model-advanced select").first().selectOption("cpu");
     await imported.locator(".local-model-advanced-footer button").click();
     await imported.locator("button", { hasText: /验证工具|Verify tools/ }).click();
     await expect(imported).toContainText(/工具协议兼容|Tool protocol compatible/, { timeout: 20_000 });
-    await expect.poll(() => readFileSync(launchArgsLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]).some((args) => args[args.indexOf("--cache-type-k") + 1] === "f16" && args[args.indexOf("--cache-type-v") + 1] === "f16")).toBe(true);
+    await expect.poll(() => readFileSync(launchArgsLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]).some((args) => args[args.indexOf("--cache-type-k") + 1] === "q8_0" && args[args.indexOf("--cache-type-v") + 1] === "q8_0")).toBe(true);
     await imported.locator("button", { hasText: /设为当前|Set current/ }).click();
     await expect.poll(async () => ({
       activeModelId: await main.evaluate(() => window.agentK.invoke<{ activeModelId?: string }>("local_models_list", {}).then((snapshot) => snapshot.activeModelId)),
@@ -200,6 +203,57 @@ const started=Date.now();console.error('fixture llama-server started');http.crea
   }
 });
 
+test("managed local model switch controls availability and disclosure", async () => {
+  const userData = mkdtempSync(join(tmpdir(), "agent-k-local-model-toggle-e2e-"));
+  const isolatedHome = join(userData, "home"); mkdirSync(isolatedHome, { recursive: true });
+  const environment = { ...process.env }; delete environment.ELECTRON_RUN_AS_NODE;
+  const application = await electron.launch({ args: ["."], cwd: repositoryRoot, env: { ...environment, HOME: isolatedHome, USERPROFILE: isolatedHome, AGENT_K_E2E: "1", AGENT_K_E2E_USER_DATA: userData } });
+  try {
+    await application.firstWindow();
+    const main = await expect.poll(() => application.windows().find((page) => !page.url().includes("splashscreen"))).not.toBeUndefined().then(() => application.windows().find((page) => !page.url().includes("splashscreen"))!);
+    await main.waitForLoadState("domcontentloaded");
+    await main.evaluate(() => window.dispatchEvent(new CustomEvent("agent-k-open-settings", { detail: { page: "models" } })));
+    const enabled = main.locator(".local-model-heading .resource-toggle");
+    await expect(enabled).toHaveAttribute("aria-checked", "true");
+    await expect(main.locator(".local-model-expand-button")).toHaveCount(1);
+    await enabled.click();
+    await expect(main.locator(".local-model-section")).toHaveAttribute("aria-busy", "true");
+    await expect(main.locator(".local-model-section")).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
+    await expect(enabled).toHaveAttribute("aria-checked", "false");
+    await expect(main.locator(".local-model-expand-button")).toHaveCount(0);
+    await expect.poll(() => main.evaluate(() => window.agentK.invoke<{ disabledModelProviders: string[] }>("get_client_settings", {}).then((settings) => settings.disabledModelProviders))).toContain("agent-k-llama-cpp");
+    await enabled.click();
+    await expect(main.locator(".local-model-section")).toHaveAttribute("aria-busy", "true");
+    await expect(main.locator(".local-model-section")).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
+    await expect(enabled).toHaveAttribute("aria-checked", "true");
+    await expect(main.locator(".local-model-expand-button")).toHaveCount(1);
+    await expect.poll(() => main.evaluate(() => window.agentK.invoke<{ disabledModelProviders: string[] }>("get_client_settings", {}).then((settings) => settings.disabledModelProviders))).not.toContain("agent-k-llama-cpp");
+  } finally {
+    await application.close();
+    rmSync(userData, { force: true, recursive: true });
+  }
+});
+
+test("new managed models default both KV caches to q8_0", async () => {
+  const userData = mkdtempSync(join(tmpdir(), "agent-k-local-model-kv-default-e2e-"));
+  const modelPath = join(userData, "kv-default.gguf");
+  writeFileSync(modelPath, Buffer.concat([ggufFixture(), Buffer.alloc(1024)]));
+  const isolatedHome = join(userData, "home"); mkdirSync(isolatedHome, { recursive: true });
+  const environment = { ...process.env }; delete environment.ELECTRON_RUN_AS_NODE;
+  const application = await electron.launch({ args: ["."], cwd: repositoryRoot, env: { ...environment, HOME: isolatedHome, USERPROFILE: isolatedHome, AGENT_K_E2E: "1", AGENT_K_E2E_USER_DATA: userData } });
+  try {
+    await application.firstWindow();
+    const main = await expect.poll(() => application.windows().find((page) => !page.url().includes("splashscreen"))).not.toBeUndefined().then(() => application.windows().find((page) => !page.url().includes("splashscreen"))!);
+    await main.waitForLoadState("domcontentloaded");
+    const modelId = await main.evaluate((path) => window.agentK.invoke<string>("local_models_import", { path }), modelPath);
+    const config = await main.evaluate((id) => window.agentK.invoke<{ models: Array<{ id: string; config: { cacheTypeK: string; cacheTypeV: string } }> }>("local_models_list", {}).then((snapshot) => snapshot.models.find((model) => model.id === id)?.config), modelId);
+    expect(config).toMatchObject({ cacheTypeK: "q8_0", cacheTypeV: "q8_0" });
+  } finally {
+    await application.close();
+    rmSync(userData, { force: true, recursive: true });
+  }
+});
+
 test("Settings exposes but never overwrites a conflicting external provider", async () => {
   const userData = mkdtempSync(join(tmpdir(), "agent-k-local-model-conflict-e2e-"));
   const isolatedHome = join(userData, "home"); const piDirectory = join(isolatedHome, ".pi", "agent"); mkdirSync(piDirectory, { recursive: true });
@@ -214,7 +268,7 @@ test("Settings exposes but never overwrites a conflicting external provider", as
     await main.waitForLoadState("domcontentloaded");
     await main.evaluate((cwd) => window.agentK.invoke("prepare_session", { cwd }), userData);
     await main.evaluate(() => window.dispatchEvent(new CustomEvent("agent-k-open-settings", { detail: { page: "models" } })));
-    await main.locator(".local-model-heading-toggle").click();
+    await main.locator(".local-model-expand-button").click();
     await expect(main.locator(".local-model-section .local-model-error")).toContainText("not managed by Agent K");
     await expect(main.locator(".provider-card").filter({ hasText: "External llama.cpp" })).toHaveCount(1);
     expect(JSON.parse(readFileSync(modelsPath, "utf8"))).toEqual(external);
@@ -236,7 +290,7 @@ test("uses the configured local model library after restarting", async () => {
     const main = await expect.poll(() => application.windows().find((page) => !page.url().includes("splashscreen"))).not.toBeUndefined().then(() => application.windows().find((page) => !page.url().includes("splashscreen"))!);
     await main.waitForLoadState("domcontentloaded");
     await main.evaluate(() => window.dispatchEvent(new CustomEvent("agent-k-open-settings", { detail: { page: "models" } })));
-    await main.locator(".local-model-heading-toggle").click();
+    await main.locator(".local-model-expand-button").click();
     await expect(main.locator("#local-model-storage-path")).toHaveValue(customLibrary);
     await expect(main.locator(".local-model-storage > small")).toContainText(customLibrary);
     expect(await main.evaluate(() => window.agentK.invoke<{ storagePath: string }>("local_models_list", {}))).toMatchObject({ storagePath: customLibrary });

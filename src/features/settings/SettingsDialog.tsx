@@ -892,6 +892,22 @@ export function SettingsDialog({
                   </div>
                 </div>
                 <div className="settings-section">
+                  <label className="settings-toggle-label" htmlFor="settings-environment-prompt">
+                    <span>{t("environmentPrompt")}</span>
+                    <input
+                      checked={settings.environmentPromptEnabled}
+                      id="settings-environment-prompt"
+                      onChange={(event) => {
+                        setError(undefined);
+                        void update({ environmentPromptEnabled: event.target.checked })
+                          .catch((cause) => setError(String(cause)));
+                      }}
+                      type="checkbox"
+                    />
+                  </label>
+                  <p className="settings-inline-description">{t("environmentPromptDescription")}</p>
+                </div>
+                <div className="settings-section">
                   <label className="settings-toggle-label" htmlFor="settings-auto-compact">
                     <span>{t("autoCompact")}</span>
                     <input

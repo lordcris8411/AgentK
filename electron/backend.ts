@@ -152,10 +152,39 @@ export class DesktopBackend {
     this.piLaunch = resolvePiLaunch(settings.piExecutable, this.options.bundledPiCli);
     this.startSettingsWatch();
     await this.startThemeWatch();
+    let loadingStartupLocalModel = false;
+    const localModelPhaseText: Record<string, [string, string]> = {
+      "preparing-runtime": ["准备私有运行时", "Preparing private runtime"],
+      "downloading-runtime": ["下载私有运行时", "Downloading private runtime"],
+      "verifying-runtime": ["校验私有运行时", "Verifying private runtime"],
+      "extracting-runtime": ["解压私有运行时", "Extracting private runtime"],
+      "starting-server": ["启动 llama.cpp 服务", "Starting llama.cpp server"],
+      "loading-model": ["加载 GGUF 模型", "Loading GGUF model"],
+      "health-check": ["等待模型就绪", "Waiting for model readiness"],
+      ready: ["模型已就绪", "Model ready"],
+    };
     this.localModels = new LocalModelManager({
       cachePath: this.options.cachePath,
       rootPath: this.options.localModelRoot,
-      emit: this.options.emit,
+      enabled: !settings.disabledModelProviders.includes(LOCAL_MODEL_PROVIDER_ID),
+      emit: (event) => {
+        this.options.emit(event);
+        if (!loadingStartupLocalModel || event.type !== "local_model_run_progress") return;
+        const phase = asString(event.phase) ?? "preparing-runtime";
+        const labels = localModelPhaseText[phase] ?? [phase, phase];
+        const completed = typeof event.completed === "number" ? event.completed : 0;
+        const total = typeof event.total === "number" && event.total > 0 ? event.total : 4;
+        const bytesCompleted = typeof event.bytesCompleted === "number" ? event.bytesCompleted : 0;
+        const bytesTotal = typeof event.bytesTotal === "number" ? event.bytesTotal : 0;
+        const byteProgress = bytesTotal > 0 ? Math.min(1, Math.max(0, bytesCompleted / bytesTotal)) : 0;
+        const modelName = asString(event.modelName) ?? startupText("local model", "本地模型");
+        this.options.updateSplash(
+          `${startupText("Loading managed local model", "正在加载托管本地模型")} · ${modelName} · ${labels[settings.locale === "en-US" ? 1 : 0]}`,
+          Math.min(total, completed + byteProgress),
+          total,
+          startupTheme,
+        );
+      },
       piBusy: () => this.pool?.hasActiveAgentTasks() ?? false,
       verifyPiBusy: async () => this.pool?.hasActiveAgentTasksVerified() ?? false,
       reloadPi: async () => this.pool?.reload(),
@@ -181,6 +210,17 @@ export class DesktopBackend {
         : {}),
     });
     await this.localModels.initialize();
+    const startupLocalModelId = this.localModels.snapshot().activeModelId;
+    if (!settings.disabledModelProviders.includes(LOCAL_MODEL_PROVIDER_ID) && startupLocalModelId) {
+      loadingStartupLocalModel = true;
+      try {
+        await this.localModels.run(startupLocalModelId);
+      } catch (cause) {
+        this.options.emit({ type: "local_model_startup_error", modelId: startupLocalModelId, error: String(cause) });
+      } finally {
+        loadingStartupLocalModel = false;
+      }
+    }
     this.pool = new RpcPool({
       appDataPath: this.options.appDataPath,
       bundledExtensionsDirectory: this.bundledExtensionsDirectory,
@@ -281,7 +321,30 @@ export class DesktopBackend {
         await removeTheme(this.options.appDataPath, requiredString(args.id, "id"));
         return;
       case "save_client_settings":
-        { const saved = await saveClientSettings(this.options.appDataPath, args.settings); for (const plugin of this.languageServers.list()) this.languageServers.setEnabled(plugin.id, !saved.disabledLanguageServers.includes(plugin.id)); return saved; }
+        {
+          const input = asObject(args.settings);
+          const current = await loadClientSettings(this.options.appDataPath);
+          const environmentPromptChanged =
+            input.environmentPromptEnabled !== current.environmentPromptEnabled;
+          if (environmentPromptChanged && pool.status().busy > 0)
+            throw new Error("Wait for active Pi tasks and dialogs to finish before changing the environment prompt");
+          const manager = this.requireLocalModels();
+          const requestedDisabledProviders = asArray(input.disabledModelProviders).filter((id): id is string => typeof id === "string");
+          const disabledModelProviders = manager.snapshot().enabled
+            ? requestedDisabledProviders.filter((id) => id !== LOCAL_MODEL_PROVIDER_ID)
+            : [...new Set([...requestedDisabledProviders, LOCAL_MODEL_PROVIDER_ID])];
+          const saved = await saveClientSettings(this.options.appDataPath, { ...input, disabledModelProviders });
+          for (const plugin of this.languageServers.list()) this.languageServers.setEnabled(plugin.id, !saved.disabledLanguageServers.includes(plugin.id));
+          if (environmentPromptChanged) {
+            try {
+              await pool.reload();
+            } catch (cause) {
+              await saveClientSettings(this.options.appDataPath, current);
+              throw cause;
+            }
+          }
+          return saved;
+        }
       case "list_browsers":
         return listBrowsers();
       case "open_external_url":
@@ -391,6 +454,30 @@ export class DesktopBackend {
         return this.requireLocalModels().activate(requiredString(args.id, "id"));
       case "local_models_run":
         return this.requireLocalModels().run(requiredString(args.id, "id"));
+      case "local_models_set_enabled": {
+        if (typeof args.enabled !== "boolean") throw new Error("enabled must be a boolean");
+        const manager = this.requireLocalModels();
+        const previous = manager.snapshot().enabled;
+        await manager.setEnabled(args.enabled);
+        let saved;
+        try {
+          const current = await loadClientSettings(this.options.appDataPath);
+          const disabledModelProviders = args.enabled
+            ? current.disabledModelProviders.filter((id) => id !== LOCAL_MODEL_PROVIDER_ID)
+            : [...new Set([...current.disabledModelProviders, LOCAL_MODEL_PROVIDER_ID])];
+          saved = await saveClientSettings(this.options.appDataPath, { ...current, disabledModelProviders });
+        } catch (cause) {
+          await manager.setEnabled(previous).catch(() => undefined);
+          throw cause;
+        }
+        this.options.emit({ type: "client_settings_changed" });
+        this.options.emit({ type: "local_models_changed" });
+        if (args.enabled) {
+          const id = manager.snapshot().activeModelId;
+          if (id) await manager.run(id);
+        }
+        return saved;
+      }
       case "local_models_stop":
         return this.requireLocalModels().stop();
       case "local_models_update":

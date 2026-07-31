@@ -60,6 +60,7 @@ export type ClientSettings = {
   localModelDirectory: string;
   piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
+  environmentPromptEnabled: boolean;
   autoCompactEnabled: boolean;
   autoCompactThreshold: number;
   autoCompactPrompt: string;
@@ -250,7 +251,7 @@ export type LocalModelRecord = {
 };
 export type LocalModelDownloadTask = { id: string; source: Exclude<LocalModelSource, "import">; repository: string; revision: string; files: Array<{ name: string; url: string; size: number; sha256?: string; etag?: string }>; completedBytes: number; totalBytes: number; bytesPerSecond?: number; status: "queued" | "downloading" | "paused" | "verifying-download" | "failed"; error?: string; createdAt: number; updatedAt: number };
 export type RuntimeDownloadProgress = { modelId: string; backend: Exclude<LocalModelBackend, "auto">; source: string; fileName: string; phase: "downloading" | "verifying" | "extracting"; completedBytes: number; totalBytes: number; bytesPerSecond: number };
-export type LocalModelSnapshot = { activeModelId?: string; runningModelId?: string; models: LocalModelRecord[]; downloads: LocalModelDownloadTask[]; hardware: { platform: string; architecture: string; totalMemory: number; availableBackends: LocalModelBackend[]; gpu?: string; vram?: number }; proxyUrl: string; storagePath: string; defaultStoragePath: string; piBusy: boolean; runtimeDownload?: RuntimeDownloadProgress; verificationStage?: { modelId: string; phase: "preparing-runtime" | "loading-model" | "checking-template" | "requesting-tool-call" | "checking-tool-result" }; providerConflict?: string };
+export type LocalModelSnapshot = { enabled: boolean; activeModelId?: string; runningModelId?: string; models: LocalModelRecord[]; downloads: LocalModelDownloadTask[]; hardware: { platform: string; architecture: string; totalMemory: number; availableBackends: LocalModelBackend[]; gpu?: string; vram?: number }; proxyUrl: string; storagePath: string; defaultStoragePath: string; piBusy: boolean; runtimeDownload?: RuntimeDownloadProgress; verificationStage?: { modelId: string; phase: "preparing-runtime" | "loading-model" | "checking-template" | "requesting-tool-call" | "checking-tool-result" }; providerConflict?: string };
 export type HubModelResult = { source: Exclude<LocalModelSource, "import">; repository: string; name: string; description?: string; downloads?: number; gated: boolean; private: boolean };
 export type HubGgufFile = { name: string; size: number; sha256?: string; group: string; shardIndex: number; shardCount: number };
 
@@ -322,6 +323,7 @@ export const desktop = {
   verifyLocalModel: (id: string) => invoke<void>("local_models_verify", { id }),
   activateLocalModel: (id: string) => invoke<void>("local_models_activate", { id }),
   runLocalModel: (id: string) => invoke<void>("local_models_run", { id }),
+  setLocalModelsEnabled: (enabled: boolean) => invoke<ClientSettings>("local_models_set_enabled", { enabled }),
   stopLocalModel: () => invoke<void>("local_models_stop"),
   updateLocalModel: (id: string, config: Partial<LocalModelRuntimeConfig>) => invoke<void>("local_models_update", { id, config }),
   deleteLocalModel: (id: string) => invoke<void>("local_models_delete", { id }),

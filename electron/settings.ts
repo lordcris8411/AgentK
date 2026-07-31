@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS: ClientSettings = {
   localModelDirectory: "",
   piExecutable: "",
   workerPoolSize: 4,
+  environmentPromptEnabled: false,
   autoCompactEnabled: true,
   autoCompactThreshold: 45,
   autoCompactPrompt: "",
@@ -140,6 +141,8 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.piExecutable = source.piExecutable.trim();
   if ([2, 3, 4].includes(Number(source.workerPoolSize)))
     settings.workerPoolSize = Number(source.workerPoolSize) as 2 | 3 | 4;
+  if (typeof source.environmentPromptEnabled === "boolean")
+    settings.environmentPromptEnabled = source.environmentPromptEnabled;
   if (typeof source.autoCompactEnabled === "boolean")
     settings.autoCompactEnabled = source.autoCompactEnabled;
   if (Number(source.autoCompactThreshold) >= 40 && Number(source.autoCompactThreshold) <= 90)
@@ -213,6 +216,7 @@ export async function saveClientSettings(
     settings.localModelDirectory === original.localModelDirectory &&
     settings.piExecutable === original.piExecutable &&
     settings.workerPoolSize === original.workerPoolSize &&
+    settings.environmentPromptEnabled === original.environmentPromptEnabled &&
     settings.autoCompactEnabled === original.autoCompactEnabled &&
     settings.autoCompactThreshold === original.autoCompactThreshold &&
     settings.autoCompactPrompt === original.autoCompactPrompt &&

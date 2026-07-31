@@ -232,6 +232,24 @@ export function LocalModelsSettings() {
     const path = Array.isArray(selected) ? selected[0] : selected;
     if (path) act(() => desktop.importLocalModel(path));
   };
+  const toggleManagedModels = async () => {
+    if (!snapshot || busy) return;
+    const enabled = !snapshot.enabled;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await desktop.setLocalModelsEnabled(enabled);
+      const next = await refresh();
+      if (!next.enabled) setExpanded(false);
+      window.dispatchEvent(new Event("agent-k-model-catalog-changed"));
+      window.dispatchEvent(new Event("agent-k-model-changed"));
+    } catch (cause) {
+      setError(localModelError(cause, en));
+      await refresh().catch(() => undefined);
+    } finally {
+      setBusy(false);
+    }
+  };
   const chooseStorage = async () => {
     const selected = await platform.openDialog({ directory: true, title: en ? "Select local model storage" : "选择本地模型保存位置" });
     const path = Array.isArray(selected) ? selected[0] : selected;
@@ -247,9 +265,10 @@ export function LocalModelsSettings() {
     setStorageNotice(en ? "The default location will be restored after restarting Agent K. Existing model data will not be moved or deleted." : "重启 Agent K 后恢复默认位置；旧模型数据不会被移动或删除。");
   };
   if (!snapshot) return <section className="settings-section local-model-section"><h3>{en ? "Managed local models" : "托管本地模型"}</h3><p>{error ?? (en ? "Loading…" : "加载中…")}</p></section>;
+  const disableBlocked = snapshot.enabled && Boolean(snapshot.runningModelId) && snapshot.piBusy;
   return <section className="settings-section local-model-section" aria-busy={busy}>
-    <div className="local-model-heading"><button aria-controls="local-model-settings-content" aria-expanded={expanded} className="local-model-heading-toggle" onClick={() => setExpanded((value) => !value)} type="button"><span><h3>{en ? "Managed local models" : "托管本地模型"}</h3><p>{en ? "GGUF models run privately with the official llama.cpp runtime. Tool compatibility is mandatory." : "GGUF 模型使用官方 llama.cpp 私有运行；必须通过真实工具调用验证。"}</p></span><i className={`fa-solid fa-chevron-${expanded ? "down" : "right"}`} /></button>{expanded && <div><button onClick={() => void importModel()} type="button"><i className="fa-solid fa-file-import" /> {en ? "Import GGUF" : "导入 GGUF"}</button><button onClick={() => setLogsOpen((value) => !value)} type="button"><i className="fa-solid fa-terminal" /> {en ? "Logs" : "日志"}</button></div>}</div>
-    {expanded && <div className="local-model-content" id="local-model-settings-content">
+    <div className="local-model-heading"><span className="local-model-heading-copy"><h3>{en ? "Managed local models" : "托管本地模型"}</h3><p>{en ? "GGUF models run privately with the official llama.cpp runtime. Tool compatibility is mandatory." : "GGUF 模型使用官方 llama.cpp 私有运行；必须通过真实工具调用验证。"}</p></span><div className="local-model-heading-controls">{snapshot.enabled && expanded && <><button onClick={() => void importModel()} type="button"><i className="fa-solid fa-file-import" /> {en ? "Import GGUF" : "导入 GGUF"}</button><button onClick={() => setLogsOpen((value) => !value)} type="button"><i className="fa-solid fa-terminal" /> {en ? "Logs" : "日志"}</button></>}<button aria-checked={snapshot.enabled} aria-label={en ? "Enable managed local models" : "启用托管本地模型"} className={snapshot.enabled ? "resource-toggle is-active" : "resource-toggle"} disabled={disableBlocked} onClick={() => void toggleManagedModels()} role="switch" title={disableBlocked ? (en ? "Stop Pi before disabling managed local models" : "请先停止 Pi，再禁用托管本地模型") : undefined} type="button"><span /></button>{snapshot.enabled && <button aria-controls="local-model-settings-content" aria-expanded={expanded} aria-label={expanded ? (en ? "Collapse managed local models" : "收起托管本地模型") : (en ? "Expand managed local models" : "展开托管本地模型")} className="local-model-expand-button" onClick={() => setExpanded((value) => !value)} type="button"><i className={`fa-solid fa-chevron-${expanded ? "down" : "right"}`} /></button>}</div></div>
+    {snapshot.enabled && expanded && <div className="local-model-content" id="local-model-settings-content">
       <div className="local-model-hardware"><i className="fa-solid fa-microchip" /><span>{snapshot.hardware.platform} {snapshot.hardware.architecture} · {snapshot.hardware.gpu ?? (en ? "CPU" : "CPU")} · {snapshot.hardware.availableBackends.join(" / ")}</span></div>
       <div className="local-model-storage">
         <label htmlFor="local-model-storage-path">{en ? "Model storage location" : "模型保存位置"}</label>

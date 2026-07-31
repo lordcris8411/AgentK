@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { RpcPool } from "../../.electron-dist/agent/pool.js";
-import { RpcBridge } from "../../.electron-dist/agent/rpc.js";
+import { buildEnvironmentSystemPrompt, RpcBridge } from "../../.electron-dist/agent/rpc.js";
 
 function bridgeFixture() {
   const child = new EventEmitter();
@@ -38,6 +38,14 @@ function bridgeFixture() {
 }
 
 const flushLines = () => new Promise((resolve) => setImmediate(resolve));
+
+test("environment prompt identifies the Windows host and its Bash boundary", () => {
+  const prompt = buildEnvironmentSystemPrompt("win32", "x64");
+  assert.match(prompt, /Host operating system: Windows \(win32\)/);
+  assert.match(prompt, /Host architecture: x64/);
+  assert.match(prompt, /Git Bash/);
+  assert.match(prompt, /do not assume Linux package managers/);
+});
 
 function respondWithState(child, state) {
   child.stdin.once("data", (chunk) => {

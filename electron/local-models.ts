@@ -120,6 +120,7 @@ export interface HubGgufFile {
 }
 
 export interface LocalModelManagerSnapshot {
+  enabled: boolean;
   activeModelId?: string;
   runningModelId?: string;
   models: LocalModelRecord[];
@@ -169,6 +170,7 @@ export interface HardwareInfo {
 
 type ManagerOptions = {
   cachePath: string;
+  enabled?: boolean;
   rootPath?: string;
   emit(event: JsonObject): void;
   piBusy(): boolean;
@@ -220,8 +222,8 @@ const DEFAULT_CONFIG: LocalModelRuntimeConfig = {
   contextSize: 32_768,
   gpuLayers: -1,
   threads: 0,
-  cacheTypeK: "f16",
-  cacheTypeV: "f16",
+  cacheTypeK: "q8_0",
+  cacheTypeV: "q8_0",
   maxOutputTokens: 8_192,
   reasoning: false,
 };
@@ -474,9 +476,11 @@ export class LocalModelManager {
   private runtimeDownload?: RuntimeDownloadProgress;
   private verificationStage?: LocalModelVerificationStage;
   private runTransaction?: LocalModelRunTransaction;
+  private enabled: boolean;
 
   constructor(options: ManagerOptions) {
     this.options = options;
+    this.enabled = options.enabled !== false;
     this.root = resolve(options.rootPath ?? join(options.cachePath, "local-models"));
     this.modelsDirectory = join(this.root, "models");
     this.downloadsDirectory = join(this.root, "downloads");
@@ -523,7 +527,7 @@ export class LocalModelManager {
   }
 
   snapshot(): LocalModelManagerSnapshot {
-    return clone({ activeModelId: this.registry.activeModelId, runningModelId: this.runningModelId, models: this.registry.models, downloads: this.registry.downloads, hardware: this.hardware, proxyUrl: `http://127.0.0.1:${this.proxyPort}/v1`, storagePath: this.root, defaultStoragePath: resolve(join(this.options.cachePath, "local-models")), piBusy: this.options.piBusy(), ...(this.runtimeDownload ? { runtimeDownload: this.runtimeDownload } : {}), ...(this.verificationStage ? { verificationStage: this.verificationStage } : {}), ...(this.providerConflict ? { providerConflict: this.providerConflict } : {}) });
+    return clone({ enabled: this.enabled, activeModelId: this.registry.activeModelId, runningModelId: this.runningModelId, models: this.registry.models, downloads: this.registry.downloads, hardware: this.hardware, proxyUrl: `http://127.0.0.1:${this.proxyPort}/v1`, storagePath: this.root, defaultStoragePath: resolve(join(this.options.cachePath, "local-models")), piBusy: this.options.piBusy(), ...(this.runtimeDownload ? { runtimeDownload: this.runtimeDownload } : {}), ...(this.verificationStage ? { verificationStage: this.verificationStage } : {}), ...(this.providerConflict ? { providerConflict: this.providerConflict } : {}) });
   }
 
   private async piBusy(): Promise<boolean> {
@@ -727,8 +731,31 @@ export class LocalModelManager {
     }
   }
 
-  async run(id: string): Promise<void> { const model = this.model(id); if (this.registry.activeModelId !== id || model.compatibility !== "tool-compatible" || model.compatibilityKey !== this.compatibilityKey(model)) throw new Error("Only the current tool-compatible local model can run"); await this.startModel(model, false); await this.saveAndEmit(); }
-  async stop(): Promise<void> { if (await this.piBusy()) throw new Error("Wait for Pi to stop before unloading the local model"); this.serverStartAbort?.abort(); await this.serverStarting?.promise.catch(() => undefined); await this.stopServer(); await this.saveAndEmit(); }
+  async run(id: string): Promise<void> { if (!this.enabled) throw new Error("Managed local models are disabled"); const model = this.model(id); if (this.registry.activeModelId !== id || model.compatibility !== "tool-compatible" || model.compatibilityKey !== this.compatibilityKey(model)) throw new Error("Only the current tool-compatible local model can run"); await this.startModel(model, false); await this.saveAndEmit(); }
+  async stop(): Promise<void> { if (!this.server && !this.serverStarting) return; if (await this.piBusy()) throw new Error("Wait for Pi to stop before unloading the local model"); this.serverStartAbort?.abort(); await this.serverStarting?.promise.catch(() => undefined); await this.stopServer(); await this.saveAndEmit(); }
+
+  async setEnabled(enabled: boolean): Promise<void> {
+    if (this.enabled === enabled) return;
+    if (!enabled && (this.server || this.serverStarting) && await this.piBusy()) throw new Error("Wait for Pi to stop before disabling managed local models");
+    const previous = this.enabled;
+    try {
+      if (!enabled) {
+        this.serverStartAbort?.abort();
+        await this.serverStarting?.promise.catch(() => undefined);
+        await this.stopServer();
+      }
+      this.enabled = enabled;
+      await this.syncProvider();
+      await this.options.reloadPi();
+      await this.saveAndEmit();
+    } catch (cause) {
+      this.enabled = previous;
+      await this.syncProvider().catch(() => undefined);
+      await this.options.reloadPi().catch(() => undefined);
+      await this.saveAndEmit().catch(() => undefined);
+      throw cause;
+    }
+  }
 
   async delete(id: string): Promise<void> {
     const model = this.model(id); const wasActive = this.registry.activeModelId === id;
@@ -1016,11 +1043,11 @@ export class LocalModelManager {
   private async stopServer(): Promise<void> { const child = this.server; const id = this.runningModelId; if (!child) return; this.server = undefined; this.runningModelId = undefined; if (id) { const model = this.registry.models.find((item) => item.id === id); if (model) model.status = "stopping"; } child.kill(); await Promise.race([new Promise<void>((resolveExit) => child.once("exit", () => resolveExit())), new Promise<void>((resolveWait) => setTimeout(resolveWait, 3_000))]); if (child.exitCode === null) child.kill("SIGKILL"); if (id) { const model = this.registry.models.find((item) => item.id === id); if (model) model.status = "ready"; } }
 
   private async startProxy(): Promise<void> { this.proxy = createServer((request, response) => void this.handleProxy(request, response)); await new Promise<void>((resolveListen, rejectListen) => { this.proxy?.once("error", rejectListen); this.proxy?.listen(0, "127.0.0.1", () => resolveListen()); }); const address = this.proxy.address(); if (!address || typeof address === "string") throw new Error("Unable to start local model proxy"); this.proxyPort = address.port; }
-  private async handleProxy(request: IncomingMessage, response: ServerResponse): Promise<void> { const disconnected = new AbortController(); response.once("close", () => { if (!response.writableEnded) disconnected.abort(); }); try { if (request.headers.authorization !== `Bearer ${this.proxyToken}`) { this.reply(response, 401, { error: { message: "Invalid Agent K local model token" } }); return; } const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname; if (pathname !== "/v1/chat/completions") { this.reply(response, 404, { error: { message: "Only Chat Completions is available through the Agent K local model proxy" } }); return; } let body = request.method === "GET" || request.method === "HEAD" ? Buffer.alloc(0) : await requestBody(request); let requestedModel: string | undefined; let jsonBody: JsonObject | undefined; if (body.length && request.headers["content-type"]?.includes("application/json")) { jsonBody = asObject(JSON.parse(body.toString("utf8"))); requestedModel = asString(jsonBody.model); } const active = this.registry.activeModelId ? this.registry.models.find((item) => item.id === this.registry.activeModelId) : undefined; if (!active || active.compatibility !== "tool-compatible" || active.compatibilityKey !== this.compatibilityKey(active)) { this.reply(response, 409, { error: { message: "No verified Agent K local model is active" } }); return; } if (!requestedModel) { this.reply(response, 400, { error: { message: "A current local model ID is required" } }); return; } if (requestedModel !== active.id) { this.reply(response, 409, { error: { message: `Local model ${requestedModel} is not active` } }); return; } if (jsonBody) { jsonBody = applyLocalModelReasoningPolicy(jsonBody, active.config.reasoning); body = Buffer.from(JSON.stringify(jsonBody), "utf8"); } if (!this.server || this.runningModelId !== active.id) await this.startModel(active, false); const upstream = await this.internalFetch(request.url ?? "/", { method: request.method, headers: sanitizeHeaders(request.headers), body: body.length ? new Uint8Array(body) : undefined, redirect: "manual", signal: AbortSignal.any([disconnected.signal, AbortSignal.timeout(10 * 60_000)]) }); const upstreamHeaders: Record<string, string> = {}; upstream.headers.forEach((value, name) => { if (!["content-encoding", "transfer-encoding", "connection"].includes(name.toLowerCase())) upstreamHeaders[name] = value; }); response.writeHead(upstream.status, upstreamHeaders); if (!upstream.body) { response.end(); return; } for await (const chunk of webStreamChunks(upstream.body)) if (!response.write(Buffer.from(chunk))) await new Promise<void>((resolveDrain) => response.once("drain", resolveDrain)); response.end(); } catch (cause) { if (!response.headersSent) this.reply(response, 502, { error: { message: errorMessage(cause) } }); else response.destroy(cause instanceof Error ? cause : undefined); } }
+  private async handleProxy(request: IncomingMessage, response: ServerResponse): Promise<void> { const disconnected = new AbortController(); response.once("close", () => { if (!response.writableEnded) disconnected.abort(); }); try { if (request.headers.authorization !== `Bearer ${this.proxyToken}`) { this.reply(response, 401, { error: { message: "Invalid Agent K local model token" } }); return; } if (!this.enabled) { this.reply(response, 503, { error: { message: "Managed local models are disabled" } }); return; } const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname; if (pathname !== "/v1/chat/completions") { this.reply(response, 404, { error: { message: "Only Chat Completions is available through the Agent K local model proxy" } }); return; } let body = request.method === "GET" || request.method === "HEAD" ? Buffer.alloc(0) : await requestBody(request); let requestedModel: string | undefined; let jsonBody: JsonObject | undefined; if (body.length && request.headers["content-type"]?.includes("application/json")) { jsonBody = asObject(JSON.parse(body.toString("utf8"))); requestedModel = asString(jsonBody.model); } const active = this.registry.activeModelId ? this.registry.models.find((item) => item.id === this.registry.activeModelId) : undefined; if (!active || active.compatibility !== "tool-compatible" || active.compatibilityKey !== this.compatibilityKey(active)) { this.reply(response, 409, { error: { message: "No verified Agent K local model is active" } }); return; } if (!requestedModel) { this.reply(response, 400, { error: { message: "A current local model ID is required" } }); return; } if (requestedModel !== active.id) { this.reply(response, 409, { error: { message: `Local model ${requestedModel} is not active` } }); return; } if (jsonBody) { jsonBody = applyLocalModelReasoningPolicy(jsonBody, active.config.reasoning); body = Buffer.from(JSON.stringify(jsonBody), "utf8"); } if (!this.server || this.runningModelId !== active.id) await this.startModel(active, false); const upstream = await this.internalFetch(request.url ?? "/", { method: request.method, headers: sanitizeHeaders(request.headers), body: body.length ? new Uint8Array(body) : undefined, redirect: "manual", signal: AbortSignal.any([disconnected.signal, AbortSignal.timeout(10 * 60_000)]) }); const upstreamHeaders: Record<string, string> = {}; upstream.headers.forEach((value, name) => { if (!["content-encoding", "transfer-encoding", "connection"].includes(name.toLowerCase())) upstreamHeaders[name] = value; }); response.writeHead(upstream.status, upstreamHeaders); if (!upstream.body) { response.end(); return; } for await (const chunk of webStreamChunks(upstream.body)) if (!response.write(Buffer.from(chunk))) await new Promise<void>((resolveDrain) => response.once("drain", resolveDrain)); response.end(); } catch (cause) { if (!response.headersSent) this.reply(response, 502, { error: { message: errorMessage(cause) } }); else response.destroy(cause instanceof Error ? cause : undefined); } }
   private reply(response: ServerResponse, status: number, body: JsonObject): void { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(body)); }
 
   private async assertProviderOwnership(): Promise<void> { const path = join(piAgentDirectory(), "models.json"); const root = asObject(await readJson(path, {})); const existing = asObject(asObject(root.providers)[LOCAL_MODEL_PROVIDER_ID]); if (Object.keys(existing).length && existing.agentKManaged !== true) { this.providerConflict = `Provider ${LOCAL_MODEL_PROVIDER_ID} already exists and is not managed by Agent K`; throw new Error(this.providerConflict); } this.providerConflict = undefined; }
-  private async syncProvider(): Promise<void> { const directory = piAgentDirectory(); await mkdir(directory, { recursive: true }); const path = join(directory, "models.json"); const root = asObject(await readJson(path, {})); const providers = asObject(root.providers); const existing = asObject(providers[LOCAL_MODEL_PROVIDER_ID]); if (Object.keys(existing).length && existing.agentKManaged !== true) { this.providerConflict = `Provider ${LOCAL_MODEL_PROVIDER_ID} already exists and is not managed by Agent K`; if (this.registry.activeModelId) throw new Error(this.providerConflict); return; } this.providerConflict = undefined; const active = this.registry.activeModelId ? this.registry.models.find((model) => model.id === this.registry.activeModelId) : undefined; if (active && active.compatibility === "tool-compatible" && active.compatibilityKey === this.compatibilityKey(active)) providers[LOCAL_MODEL_PROVIDER_ID] = { name: "Agent K llama.cpp", baseUrl: `http://127.0.0.1:${this.proxyPort}/v1`, api: "openai-completions", apiKey: this.proxyToken, agentKManaged: true, models: [{ id: active.id, name: active.name, contextWindow: active.config.contextSize, maxTokens: active.config.maxOutputTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, input: ["text"], reasoning: active.config.reasoning, ...(active.config.reasoning ? { thinkingLevelMap: { off: "off", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null } } : {}), compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, thinkingFormat: "qwen-chat-template" } }] }; else delete providers[LOCAL_MODEL_PROVIDER_ID]; root.providers = providers; await atomicWrite(path, JSON.stringify(root, null, 2), true); }
+  private async syncProvider(): Promise<void> { const directory = piAgentDirectory(); await mkdir(directory, { recursive: true }); const path = join(directory, "models.json"); const root = asObject(await readJson(path, {})); const providers = asObject(root.providers); const existing = asObject(providers[LOCAL_MODEL_PROVIDER_ID]); if (Object.keys(existing).length && existing.agentKManaged !== true) { this.providerConflict = `Provider ${LOCAL_MODEL_PROVIDER_ID} already exists and is not managed by Agent K`; if (this.registry.activeModelId) throw new Error(this.providerConflict); return; } this.providerConflict = undefined; const active = this.registry.activeModelId ? this.registry.models.find((model) => model.id === this.registry.activeModelId) : undefined; if (this.enabled && active && active.compatibility === "tool-compatible" && active.compatibilityKey === this.compatibilityKey(active)) providers[LOCAL_MODEL_PROVIDER_ID] = { name: "Agent K llama.cpp", baseUrl: `http://127.0.0.1:${this.proxyPort}/v1`, api: "openai-completions", apiKey: this.proxyToken, agentKManaged: true, models: [{ id: active.id, name: active.name, contextWindow: active.config.contextSize, maxTokens: active.config.maxOutputTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, input: ["text"], reasoning: active.config.reasoning, ...(active.config.reasoning ? { thinkingLevelMap: { off: "off", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null } } : {}), compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, thinkingFormat: "qwen-chat-template" } }] }; else delete providers[LOCAL_MODEL_PROVIDER_ID]; root.providers = providers; await atomicWrite(path, JSON.stringify(root, null, 2), true); }
 }
 
 async function randomPort(): Promise<number> { const server = createServer(); await new Promise<void>((resolveListen, rejectListen) => { server.once("error", rejectListen); server.listen(0, "127.0.0.1", () => resolveListen()); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Unable to allocate a local port"); const port = address.port; await new Promise<void>((resolveClose) => server.close(() => resolveClose())); return port; }

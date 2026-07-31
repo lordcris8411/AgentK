@@ -8,8 +8,10 @@ description: Get current weather and forecasts for a city or coordinates through
 Get weather data using the free Open-Meteo API.
 
 Use the absolute directory supplied for this Skill as `<skill-dir>`; the script
-is installed with Agent K and is not located in the user's project. It requires
-`bash`, `curl`, `jq`, and outbound HTTPS access.
+is installed with Agent K and is not located in the user's project. Agent K
+provides the JavaScript runtime used by the script, including on Windows. It
+requires only outbound HTTPS access; do not ask the user to install `jq`,
+`curl`, or Node.js.
 
 ## Quick Start
 

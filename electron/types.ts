@@ -10,6 +10,7 @@ export interface ClientSettings {
   localModelDirectory: string;
   piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
+  environmentPromptEnabled: boolean;
   autoCompactEnabled: boolean;
   autoCompactThreshold: number;
   autoCompactPrompt: string;

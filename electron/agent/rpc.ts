@@ -21,7 +21,14 @@ function piEnvironment(
   environment: NodeJS.ProcessEnv | undefined,
   bashEnvironment?: string,
 ): NodeJS.ProcessEnv {
-  const merged = { ...process.env, ...environment };
+  const merged: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...environment,
+    AGENT_K_NODE_EXECUTABLE:
+      environment?.AGENT_K_NODE_EXECUTABLE ||
+      process.env.AGENT_K_NODE_EXECUTABLE ||
+      process.execPath,
+  };
   if (process.platform !== "win32") return merged;
   // Pi decodes Bash stdout as UTF-8. A desktop-launched Git Bash otherwise
   // inherits no locale from the user's terminal and may fall back to the
@@ -46,6 +53,31 @@ type PendingRequest = {
   reject(error: Error): void;
   timer: NodeJS.Timeout;
 };
+
+export function buildEnvironmentSystemPrompt(
+  platform: NodeJS.Platform = process.platform,
+  architecture = process.arch,
+): string {
+  const operatingSystem =
+    platform === "win32"
+      ? "Windows"
+      : platform === "darwin"
+        ? "macOS"
+        : platform === "linux"
+          ? "Linux"
+          : platform;
+  const shellGuidance =
+    platform === "win32"
+      ? `Pi's bash tool runs a Bash-compatible shell on the Windows host (normally Git Bash). Use Windows drive-letter paths. Bash utilities such as rg, find, and ls are appropriate when available, but do not assume Linux package managers, sudo, systemd, /home paths, or other Linux-only facilities. Invoke powershell.exe or cmd.exe explicitly only when native Windows behavior is required.`
+      : platform === "darwin"
+        ? "Pi's bash tool runs a Bash-compatible shell on macOS. Do not assume Linux-only package managers, systemd, or Linux filesystem paths."
+        : "Pi's bash tool runs a Bash-compatible shell on the host.";
+  return `<agent_k_environment>
+Host operating system: ${operatingSystem} (${platform})
+Host architecture: ${architecture}
+${shellGuidance}
+</agent_k_environment>`;
+}
 
 export interface RpcBridgeOptions {
   appDataPath: string;
@@ -207,6 +239,11 @@ export class RpcBridge {
       .filter((resource) => resource.enabled === false)
       .map((resource) => resolve(resource.path));
     const args = ["--mode", "rpc", "--extension", installedExtension];
+    if (clientSettings.environmentPromptEnabled === true)
+      args.push(
+        "--append-system-prompt",
+        buildEnvironmentSystemPrompt(),
+      );
     for (const extensionPath of await bundledExtensionPaths(
       options.bundledExtensionsDirectory,
     )) {
