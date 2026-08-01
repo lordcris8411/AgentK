@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
 import { DebugSession, type DebugSnapshot } from "./debug-session.ts";
 
@@ -58,5 +58,29 @@ test("real CodeLLDB debugs MSVC PDBs and opens a Windows minidump", { skip: proc
     session.shutdown();
     await new Promise((resolve) => setTimeout(resolve, 500));
     await rm(temporary, { force: true, maxRetries: 20, recursive: true, retryDelay: 100 });
+  }
+});
+
+test("real CodeLLDB launches an LLVM-MinGW executable with its isolated runtime path", {
+  skip: process.platform !== "win32" || !process.env.AGENT_K_REAL_DEBUG_PROGRAM || !process.env.AGENT_K_REAL_DEBUG_RUNTIME_PATH,
+  timeout: 30_000,
+}, async () => {
+  const adapter = process.env.AGENT_K_REAL_DEBUG_ADAPTER;
+  const program = process.env.AGENT_K_REAL_DEBUG_PROGRAM;
+  const runtimePath = process.env.AGENT_K_REAL_DEBUG_RUNTIME_PATH;
+  if (!adapter || !existsSync(adapter)) throw new Error("AGENT_K_REAL_DEBUG_ADAPTER must point to codelldb.exe");
+  if (!program || !existsSync(program)) throw new Error("AGENT_K_REAL_DEBUG_PROGRAM must point to a Windows executable");
+  if (!runtimePath || !existsSync(runtimePath)) throw new Error("AGENT_K_REAL_DEBUG_RUNTIME_PATH must point to the compiler runtime directory");
+  const session = new DebugSession(() => undefined, () => ({ adapter: "lldb", args: [], command: adapter }));
+  try {
+    await session.start({
+      environment: { PATH: `${runtimePath}${delimiter}${process.env.PATH ?? ""}` },
+      program,
+      root: dirname(program),
+    });
+    const terminated = await waitForSession(session, (snapshot) => snapshot.state === "terminated", "The LLVM-MinGW debuggee did not terminate");
+    assert.equal(terminated.error, undefined);
+  } finally {
+    session.shutdown();
   }
 });

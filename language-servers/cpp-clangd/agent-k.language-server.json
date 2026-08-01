@@ -7,7 +7,18 @@
   "projectMenu": {
     "loadLabel": "加载 C++ 工程",
     "unloadLabel": "卸载 C++ 工程",
-    "actions": [{ "id": "build", "label": "编译项目", "method": "terminalCommand" }]
+    "actions": [{
+      "id": "build",
+      "label": "编译",
+      "method": "terminalCommand",
+      "defaultProfile": "Debug",
+      "profiles": [
+        { "id": "Debug", "label": "Debug" },
+        { "id": "Release", "label": "Release" },
+        { "id": "RelWithDebInfo", "label": "RelWithDebInfo" },
+        { "id": "MinSizeRel", "label": "MinSizeRel" }
+      ]
+    }]
   },
   "editorContribution": {
     "id": "cpp-project",

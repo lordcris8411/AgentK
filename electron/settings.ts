@@ -26,7 +26,7 @@ export interface ProviderDraft {
 }
 
 const DEFAULT_SETTINGS: ClientSettings = {
-  version: 12,
+  version: 14,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS: ClientSettings = {
   localModelDirectory: "",
   piExecutable: "",
   workerPoolSize: 4,
+  agentLoopDetectionEnabled: true,
   environmentPromptEnabled: false,
   autoCompactEnabled: true,
   autoCompactPrompt: "",
@@ -50,8 +51,12 @@ const DEFAULT_SETTINGS: ClientSettings = {
   sessionModels: {},
   leftPanelWidth: 304,
   rightPanelWidth: 420,
+  fileExplorerWidth: 190,
   leftPanelHidden: false,
   rightPanelHidden: false,
+  developmentDockHeight: 280,
+  developmentDockCollapsed: false,
+  developmentDockTerminalVisible: true,
   windowWidth: 1600,
   windowHeight: 920,
   windowMaximized: false,
@@ -140,6 +145,8 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.piExecutable = source.piExecutable.trim();
   if ([2, 3, 4].includes(Number(source.workerPoolSize)))
     settings.workerPoolSize = Number(source.workerPoolSize) as 2 | 3 | 4;
+  if (typeof source.agentLoopDetectionEnabled === "boolean")
+    settings.agentLoopDetectionEnabled = source.agentLoopDetectionEnabled;
   if (typeof source.environmentPromptEnabled === "boolean")
     settings.environmentPromptEnabled = source.environmentPromptEnabled;
   if (typeof source.autoCompactEnabled === "boolean")
@@ -178,17 +185,25 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.leftPanelWidth = Number(source.leftPanelWidth);
   if (Number(source.rightPanelWidth) >= 420 && Number(source.rightPanelWidth) <= 3200)
     settings.rightPanelWidth = Number(source.rightPanelWidth);
+  if (Number(source.fileExplorerWidth) >= 110 && Number(source.fileExplorerWidth) <= 3000)
+    settings.fileExplorerWidth = Number(source.fileExplorerWidth);
   if (typeof source.leftPanelHidden === "boolean")
     settings.leftPanelHidden = source.leftPanelHidden;
   if (typeof source.rightPanelHidden === "boolean")
     settings.rightPanelHidden = source.rightPanelHidden;
+  if (Number(source.developmentDockHeight) >= 150 && Number(source.developmentDockHeight) <= 8000)
+    settings.developmentDockHeight = Number(source.developmentDockHeight);
+  if (typeof source.developmentDockCollapsed === "boolean")
+    settings.developmentDockCollapsed = source.developmentDockCollapsed;
+  if (typeof source.developmentDockTerminalVisible === "boolean")
+    settings.developmentDockTerminalVisible = source.developmentDockTerminalVisible;
   if (Number(source.windowWidth) >= 1372 && Number(source.windowWidth) <= 16384)
     settings.windowWidth = Number(source.windowWidth);
   if (Number(source.windowHeight) >= 640 && Number(source.windowHeight) <= 16384)
     settings.windowHeight = Number(source.windowHeight);
   if (typeof source.windowMaximized === "boolean")
     settings.windowMaximized = source.windowMaximized;
-  settings.version = Math.max(12, Number(source.version) || 12);
+  settings.version = Math.max(14, Number(source.version) || 14);
   return settings;
 }
 
@@ -213,6 +228,7 @@ export async function saveClientSettings(
     settings.localModelDirectory === original.localModelDirectory &&
     settings.piExecutable === original.piExecutable &&
     settings.workerPoolSize === original.workerPoolSize &&
+    settings.agentLoopDetectionEnabled === original.agentLoopDetectionEnabled &&
     settings.environmentPromptEnabled === original.environmentPromptEnabled &&
     settings.autoCompactEnabled === original.autoCompactEnabled &&
     settings.autoCompactPrompt === original.autoCompactPrompt &&
@@ -228,8 +244,12 @@ export async function saveClientSettings(
     JSON.stringify(settings.sessionModels) === JSON.stringify(original.sessionModels) &&
     settings.leftPanelWidth === original.leftPanelWidth &&
     settings.rightPanelWidth === original.rightPanelWidth &&
+    settings.fileExplorerWidth === original.fileExplorerWidth &&
     settings.leftPanelHidden === original.leftPanelHidden &&
     settings.rightPanelHidden === original.rightPanelHidden &&
+    settings.developmentDockHeight === original.developmentDockHeight &&
+    settings.developmentDockCollapsed === original.developmentDockCollapsed &&
+    settings.developmentDockTerminalVisible === original.developmentDockTerminalVisible &&
     settings.windowWidth === original.windowWidth &&
     settings.windowHeight === original.windowHeight &&
     settings.windowMaximized === original.windowMaximized;

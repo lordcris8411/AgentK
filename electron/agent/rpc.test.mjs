@@ -40,11 +40,13 @@ function bridgeFixture() {
 const flushLines = () => new Promise((resolve) => setImmediate(resolve));
 
 test("environment prompt identifies the Windows host and its Bash boundary", () => {
-  const prompt = buildEnvironmentSystemPrompt("win32", "x64");
+  const prompt = buildEnvironmentSystemPrompt("win32", "x64", "Example CPU");
   assert.match(prompt, /Host operating system: Windows \(win32\)/);
-  assert.match(prompt, /Host architecture: x64/);
+  assert.match(prompt, /Host CPU: Example CPU/);
+  assert.match(prompt, /Host instruction-set architecture: x86-64 \(AMD64\) \(Node architecture: x64\)/);
   assert.match(prompt, /Git Bash/);
   assert.match(prompt, /do not assume Linux package managers/);
+  assert.doesNotMatch(prompt, /Current system local time/);
 });
 
 function respondWithState(child, state) {
@@ -175,5 +177,49 @@ test("pool synchronizes Pi native auto-compaction across existing runtimes", asy
       value: { type: "set_auto_compaction", enabled: false },
     },
   ]);
+  pool.shutdown();
+});
+
+test("new sessions preserve the model shown by their prepared runtime", async () => {
+  const pool = new RpcPool({
+    appDataPath: "/tmp/agent-k-rpc-test",
+    bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
+    bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
+    firstPartyEditorExtensions: [],
+    firstPartyLanguageServerSkills: [],
+    launch: { executable: "pi", args: [] },
+    minimum: 2,
+    permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
+    emit() {},
+  });
+  const commands = [];
+  const fakeBridge = {
+    isClosed: () => false,
+    request: async (value) => {
+      commands.push(value);
+      if (value.type === "get_state")
+        return {
+          success: true,
+          data: {
+            model: { provider: "local", id: "qwen3.6-27b" },
+            sessionFile: "/tmp/session.jsonl",
+            sessionId: "session-test",
+          },
+        };
+      return { success: true, data: {} };
+    },
+    stop() {},
+  };
+  pool.workers.set("runtime-test", fakeBridge);
+
+  const state = await pool.createSession("runtime-test");
+
+  assert.deepEqual(commands, [
+    { type: "get_state" },
+    { type: "new_session" },
+    { type: "set_model", provider: "local", modelId: "qwen3.6-27b" },
+    { type: "get_state" },
+  ]);
+  assert.deepEqual(state.model, { provider: "local", id: "qwen3.6-27b" });
   pool.shutdown();
 });

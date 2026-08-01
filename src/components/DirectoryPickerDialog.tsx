@@ -25,8 +25,10 @@ export function DirectoryPickerDialog({ acceptedFileExtensions, initialPath, onC
   const [directoryName, setDirectoryName] = useState("");
   const [directoryError, setDirectoryError] = useState<string>();
   const [directoryBusy, setDirectoryBusy] = useState(false);
+  const [drivePickerOpen, setDrivePickerOpen] = useState(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const drag = useRef<{ x: number; y: number } | undefined>(undefined);
+  const drivePicker = useRef<HTMLDivElement | null>(null);
   const load = (path?: string) => {
     const target = path?.trim();
     if (target && restrictedRoot) {
@@ -80,7 +82,26 @@ export function DirectoryPickerDialog({ acceptedFileExtensions, initialPath, onC
     }).finally(() => setDirectoryBusy(false));
   };
   useEffect(() => load(initialPath), [initialPath]);
+  useEffect(() => {
+    if (!drivePickerOpen) return;
+    const close = (event: PointerEvent) => {
+      if (!drivePicker.current?.contains(event.target as Node))
+        setDrivePickerOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDrivePickerOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", escape);
+    };
+  }, [drivePickerOpen]);
   const atRestrictedRoot = !!state && !!restrictedRoot && normalizedPath(state.path) === normalizedPath(restrictedRoot);
+  const activeDrive = state?.drives.find((drive) =>
+    state.path.toLowerCase().startsWith(drive.toLowerCase()),
+  ) ?? state?.drives[0];
   return createPortal(
     <div className="directory-picker-backdrop">
       <section aria-modal="true" className="directory-picker" role="dialog" style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}>
@@ -102,7 +123,42 @@ export function DirectoryPickerDialog({ acceptedFileExtensions, initialPath, onC
             {directoryError && <small>{directoryError}</small>}
           </div>
         )}
-        {state?.drives.length && !restrictedRoot ? <label className="directory-picker-drives">驱动器<select onChange={(event) => load(event.target.value)} value={state.drives.find((drive) => state.path.toLowerCase().startsWith(drive.toLowerCase())) ?? state.drives[0]}>{state.drives.map((drive) => <option key={drive} value={drive}>{drive}</option>)}</select></label> : null}
+        {state?.drives.length && !restrictedRoot ? (
+          <div className="directory-picker-drives">
+            <span>驱动器</span>
+            <div className="directory-picker-drive-select" ref={drivePicker}>
+              <button
+                aria-expanded={drivePickerOpen}
+                aria-haspopup="listbox"
+                className="directory-picker-drive-trigger"
+                onClick={() => setDrivePickerOpen((open) => !open)}
+                type="button"
+              >
+                <span>{activeDrive}</span>
+                <i className="fa-solid fa-chevron-down" />
+              </button>
+              {drivePickerOpen ? (
+                <div className="directory-picker-drive-options" role="listbox">
+                  {state.drives.map((drive) => (
+                    <button
+                      aria-selected={drive === activeDrive}
+                      className={drive === activeDrive ? "is-selected" : undefined}
+                      key={drive}
+                      onClick={() => {
+                        setDrivePickerOpen(false);
+                        load(drive);
+                      }}
+                      role="option"
+                      type="button"
+                    >
+                      {drive}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         {error ? <p>{error}</p> : <div className="directory-picker-list"><button disabled={atRestrictedRoot} onClick={() => state && load(state.parent)} type="button">..</button>{state?.directories.map((name) => <button key={name} onClick={() => state && load(childPath(state.path, name))} type="button"><i className="fa-regular fa-folder" /> {name}</button>)}{selectFiles && state?.files.filter((name) => !acceptedFileExtensions || acceptedFileExtensions.some((extension) => name.toLowerCase().endsWith(extension.toLowerCase()))).map((name) => <button className="directory-picker-file" key={name} onClick={() => state && onSelect(childPath(state.path, name))} type="button"><i className="fa-regular fa-file-zipper" /> {name}</button>)}</div>}
         {!selectFiles && <footer><button disabled={!state} onClick={() => state && onSelect(state.path)} type="button">选择此目录</button></footer>}
       </section>

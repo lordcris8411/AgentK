@@ -166,6 +166,7 @@ export function SettingsDialog({
   const [editorSkillViewer, setEditorSkillViewer] = useState<{ name: string; source: string }>();
   const [authTarget, setAuthTarget] = useState<ProviderCatalogItem>();
   const [authKey, setAuthKey] = useState("");
+  const [pendingProviderLogin, setPendingProviderLogin] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [version, setVersion] = useState("0.1.0");
   const [runtimeInfo, setRuntimeInfo] = useState({ piVersion: "unknown", operatingSystem: navigator.platform, architecture: "" });
@@ -176,6 +177,7 @@ export function SettingsDialog({
   const [themeSlideIndex, setThemeSlideIndex] = useState(0);
   const providersRef = useRef<ProviderCatalogItem[]>([]);
   const lastCatalogRefreshRef = useRef(0);
+  const providerLoginPollRef = useRef(false);
   const providerDisplayName = (provider: Pick<ProviderCatalogItem, "id" | "name">) =>
     provider.id === "ollama" ? "Ollama" : provider.id === "vllm" ? "vLLM" : provider.name || provider.id;
   useEffect(() => {
@@ -253,6 +255,20 @@ export function SettingsDialog({
       setBusy(false);
     }
   };
+  const applyProviderCatalog = (catalog: ProviderCatalogItem[]) => {
+    providersRef.current = catalog;
+    lastCatalogRefreshRef.current = Date.now();
+    setProviders(catalog);
+    const seen = new Set<string>();
+    setModels(catalog.flatMap((provider) => provider.models
+      .filter((model) => {
+        const key = `${provider.id}/${model.id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((model) => ({ ...model, provider: provider.id }))));
+  };
   const refresh = async (forceCatalog = true) => {
     setBusy(true);
     setError(undefined);
@@ -263,20 +279,7 @@ export function SettingsDialog({
       const catalog = refreshCatalog
         ? await desktop.providerCatalog()
         : providersRef.current;
-      if (refreshCatalog) {
-        providersRef.current = catalog;
-        lastCatalogRefreshRef.current = Date.now();
-        setProviders(catalog);
-      }
-      const seen = new Set<string>();
-      setModels(catalog.flatMap((provider) => provider.models
-        .filter((model) => {
-          const key = `${provider.id}/${model.id}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        })
-        .map((model) => ({ ...model, provider: provider.id }))));
+      applyProviderCatalog(catalog);
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -289,8 +292,10 @@ export function SettingsDialog({
     return () => window.removeEventListener("agent-k-model-catalog-changed", changed);
   }, []);
   const reloadModelConfiguration = async () => {
+    // Reflect newly written credentials immediately even when an active Pi
+    // task prevents the runtime pool from reloading at this exact moment.
+    await refresh(true);
     await desktop.reloadPiRuntimes();
-    await refresh();
     window.dispatchEvent(new Event("agent-k-model-changed"));
   };
   const installEditorPlugin = async (sourceDirectory: string) => {
@@ -411,17 +416,63 @@ export function SettingsDialog({
   }, [open, page]);
   useEffect(() => {
     if (!open || page !== "models") return;
-    // Let the dialog shell paint before asking Pi for model data. Reopening
-    // within the cache window only refreshes the small runtime state payload.
+    // Authentication happens in a separate Pi terminal. Always read the real
+    // credential-backed catalog when this page opens instead of reusing the
+    // pre-login cache.
     let timeout: number | undefined;
     const frame = window.requestAnimationFrame(() => {
-      timeout = window.setTimeout(() => void refresh(false), 0);
+      timeout = window.setTimeout(() => void refresh(true), 0);
     });
     return () => {
       window.cancelAnimationFrame(frame);
       if (timeout !== undefined) window.clearTimeout(timeout);
     };
   }, [open, page]);
+  useEffect(() => {
+    if (!open || page !== "models" || !pendingProviderLogin) return;
+    let cancelled = false;
+    const providerId = pendingProviderLogin;
+    const poll = async () => {
+      if (cancelled || providerLoginPollRef.current) return;
+      providerLoginPollRef.current = true;
+      try {
+        const catalog = await desktop.providerCatalog();
+        if (cancelled) return;
+        applyProviderCatalog(catalog);
+        const provider = catalog.find((item) => item.id === providerId);
+        if (!provider?.configured) return;
+        setPendingProviderLogin((current) => current === providerId ? undefined : current);
+        setNotice(settings.locale === "en-US"
+          ? `${providerDisplayName(provider)} is configured.`
+          : `${providerDisplayName(provider)} 已配置。`);
+        try {
+          await desktop.reloadPiRuntimes();
+          if (!cancelled) window.dispatchEvent(new Event("agent-k-model-changed"));
+        } catch {
+          // The credential status is already correct. A busy runtime may defer
+          // its reload, but must not make the provider appear unconfigured.
+        }
+      } catch {
+        // The external login terminal may still be starting. Keep polling
+        // without surfacing transient RPC errors as settings failures.
+      } finally {
+        providerLoginPollRef.current = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 800);
+    const timeout = window.setTimeout(() => {
+      setPendingProviderLogin((current) => current === providerId ? undefined : current);
+    }, 5 * 60_000);
+    const onFocus = () => void poll();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.clearTimeout(timeout);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [open, page, pendingProviderLogin, settings.locale]);
   useEffect(() => {
     if (!open || page !== "about") return;
     void loadAboutData()
@@ -537,6 +588,8 @@ export function SettingsDialog({
     setBusy(true);
     try {
       await desktop.openProviderLogin(provider.id);
+      lastCatalogRefreshRef.current = 0;
+      setPendingProviderLogin(provider.id);
       setNotice(`${t("loginTerminalOpened")} /login ${provider.id}`);
     } catch (cause) {
       setError(String(cause));
@@ -890,6 +943,25 @@ export function SettingsDialog({
                       </button>
                     ))}
                   </div>
+                </div>
+                <div className="settings-section">
+                  <div className="settings-toggle-label">
+                    <span id="settings-agent-loop-detection-label">{t("agentLoopDetection")}</span>
+                    <button
+                      aria-checked={settings.agentLoopDetectionEnabled}
+                      aria-labelledby="settings-agent-loop-detection-label"
+                      className={settings.agentLoopDetectionEnabled ? "resource-toggle is-active" : "resource-toggle"}
+                      id="settings-agent-loop-detection"
+                      onClick={() => {
+                        setError(undefined);
+                        void update({ agentLoopDetectionEnabled: !settings.agentLoopDetectionEnabled })
+                          .catch((cause) => setError(String(cause)));
+                      }}
+                      role="switch"
+                      type="button"
+                    ><span /></button>
+                  </div>
+                  <p className="settings-inline-description">{t("agentLoopDetectionDescription")}</p>
                 </div>
                 <div className="settings-section">
                   <div className="settings-toggle-label">

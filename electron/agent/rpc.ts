@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { cpus } from "node:os";
 import { createInterface } from "node:readline";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { JsonObject, PiResource } from "../types.js";
@@ -57,6 +58,7 @@ type PendingRequest = {
 export function buildEnvironmentSystemPrompt(
   platform: NodeJS.Platform = process.platform,
   architecture = process.arch,
+  cpuModel = cpus()[0]?.model?.trim() ?? "",
 ): string {
   const operatingSystem =
     platform === "win32"
@@ -72,9 +74,21 @@ export function buildEnvironmentSystemPrompt(
       : platform === "darwin"
         ? "Pi's bash tool runs a Bash-compatible shell on macOS. Do not assume Linux-only package managers, systemd, or Linux filesystem paths."
         : "Pi's bash tool runs a Bash-compatible shell on the host.";
+  const instructionSet = architecture === "x64"
+    ? "x86-64 (AMD64)"
+    : architecture === "ia32"
+      ? "x86 (IA-32)"
+      : architecture === "arm64"
+        ? "ARM64 (AArch64)"
+        : architecture === "arm"
+          ? "ARM"
+          : architecture === "riscv64"
+            ? "RISC-V 64-bit"
+            : architecture;
   return `<agent_k_environment>
 Host operating system: ${operatingSystem} (${platform})
-Host architecture: ${architecture}
+Host CPU: ${cpuModel || "unknown"}
+Host instruction-set architecture: ${instructionSet} (Node architecture: ${architecture})
 ${shellGuidance}
 </agent_k_environment>`;
 }
@@ -202,16 +216,27 @@ export class RpcBridge {
   static async start(options: RpcBridgeOptions): Promise<RpcBridge> {
     await mkdir(options.appDataPath, { recursive: true });
     const installedExtension = join(options.appDataPath, "agent-k-permissions.ts");
-    const extensionSource = await readFile(options.permissionExtensionSource);
-    let needsWrite = true;
-    try {
-      needsWrite = !(
-        await readFile(installedExtension)
-      ).equals(extensionSource);
-    } catch {
-      // Install below.
-    }
-    if (needsWrite) await writeFile(installedExtension, extensionSource);
+    const installExtensionFile = async (sourcePath: string, installedPath: string) => {
+      const source = await readFile(sourcePath);
+      let needsWrite = true;
+      try {
+        needsWrite = !(await readFile(installedPath)).equals(source);
+      } catch {
+        // Install below.
+      }
+      if (needsWrite) await writeFile(installedPath, source);
+    };
+    await Promise.all([
+      installExtensionFile(options.permissionExtensionSource, installedExtension),
+      installExtensionFile(
+        join(dirname(options.permissionExtensionSource), "agent-loop-detector.ts"),
+        join(options.appDataPath, "agent-loop-detector.ts"),
+      ),
+      installExtensionFile(
+        join(dirname(options.permissionExtensionSource), "agent-file-editor.ts"),
+        join(options.appDataPath, "agent-file-editor.ts"),
+      ),
+    ]);
     const bashEnvironment = join(options.appDataPath, "agent-k-bash-env.sh");
     await writeFile(bashEnvironment, BASH_ENVIRONMENT, "utf8");
 
@@ -239,11 +264,9 @@ export class RpcBridge {
       .filter((resource) => resource.enabled === false)
       .map((resource) => resolve(resource.path));
     const args = ["--mode", "rpc", "--extension", installedExtension];
-    if (clientSettings.environmentPromptEnabled === true)
-      args.push(
-        "--append-system-prompt",
-        buildEnvironmentSystemPrompt(),
-      );
+    const environmentPrompt = clientSettings.environmentPromptEnabled === true
+      ? buildEnvironmentSystemPrompt()
+      : "";
     for (const extensionPath of await bundledExtensionPaths(
       options.bundledExtensionsDirectory,
     )) {
@@ -298,6 +321,7 @@ export class RpcBridge {
             "permission-state.json",
           ),
           AGENT_K_SETTINGS_PATH: join(options.appDataPath, "client-settings.json"),
+          AGENT_K_ENVIRONMENT_PROMPT: environmentPrompt,
         },
         shell: process.platform === "win32",
         stdio: ["pipe", "pipe", "pipe"],

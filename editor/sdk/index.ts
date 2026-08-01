@@ -69,6 +69,35 @@ export type EditorFactory = (
   initialState: EditorInitialState,
 ) => EditorInstance | Promise<EditorInstance>;
 
+const EDITOR_SCROLLBAR_STYLE_ID = "agent-k-editor-scrollbars";
+
+export function editorScrollbarCss(config?: EditorThemeConfig): string {
+  const thumb = config?.colors["scrollbar-thumb"] ?? "#77736e";
+  const hover = config?.colors["scrollbar-thumb-hover"] ?? thumb;
+  const track = config?.colors["surface-panel"] ?? "transparent";
+  return `*{scrollbar-color:${thumb} ${track};scrollbar-width:thin}*::-webkit-scrollbar{height:8px;width:8px}*::-webkit-scrollbar-track{background:${track}}*::-webkit-scrollbar-thumb{background:${thumb};border:2px solid ${track};border-radius:8px}*::-webkit-scrollbar-thumb:hover{background:${hover}}*::-webkit-scrollbar-corner{background:${track}}`;
+}
+
+export function applyEditorScrollbarTheme(config?: EditorThemeConfig): void {
+  let style = document.getElementById(EDITOR_SCROLLBAR_STYLE_ID) as HTMLStyleElement | null;
+  if (!style) {
+    style = document.createElement("style");
+    style.id = EDITOR_SCROLLBAR_STYLE_ID;
+    document.head.append(style);
+  }
+  style.textContent = editorScrollbarCss(config);
+}
+
+export function themedPreviewDocument(content: string, config?: EditorThemeConfig): string {
+  const style = `<style data-agent-k-preview-scrollbars>${editorScrollbarCss(config)}</style>`;
+  if (/<head(?:\s[^>]*)?>/i.test(content))
+    return content.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}${style}`);
+  const doctype = content.match(/^\s*<!doctype[^>]*>/i);
+  return doctype
+    ? `${content.slice(0, doctype[0].length)}${style}${content.slice(doctype[0].length)}`
+    : `${style}${content}`;
+}
+
 /** Context supplied to a sandboxed file-tree menu contribution. */
 export type ContextMenuContext = {
   absolutePath: string;
@@ -186,6 +215,7 @@ export function defineEditor(factory: EditorFactory): void {
       if (typeof message.nonce !== "string") return;
       const nextNonce = message.nonce;
       const initialState = message.value as EditorInitialState;
+      applyEditorScrollbarTheme(initialState.themeConfig);
       const revision = ++initializationRevision;
       nonce = nextNonce;
       initialization = initialization
@@ -270,12 +300,12 @@ export function defineEditor(factory: EditorFactory): void {
         break;
       case "set-theme-config": {
         const config = message.value;
-        instance.setThemeConfig?.(
-          config && typeof config === "object" && "monaco" in config &&
+        const themeConfig = config && typeof config === "object" && "monaco" in config &&
           typeof (config as { monaco?: unknown }).monaco === "object"
             ? config as EditorThemeConfig
-            : undefined,
-        );
+            : undefined;
+        applyEditorScrollbarTheme(themeConfig);
+        instance.setThemeConfig?.(themeConfig);
         break;
       }
       case "set-word-wrap":

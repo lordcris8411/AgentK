@@ -27,6 +27,7 @@ import {
   piCompactionThreshold,
 } from "./contextUsage";
 import { displayUserContent } from "./messageContent";
+import { toolActivityContent } from "./toolActivity";
 import { useSettings } from "../settings/SettingsContext";
 import {
   AnsiText,
@@ -1208,11 +1209,7 @@ function ActivityRow({ item }: { item: Item }) {
             </div>
           ) : null}
           {item.content || !item.researchProgress?.length ? (
-            <pre>
-              {item.content || (matchingCall
-                ? JSON.stringify(matchingCall.args, null, 2)
-                : (en ? "Waiting for tool result…" : "等待工具结果…"))}
-            </pre>
+            <pre>{toolActivityContent(item, matchingCall, en)}</pre>
           ) : null}
         </details>
       )}
@@ -1456,7 +1453,7 @@ const ConversationMessage = memo(function ConversationMessage({
       id={`message-${item.id}`}
       onContextMenu={item.role === "user" ? (event) => onContextMenu(event, item) : undefined}
     >
-      <div className="message-content">
+      <div className="agent-k-markdown-content message-content">
         {item.customType === "agent-k-logo" && (
           <div className="conversation-agent-k-brand">
             <AgentKLogo className="conversation-agent-k-logo" />
@@ -2178,7 +2175,7 @@ export function ConversationWorkspace({
       );
       setCurrentModelKey(modelKey(model.provider, model.id));
       setModelName(model.name ?? model.id);
-      if (session?.path)
+      if (session?.path && session.path !== "__new__")
         void updateSettings({
           sessionModels: {
             ...settings.sessionModels,
@@ -3327,6 +3324,15 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
       setSubmitting(false);
     }
   };
+  useEffect(() => {
+    const submitExternalPrompt = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: unknown }>).detail?.message;
+      if (typeof message !== "string" || !message.trim()) return;
+      void submit("queue", message, []);
+    };
+    window.addEventListener("agent-k-submit-prompt", submitExternalPrompt);
+    return () => window.removeEventListener("agent-k-submit-prompt", submitExternalPrompt);
+  });
   const acceptSlashCommand = (
     command: SlashCommand,
   ) => {
@@ -3898,6 +3904,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
               />
             );
           })}
+          <div aria-hidden="true" className="message-list-tail" />
         </section>
         <div
           aria-hidden="true"

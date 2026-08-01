@@ -27,17 +27,33 @@ function persistProviderSnapshot(root: string, languageServerId: string, snapsho
 }
 
 export function DevelopmentDock({ root, onError }: { root?: string; onError(message: string): void }) {
-  const { settings } = useSettings();
+  const { ready: settingsReady, settings, update: updateSettings } = useSettings();
   const en = settings.locale === "en-US";
-  const [collapsed, setCollapsed] = useState(false);
-  const [height, setHeight] = useState(280);
-  const [terminalVisible, setTerminalVisible] = useState(true);
+  const [collapsed, setCollapsed] = useState(settings.developmentDockCollapsed);
+  const [height, setHeight] = useState(settings.developmentDockHeight);
+  const [terminalVisible, setTerminalVisible] = useState(settings.developmentDockTerminalVisible);
+  const heightRef = useRef(height);
+  const layoutRestored = useRef(false);
   const resize = useRef<{ height: number; pointerId: number; y: number } | undefined>(undefined);
   const [availableProviders, setAvailableProviders] = useState<DebugProvider[]>([]);
   const providersRef = useRef<DebugProvider[]>([]);
   const debugSnapshots = useRef(new Map<string, DebugSnapshot>());
   const debugRoot = useRef(root);
   const restoringBreakpoints = useRef<string | undefined>(undefined);
+  heightRef.current = height;
+  useEffect(() => {
+    if (!settingsReady || layoutRestored.current) return;
+    layoutRestored.current = true;
+    heightRef.current = settings.developmentDockHeight;
+    setHeight(settings.developmentDockHeight);
+    setCollapsed(settings.developmentDockCollapsed);
+    setTerminalVisible(settings.developmentDockTerminalVisible);
+  }, [
+    settings.developmentDockCollapsed,
+    settings.developmentDockHeight,
+    settings.developmentDockTerminalVisible,
+    settingsReady,
+  ]);
   useEffect(() => {
     let disposed = false;
     void desktop.listLanguageServerPlugins().then((plugins) => {
@@ -161,19 +177,43 @@ export function DevelopmentDock({ root, onError }: { root?: string; onError(mess
     const move = (event: PointerEvent) => {
       const start = resize.current;
       if (!start || start.pointerId !== event.pointerId) return;
-      setHeight(Math.max(150, Math.min(window.innerHeight - 220, start.height + start.y - event.clientY)));
+      const next = Math.max(150, Math.min(window.innerHeight - 220, start.height + start.y - event.clientY));
+      heightRef.current = next;
+      setHeight(next);
     };
-    const stop = () => { resize.current = undefined; document.body.classList.remove("is-resizing-console"); };
+    const stop = () => {
+      if (!resize.current) return;
+      resize.current = undefined;
+      document.body.classList.remove("is-resizing-console");
+      void updateSettings({ developmentDockHeight: Math.round(heightRef.current) })
+        .catch((cause) => onError(`${en ? "Unable to save tool window height" : "无法保存工具窗口高度"}：${String(cause)}`));
+    };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
     window.addEventListener("pointercancel", stop);
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", stop); window.removeEventListener("pointercancel", stop); };
-  }, []);
+  }, [en, onError, updateSettings]);
+  const toggleCollapsed = () => {
+    setCollapsed((current) => {
+      const next = !current;
+      void updateSettings({ developmentDockCollapsed: next })
+        .catch((cause) => onError(`${en ? "Unable to save tool window state" : "无法保存工具窗口状态"}：${String(cause)}`));
+      return next;
+    });
+  };
+  const toggleTerminal = () => {
+    setTerminalVisible((current) => {
+      const next = !current;
+      void updateSettings({ developmentDockTerminalVisible: next })
+        .catch((cause) => onError(`${en ? "Unable to save terminal visibility" : "无法保存终端可见状态"}：${String(cause)}`));
+      return next;
+    });
+  };
   return <section className={collapsed ? "development-dock is-collapsed" : "development-dock"} style={collapsed ? undefined : { flexBasis: height }}>
     {!collapsed ? <div className="development-dock-resizer" onPointerDown={(event) => { if (event.button !== 0) return; resize.current = { height, pointerId: event.pointerId, y: event.clientY }; document.body.classList.add("is-resizing-console"); }} /> : null}
     <header>
-      <button aria-pressed={terminalVisible} className={terminalVisible ? "is-active" : undefined} onClick={() => setTerminalVisible((value) => !value)} type="button"><i className="fa-solid fa-terminal" /> {en ? "Terminal" : "终端"}</button>
-      <button className="development-dock-collapse" onClick={() => setCollapsed((value) => !value)} title={collapsed ? (en ? "Show tools" : "显示工具窗口") : (en ? "Hide tools" : "隐藏工具窗口")} type="button"><i className={`fa-solid fa-chevron-${collapsed ? "up" : "down"}`} /></button>
+      <button aria-pressed={terminalVisible} className={terminalVisible ? "is-active" : undefined} onClick={toggleTerminal} type="button"><i className="fa-solid fa-terminal" /> {en ? "Terminal" : "终端"}</button>
+      <button className="development-dock-collapse" onClick={toggleCollapsed} title={collapsed ? (en ? "Show tools" : "显示工具窗口") : (en ? "Hide tools" : "隐藏工具窗口")} type="button"><i className={`fa-solid fa-chevron-${collapsed ? "up" : "down"}`} /></button>
     </header>
     <div className="development-dock-content">
       <div className={terminalVisible ? "development-dock-pane terminal-pane" : "development-dock-pane terminal-pane is-hidden"}><ProjectConsole docked onError={onError} root={root} /></div>

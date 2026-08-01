@@ -39,7 +39,17 @@ export type LanguageServerPlugin = {
   id: string;
   languages: string[];
   projectMarkers: string[];
-  projectMenu?: { loadLabel: string; unloadLabel: string; actions?: Array<{ id: string; label: string; method: string }> };
+  projectMenu?: {
+    loadLabel: string;
+    unloadLabel: string;
+    actions?: Array<{
+      defaultProfile?: string;
+      id: string;
+      label: string;
+      method: string;
+      profiles?: Array<{ id: string; label: string }>;
+    }>;
+  };
   editorContribution?: { description: string; editorPluginId: string; id: string; name: string; version: string };
   skill?: { markdown: string; name: string };
   commands?: Array<{ id: string; title: string; kind: "project-manager" }>;
@@ -60,6 +70,7 @@ export type ClientSettings = {
   localModelDirectory: string;
   piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
+  agentLoopDetectionEnabled: boolean;
   environmentPromptEnabled: boolean;
   autoCompactEnabled: boolean;
   autoCompactPrompt: string;
@@ -75,8 +86,12 @@ export type ClientSettings = {
   sessionModels: Record<string, string>;
   leftPanelWidth: number;
   rightPanelWidth: number;
+  fileExplorerWidth: number;
   leftPanelHidden: boolean;
   rightPanelHidden: boolean;
+  developmentDockHeight: number;
+  developmentDockCollapsed: boolean;
+  developmentDockTerminalVisible: boolean;
   windowWidth: number;
   windowHeight: number;
   windowMaximized: boolean;

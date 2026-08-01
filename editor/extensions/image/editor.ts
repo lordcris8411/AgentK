@@ -17,7 +17,7 @@ function applyThemeConfig(config?: EditorThemeConfig): void {
   set("--image-border", config?.colors["border-color"]);
   set("--image-text", config?.colors["text-primary"]);
   set("--image-muted", config?.colors["text-secondary"]);
-  set("--image-raised", config?.colors["surface-raised"]);
+  set("--image-hover", config?.components.hover ?? config?.colors["surface-hover"]);
   set("--image-active", config?.components["active-item"]);
   set("--image-active-text", config?.components["active-item-foreground"]);
   set("--image-accent", config?.colors.accent);

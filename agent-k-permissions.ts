@@ -2,12 +2,32 @@ import { readFileSync } from "node:fs";
 import { basename, isAbsolute, join, normalize } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { AgentLoopDetector, type AgentLoopDetection } from "./agent-loop-detector.ts";
+import { requestFileOpen } from "./agent-file-editor.ts";
 
 type Settings = {
+  agentLoopDetectionEnabled?: boolean;
+  environmentPromptEnabled?: boolean;
   locale?: "zh-CN" | "en-US";
   permissionMode?: "ask" | "full";
   disabledLanguageServerSkills?: string[];
 };
+
+function twoDigits(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+export function environmentTimePrompt(
+  now = new Date(),
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown",
+  offsetMinutes = -now.getTimezoneOffset(),
+): string {
+  const offsetSign = offsetMinutes >= 0 ? "+" : "-";
+  const absoluteOffset = Math.abs(offsetMinutes);
+  const localTime = `${now.getFullYear()}-${twoDigits(now.getMonth() + 1)}-${twoDigits(now.getDate())} ${twoDigits(now.getHours())}:${twoDigits(now.getMinutes())}:${twoDigits(now.getSeconds())}`;
+  const utcOffset = `UTC${offsetSign}${twoDigits(Math.floor(absoluteOffset / 60))}:${twoDigits(absoluteOffset % 60)}`;
+  return `Current system local time: ${localTime}\nHost time zone: ${timeZone} (${utcOffset})`;
+}
 
 const fileFormatActionPrefix = "agent-k-file-format-action:";
 const cppLanguageServerRequestPrefix = "agent-k-cpp-language-server:";
@@ -59,6 +79,18 @@ const fileFormatTool = defineTool({
       ...(typeof params.seconds === "number" ? { seconds: params.seconds } : {}),
       ...(screenshotPath ? { outputPath: screenshotPath } : {}),
     };
+    if (action === "open") {
+      if (typeof params.path !== "string" || !params.path.trim())
+        throw new Error("A workspace file path is required to open a file.");
+      const cwd = typeof (ctx as { cwd?: unknown }).cwd === "string"
+        ? normalize((ctx as { cwd: string }).cwd)
+        : normalize(process.cwd());
+      await requestFileOpen(cwd, params.path, payload, (request) => ctx.ui.input(request));
+      return {
+        content: [{ type: "text", text: `Opened in Agent K file editor: ${params.path}` }],
+        details: { ...payload, ok: true },
+      };
+    }
     ctx.ui.notify(`${fileFormatActionPrefix}${JSON.stringify(payload)}`, "info");
     return {
       content: [{
@@ -232,6 +264,28 @@ function declaredOutputPath(ctx: {
 }
 
 export default function agentKPermissions(pi: ExtensionAPI) {
+  const environmentPrompts = new Map<string, string>();
+  const loopDetectors = new Map<string, AgentLoopDetector>();
+  const loopDetectionEnabled = new Map<string, boolean>();
+  const detectorFor = (sessionId: string) => {
+    let detector = loopDetectors.get(sessionId);
+    if (!detector) {
+      detector = new AgentLoopDetector();
+      loopDetectors.set(sessionId, detector);
+      if (loopDetectors.size > 100) loopDetectors.delete(loopDetectors.keys().next().value ?? "");
+    }
+    return detector;
+  };
+  const stopForLoop = (ctx: { abort(): void; ui: { notify(message: string, type?: "info" | "warning" | "error"): void } }, detection: AgentLoopDetection) => {
+    const english = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {}).locale === "en-US";
+    ctx.ui.notify(
+      english
+        ? `A repetitive model loop was detected and stopped to avoid wasting resources. ${detection.detail}`
+        : `检测到模型进入重复循环，已停止以避免继续消耗资源。${detection.detail}`,
+      "warning",
+    );
+    ctx.abort();
+  };
   const updateContextStatus = (ctx: { ui: { setStatus(key: string, text?: string): void }; getContextUsage(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined }) => {
     const english = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {}).locale === "en-US";
     const usage = ctx.getContextUsage();
@@ -253,6 +307,37 @@ export default function agentKPermissions(pi: ExtensionAPI) {
   pi.on("agent_end", (_event, ctx) => {
     updateContextStatus(ctx);
   });
+  pi.on("before_agent_start", (event, ctx) => {
+    const settings = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {});
+    const sessionId = ctx.sessionManager.getSessionId();
+    loopDetectionEnabled.set(sessionId, settings.agentLoopDetectionEnabled !== false);
+    detectorFor(sessionId).reset();
+    const base = process.env.AGENT_K_ENVIRONMENT_PROMPT?.trim();
+    if (!settings.environmentPromptEnabled || !base) return;
+    let prompt = environmentPrompts.get(sessionId);
+    if (!prompt) {
+      const closingTag = "</agent_k_environment>";
+      const promptBody = base.endsWith(closingTag)
+        ? base.slice(0, -closingTag.length)
+        : `${base}\n`;
+      prompt = `${promptBody}${environmentTimePrompt()}\n${closingTag}`;
+      environmentPrompts.set(sessionId, prompt);
+      if (environmentPrompts.size > 100) environmentPrompts.delete(environmentPrompts.keys().next().value ?? "");
+    }
+    return { systemPrompt: `${event.systemPrompt}\n\n${prompt}` };
+  });
+  pi.on("message_update", (event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    if (!loopDetectionEnabled.get(sessionId)) return;
+    const update = event.assistantMessageEvent;
+    if (update.type === "text_start" || update.type === "thinking_start") {
+      detectorFor(sessionId).resetStreamingContent();
+      return;
+    }
+    if (update.type !== "text_delta" && update.type !== "thinking_delta") return;
+    const detection = detectorFor(sessionId).addContent(update.delta);
+    if (detection) stopForLoop(ctx, detection);
+  });
   pi.registerTool(fileFormatTool);
   const startupSettings = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {});
   if (!startupSettings.disabledLanguageServerSkills?.includes("cpp-clangd")) {
@@ -270,6 +355,14 @@ export default function agentKPermissions(pi: ExtensionAPI) {
     },
   });
   pi.on("tool_call", async (event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    if (loopDetectionEnabled.get(sessionId)) {
+      const detection = detectorFor(sessionId).addToolCall(event.toolName, event.input);
+      if (detection) {
+        stopForLoop(ctx, detection);
+        return { block: true, reason: "Agent K stopped a repetitive model loop" };
+      }
+    }
     if ((["write", "edit"] as string[]).includes(event.toolName)) {
       const requested = declaredOutputPath(ctx);
       const actual = typeof event.input.path === "string" ? event.input.path : undefined;
@@ -288,7 +381,6 @@ export default function agentKPermissions(pi: ExtensionAPI) {
     const settings = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {});
     if (settings.permissionMode === "full") return;
     const grants = new Set(readJson<string[]>(process.env.AGENT_K_PERMISSION_STATE_PATH, []));
-    const sessionId = ctx.sessionManager.getSessionId();
     if (grants.has(sessionId)) return;
     if (!ctx.hasUI) return { block: true, reason: "Agent K permission confirmation is unavailable" };
 

@@ -54,6 +54,7 @@ export type DebugStartConfiguration = {
   args?: string[];
   cwd?: string;
   dumpPath?: string;
+  environment?: Record<string, string>;
   mode?: "launch" | "attach" | "dump";
   processId?: number;
   program?: string;
@@ -276,6 +277,7 @@ export class DebugSession {
         ? {
           args: input.args ?? [],
           cwd,
+          ...(input.environment ? { env: input.environment } : {}),
           expressions: "native",
           name: program?.split(/[\\/]/).pop() ?? "program",
           program,

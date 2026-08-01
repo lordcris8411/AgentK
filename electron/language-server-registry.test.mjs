@@ -21,6 +21,11 @@ test("discovers a trusted native language-server manifest", async () => {
     id: "example-lsp",
     languages: ["example"],
     projectMarkers: ["example.config"],
+    projectMenu: {
+      loadLabel: "Load example",
+      unloadLabel: "Unload example",
+      actions: [{ id: "build", label: "Build", method: "terminalCommand", defaultProfile: "Debug", profiles: [{ id: "Debug", label: "Debug" }, { id: "Release", label: "Release" }] }],
+    },
     commands: [{ id: "active-example-projects", title: "Active Example projects", kind: "project-manager" }],
     worker: "worker.js",
     debugServer: { protocol: "dap", adapters: [{ command: "example-debug", platforms: ["win32"] }], providers: [{ id: "example-debug", label: "Example", languages: ["example"], fileExtensions: [".example"], projectMarkers: ["example.config"], modes: ["launch", "attach"], priority: 50 }] },
@@ -32,6 +37,7 @@ test("discovers a trusted native language-server manifest", async () => {
     assert.deepEqual(plugins[0]?.debugServer?.adapters, [{ command: "example-debug", platforms: ["win32"] }]);
     assert.deepEqual(plugins[0]?.debugServer?.providers[0], { id: "example-debug", label: "Example", languages: ["example"], fileExtensions: [".example"], projectMarkers: ["example.config"], modes: ["launch", "attach"], priority: 50 });
     assert.deepEqual(plugins[0]?.commands, [{ id: "active-example-projects", title: "Active Example projects", kind: "project-manager" }]);
+    assert.deepEqual(plugins[0]?.projectMenu?.actions?.[0], { id: "build", label: "Build", method: "terminalCommand", defaultProfile: "Debug", profiles: [{ id: "Debug", label: "Debug" }, { id: "Release", label: "Release" }] });
   } finally { await source.remove(); }
 });
 

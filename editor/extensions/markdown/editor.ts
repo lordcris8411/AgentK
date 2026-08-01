@@ -114,7 +114,7 @@ function applyCssTheme(config?: EditorThemeConfig): void {
   set("--md-muted", config?.colors["text-secondary"]);
   set("--md-raised", config?.components["code-block"] ?? config?.colors["surface-raised"]);
   set("--md-code-text", config?.components["code-block-foreground"] ?? config?.colors["text-primary"]);
-  set("--md-accent", config?.colors.accent);
+  set("--md-accent", config?.colors.info ?? config?.colors.accent);
   set("--md-selection", config?.colors["selection-background"]);
   set("--md-ui-font", config?.fonts?.ui);
   set("--md-code-font", config?.fonts?.code);
@@ -198,7 +198,7 @@ defineEditor((host, initial) => {
   const source = document.createElement("div");
   source.className = "markdown-source";
   const preview = document.createElement("article");
-  preview.className = "markdown-preview";
+  preview.className = "agent-k-markdown-content markdown-preview";
   stage.append(source, preview);
   host.root.append(stage);
 

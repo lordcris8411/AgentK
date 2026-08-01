@@ -260,7 +260,7 @@ export function ProjectConsole({ root, onError, docked = false }: { root?: strin
 
   useEffect(() => {
     const runLanguageProjectAction = (event: Event) => {
-      const detail = (event as CustomEvent<{ action?: string; path?: string }>).detail;
+      const detail = (event as CustomEvent<{ action?: string; arguments?: unknown[]; path?: string }>).detail;
       const match = /^language-server:([a-z0-9.-]+):([a-z0-9.-]+)$/i.exec(detail?.action ?? "");
       if (!match || typeof detail?.path !== "string") return;
       const activeRoot = rootRef.current;
@@ -274,7 +274,7 @@ export function ProjectConsole({ root, onError, docked = false }: { root?: strin
         return;
       }
       setCollapsed(false);
-      void desktop.languageServerCall(match[1], match[2], activeRoot, detail.path)
+      void desktop.languageServerCall(match[1], match[2], activeRoot, detail.path, ...(Array.isArray(detail.arguments) ? detail.arguments : []))
         .then((command) => {
           if (typeof command !== "string") throw new Error("Language extension did not return terminal input");
           return desktop.writeProjectConsole(terminalId, command);

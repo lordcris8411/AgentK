@@ -10,6 +10,7 @@ export interface ClientSettings {
   localModelDirectory: string;
   piExecutable: string;
   workerPoolSize: 2 | 3 | 4;
+  agentLoopDetectionEnabled: boolean;
   environmentPromptEnabled: boolean;
   autoCompactEnabled: boolean;
   autoCompactPrompt: string;
@@ -25,8 +26,12 @@ export interface ClientSettings {
   sessionModels: Record<string, string>;
   leftPanelWidth: number;
   rightPanelWidth: number;
+  fileExplorerWidth: number;
   leftPanelHidden: boolean;
   rightPanelHidden: boolean;
+  developmentDockHeight: number;
+  developmentDockCollapsed: boolean;
+  developmentDockTerminalVisible: boolean;
   windowWidth: number;
   windowHeight: number;
   windowMaximized: boolean;

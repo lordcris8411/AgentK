@@ -776,6 +776,27 @@ function registerIpc(): void {
           : 80;
         return previewConsoleFor(url, limit);
       }
+      case "style-preview-scrollbars": {
+        if (event.sender !== mainWindow?.webContents) throw new Error("Only the main window can style previews");
+        const previewUrl = typeof data.url === "string" ? data.url : "";
+        const css = typeof data.css === "string" ? data.css : "";
+        if (!css || css.length > 12_000) throw new Error("Invalid preview scrollbar CSS");
+        let origin: string;
+        try {
+          const parsed = new URL(previewUrl);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("Unsupported preview URL");
+          origin = parsed.origin;
+        } catch {
+          throw new Error("Invalid preview URL");
+        }
+        const script = `(() => { const id = "agent-k-preview-scrollbars"; let style = document.getElementById(id); if (!style) { style = document.createElement("style"); style.id = id; (document.head || document.documentElement).append(style); } style.textContent = ${JSON.stringify(css)}; })()`;
+        const targets = event.sender.mainFrame.framesInSubtree.filter((frame) => {
+          if (frame === event.sender.mainFrame || frame.detached) return false;
+          try { return new URL(frame.url).origin === origin; } catch { return false; }
+        });
+        const results = await Promise.allSettled(targets.map((frame) => frame.executeJavaScript(script)));
+        return results.filter((result) => result.status === "fulfilled").length;
+      }
       case "resize-begin": {
         const direction = String(data.direction) as ResizeDirection;
         if (![

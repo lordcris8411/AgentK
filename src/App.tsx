@@ -9,6 +9,7 @@ import { SessionSidebar } from "./features/sessions/SessionSidebar";
 import type { ReviewCall } from "./features/conversation/ReviewPanel";
 import {
   desktop,
+  type ClientSettings,
   type PiResourceChange,
   type ProjectSummary,
   type SessionSummary,
@@ -17,9 +18,31 @@ import { SettingsDialog, type SettingsPage } from "./features/settings/SettingsD
 import { useSettings } from "./features/settings/SettingsContext";
 import { useExtensionUi } from "./features/extensions/ExtensionUiContext";
 import { modelIsEnabled } from "./lib/modelAvailability";
+import { shutdownRuntime } from "./lib/runtimeLifecycle";
 import { AgentKLogo } from "./components/AgentKLogo";
 
 const DRAFT_SESSION_PATH = "__new__";
+
+function enabledModelSelection(settings: ClientSettings, key: string | undefined) {
+  if (!key) return undefined;
+  const [provider, ...modelParts] = key.split("/");
+  const modelId = modelParts.join("/");
+  return provider && modelId && modelIsEnabled(settings, provider, modelId)
+    ? { key, modelId, provider }
+    : undefined;
+}
+
+async function applyRuntimeModel(
+  runtimeId: string,
+  selection: { modelId: string; provider: string } | undefined,
+) {
+  if (!selection) return;
+  await desktop.command({
+    type: "set_model",
+    provider: selection.provider,
+    modelId: selection.modelId,
+  }, runtimeId);
+}
 
 type LocalModelRunUi = {
   transactionId: string;
@@ -332,6 +355,10 @@ export function App() {
           : [];
         if (initialCwd && warmedRuntimeIds[0]) {
           await desktop.connect(initialCwd, undefined, warmedRuntimeIds[0]);
+          await applyRuntimeModel(
+            warmedRuntimeIds[0],
+            enabledModelSelection(persistedSettings, persistedSettings.defaultModel),
+          );
         }
         // Start with an unpersisted draft. Prewarming only starts the Pi RPC
         // runtime; it does not write a JSONL file or materialize the session.
@@ -474,7 +501,13 @@ export function App() {
     touchWorkspace(cwd);
     // Start Pi while the user is composing. This creates no JSONL/session;
     // the real session is still materialized only on the first send.
-    const ready = desktop.prepareSession(cwd);
+    const ready = desktop.prepareSession(cwd).then(async (runtimeId) => {
+      await applyRuntimeModel(
+        runtimeId,
+        enabledModelSelection(settings, settings.defaultModel),
+      );
+      return runtimeId;
+    });
     warmupRef.current = { cwd, ready };
     void ready
       .then((runtimeId) => {
@@ -690,10 +723,12 @@ export function App() {
       if (current?.cwd === project.cwd && current.runtimeId)
         runtimesToClose.add(current.runtimeId);
       for (const runtimeId of runtimesToClose) {
-        await cancelPending(runtimeId);
-        clearSessionUi(runtimeId);
-        desktop.abort(runtimeId);
-        await desktop.closeRuntime(runtimeId);
+        await shutdownRuntime(runtimeId, {
+          abort: desktop.abort,
+          cancelPending,
+          clearSessionUi,
+          close: desktop.closeRuntime,
+        });
       }
       await desktop.removeWorkspace(project.cwd);
       if (settings.pinnedWorkspaces.includes(project.cwd)) {
@@ -747,7 +782,24 @@ export function App() {
         (warmup?.cwd === draft.cwd
           ? await warmup.ready
           : await desktop.prepareSession(draft.cwd));
-      const state = await desktop.createSession(runtimeId);
+      const state = await desktop.createSession(runtimeId) as {
+        model?: { id?: unknown; provider?: unknown };
+        sessionFile?: string;
+        sessionId?: string;
+      };
+      const selectedProvider = typeof state.model?.provider === "string"
+        ? state.model.provider
+        : undefined;
+      const selectedModelId = typeof state.model?.id === "string"
+        ? state.model.id
+        : undefined;
+      const selectedModel = selectedProvider && selectedModelId
+        ? {
+            key: `${selectedProvider}/${selectedModelId}`,
+            modelId: selectedModelId,
+            provider: selectedProvider,
+          }
+        : enabledModelSelection(settings, settings.defaultModel);
       const refreshed = await reload();
       const saved = state.sessionFile
         ? refreshed
@@ -778,16 +830,10 @@ export function App() {
           ),
         );
       const materialized = { ...created, runtimeId };
-      if (settings.defaultModel) {
-        const [provider, ...modelParts] = settings.defaultModel.split("/");
-        const modelId = modelParts.join("/");
-        if (provider && modelId && modelIsEnabled(settings, provider, modelId)) {
-          await desktop.command({ type: "set_model", provider, modelId }, runtimeId);
-          await updateSettings({
-            sessionModels: { ...settings.sessionModels, [created.path]: settings.defaultModel },
-          });
-        }
-      }
+      const sessionModels = { ...settings.sessionModels };
+      delete sessionModels[DRAFT_SESSION_PATH];
+      if (selectedModel) sessionModels[created.path] = selectedModel.key;
+      await updateSettings({ sessionModels });
       runtimeIds.current.set(created.path, runtimeId);
       activeRef.current = materialized;
       setActive(materialized);
@@ -807,8 +853,12 @@ export function App() {
     try {
       const runtimeId = session.runtimeId ?? runtimeIds.current.get(session.path);
       if (runtimeId) {
-        desktop.abort(runtimeId);
-        await desktop.closeRuntime(runtimeId);
+        await shutdownRuntime(runtimeId, {
+          abort: desktop.abort,
+          cancelPending,
+          clearSessionUi,
+          close: desktop.closeRuntime,
+        });
         runtimeIds.current.delete(session.path);
       }
       await desktop.deleteSession(session.path);

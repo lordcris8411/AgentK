@@ -118,6 +118,29 @@ test("DebugSession recovers debuggee output interleaved with a DAP frame", async
   }
 });
 
+test("DebugSession forwards an isolated launch environment to the debuggee", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "agent-k-debug-environment-"));
+  const program = join(temporary, "program.exe");
+  const adapter = join(temporary, "adapter.mjs");
+  const log = join(temporary, "requests.jsonl");
+  await Promise.all([writeFile(program, "fake\n"), writeFile(adapter, adapterSource)]);
+  const previousLog = process.env.FAKE_REQUEST_LOG;
+  process.env.FAKE_REQUEST_LOG = log;
+  const session = new DebugSession(() => undefined, () => ({ adapter: "lldb", args: [adapter], command: process.execPath }));
+  try {
+    await session.start({ environment: { PATH: "managed-runtime-bin" }, program, root: temporary });
+    const requests = (await readFile(log, "utf8")).trim().split("\n")
+      .map((line) => JSON.parse(line) as { arguments?: { env?: Record<string, string> }; command: string });
+    assert.deepEqual(requests.find((request) => request.command === "launch")?.arguments?.env, { PATH: "managed-runtime-bin" });
+  } finally {
+    session.shutdown();
+    if (previousLog === undefined) delete process.env.FAKE_REQUEST_LOG;
+    else process.env.FAKE_REQUEST_LOG = previousLog;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await rm(temporary, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
 test("DebugSession ignores pause inspection requests cancelled by continue", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "agent-k-debug-cancelled-pause-"));
   const program = join(temporary, "program.exe");

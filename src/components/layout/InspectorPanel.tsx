@@ -55,6 +55,12 @@ type WorkspaceEditorState = {
 type PluginEditorProps = ComponentPropsWithoutRef<typeof PluginEditorFrame>;
 const EDITOR_RUNTIME_CACHE_LIMIT = 40;
 type PluginMenuAction = { id: string; label: string; pluginId: string };
+type LanguageProjectAction = NonNullable<NonNullable<LanguageServerPlugin["projectMenu"]>["actions"]>[number];
+type TreeLanguageProjectStatus = {
+  indexProgress?: string;
+  status: LanguageServerProject["status"] | "unloaded";
+  statusLabel?: string;
+};
 const ADVANCED_SEARCH_RESULT_HEIGHT = 48;
 const ADVANCED_SEARCH_RESULT_OVERSCAN = 5;
 const AdvancedSearchResults = memo(function AdvancedSearchResults({ items, onOpen, searched, searching }: { items: Array<{ path: string; line: number; preview: string }>; onOpen(path: string): void; searched: boolean; searching: boolean }) {
@@ -459,6 +465,38 @@ function isWebProjectDirectory(entry: FileEntry): boolean {
     || names.has("package.json") && names.has("index.html");
 }
 
+function normalizedTreePath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "").toLocaleLowerCase("en-US");
+}
+
+/** Finds only the outermost project root for each language extension. A nested
+ * CMakeLists.txt is usually a subproject of its owning C++ workspace, not a
+ * second independently managed language project. */
+function detectedLanguageProjectPlugins(
+  tree: FileEntry | undefined,
+  plugins: readonly LanguageServerPlugin[],
+): Map<string, LanguageServerPlugin> {
+  const projects = new Map<string, LanguageServerPlugin>();
+  const visit = (entry: FileEntry, owningPluginIds: ReadonlySet<string>) => {
+    if (!entry.isDir) return;
+    const childNames = new Set(entry.children.map((child) => child.name.toLocaleLowerCase("en-US")));
+    const matches = plugins.filter((plugin) =>
+      plugin.enabled !== false &&
+      !owningPluginIds.has(plugin.id) &&
+      plugin.projectMarkers.length > 0 &&
+      plugin.projectMarkers.some((marker) => childNames.has(marker.toLocaleLowerCase("en-US"))),
+    );
+    const nextOwners = new Set(owningPluginIds);
+    for (const plugin of matches) {
+      if (!projects.has(normalizedTreePath(entry.path))) projects.set(normalizedTreePath(entry.path), plugin);
+      nextOwners.add(plugin.id);
+    }
+    entry.children.forEach((child) => visit(child, nextOwners));
+  };
+  if (tree) visit(tree, new Set());
+  return projects;
+}
+
 const Tree = memo(function Tree({
   entry,
   languageProjectsByPath,
@@ -471,7 +509,7 @@ const Tree = memo(function Tree({
   startPointerDrag,
 }: {
   entry: FileEntry;
-  languageProjectsByPath: ReadonlyMap<string, Pick<LanguageServerProject, "indexProgress" | "status">>;
+  languageProjectsByPath: ReadonlyMap<string, TreeLanguageProjectStatus>;
   loadDirectory(path: string): void;
   open(path: string): void;
   dropTarget: string | null;
@@ -481,9 +519,9 @@ const Tree = memo(function Tree({
   startPointerDrag(event: ReactPointerEvent, entry: FileEntry): void;
 }) {
   const [expanded, setExpanded] = useState(entry.path === "");
-  const cmakeSolution = isCMakeSolutionDirectory(entry);
+  const languageProject = languageProjectsByPath.get(normalizedTreePath(entry.path));
+  const cmakeSolution = Boolean(languageProject) && isCMakeSolutionDirectory(entry);
   const webProject = !cmakeSolution && isWebProjectDirectory(entry);
-  const languageProject = languageProjectsByPath.get(entry.path.replaceAll("\\", "/").toLocaleLowerCase("en-US"));
   return entry.isDir ? (
     <details
       className={entry.path === dropTarget ? "drop-target" : undefined}
@@ -552,7 +590,7 @@ const Tree = memo(function Tree({
             </>}
           </span>
         </span>
-        <span className="tree-entry-label"><span>{entry.name}</span>{languageProject ? <span className={`tree-language-project-status is-${languageProject.status}`}>({languageProject.status}{languageProject.status === "indexing" && languageProject.indexProgress ? ` ${languageProject.indexProgress}` : ""})</span> : null}</span>
+        <span className="tree-entry-label"><span>{entry.name}</span>{languageProject ? <span className={`tree-language-project-status is-${languageProject.status}`}>({languageProject.statusLabel ?? languageProject.status}{languageProject.status === "indexing" && languageProject.indexProgress ? ` ${languageProject.indexProgress}` : ""})</span> : null}</span>
       </summary>
       {entry.children.map((child) => (
         <Tree
@@ -598,7 +636,7 @@ export function InspectorPanel({
   review?: ReviewCall[];
   onCloseReview(): void;
 }) {
-  const { activeTheme, settings, resolvedTheme, t, update: updateSettings } = useSettings();
+  const { activeTheme, ready: settingsReady, settings, resolvedTheme, t, update: updateSettings } = useSettings();
   const en = settings.locale === "en-US";
   const [tree, setTree] = useState<FileEntry>();
   const [fileFormatPlugins, setFileFormatPlugins] = useState<FileFormatPlugin[]>([]);
@@ -635,12 +673,14 @@ export function InspectorPanel({
   const advancedQueryRef = useRef<HTMLInputElement>(null);
   const latestEditorSelection = useRef("");
   const [filtering, setFiltering] = useState(false);
-  const [explorerWidth, setExplorerWidth] = useState(190);
+  const [explorerWidth, setExplorerWidth] = useState(settings.fileExplorerWidth);
   const [newFileDialogOpen, setNewFileDialogOpen] = useState(false);
   const [newFilePath, setNewFilePath] = useState("");
   const [createAsDirectory, setCreateAsDirectory] = useState(false);
   const [creatingFile, setCreatingFile] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<FileEntry>();
+  const [treeSelectionRevision, setTreeSelectionRevision] = useState(0);
+  const [readmeRequestedProject, setReadmeRequestedProject] = useState<string>();
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameName, setRenameName] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -666,18 +706,35 @@ export function InspectorPanel({
   const [languageServerConfirmation, setLanguageServerConfirmation] = useState<{ languageServerId: string; message: string; requestId: string; title: string }>();
   const [cppDiagnostics, setCppDiagnostics] = useState<Record<string, Array<Record<string, unknown>>>>({});
   const [languageProjects, setLanguageProjects] = useState<LanguageServerProject[]>([]);
+  const [languagePlugins, setLanguagePlugins] = useState<LanguageServerPlugin[]>([]);
+  const [languageProjectMutation, setLanguageProjectMutation] = useState<string>();
+  const [languageActionProfiles, setLanguageActionProfiles] = useState<Record<string, string>>({});
+  const [languageProfileMenu, setLanguageProfileMenu] = useState<{ key: string; left: number; top: number }>();
+  const detectedLanguageProjects = useMemo(
+    () => detectedLanguageProjectPlugins(tree, languagePlugins),
+    [languagePlugins, tree],
+  );
   const languageProjectsByTreePath = useMemo(() => {
-    const projects = new Map<string, Pick<LanguageServerProject, "indexProgress" | "status">>();
+    const projects = new Map<string, TreeLanguageProjectStatus>();
     if (!root) return projects;
+    for (const path of detectedLanguageProjects.keys()) projects.set(path, {
+      status: "unloaded",
+      statusLabel: en ? "Language service not loaded" : "未加载语言服务",
+    });
     const rootKey = root.replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase("en-US");
     for (const project of languageProjects) {
       const projectKey = project.root.replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase("en-US");
       const path = projectKey === rootKey ? "" : relativeWorkspacePath(root, project.root);
-      if (path !== undefined) projects.set(path.replaceAll("\\", "/").toLocaleLowerCase("en-US"), project);
+      if (path === undefined) continue;
+      const normalizedPath = normalizedTreePath(path);
+      const nestedOwner = [...detectedLanguageProjects.entries()].some(([ownerPath, plugin]) =>
+        plugin.id === project.languageServerId && ownerPath !== normalizedPath &&
+          (ownerPath === "" || normalizedPath.startsWith(`${ownerPath}/`)),
+      );
+      if (!nestedOwner) projects.set(normalizedPath, project);
     }
     return projects;
-  }, [languageProjects, root]);
-  const [languagePlugins, setLanguagePlugins] = useState<LanguageServerPlugin[]>([]);
+  }, [detectedLanguageProjects, en, languageProjects, root]);
   const [cppProjectsDialogOpen, setCppProjectsDialogOpen] = useState(false);
   const [cppTraceDialogText, setCppTraceDialogText] = useState<string>();
   const [cppTraceCopied, setCppTraceCopied] = useState(false);
@@ -690,6 +747,7 @@ export function InspectorPanel({
   const localWrites = useRef(new Map<string, string>());
   const activationRequest = useRef(0);
   const resizingExplorer = useRef(false);
+  const explorerLayoutRestored = useRef(false);
   const explorerWidthRef = useRef(explorerWidth);
   const explorerResizeFrame = useRef<number | undefined>(undefined);
   const pendingExplorerWidth = useRef<number | undefined>(undefined);
@@ -703,6 +761,12 @@ export function InspectorPanel({
   activePathRef.current = active;
   tabsRef.current = tabs;
   explorerWidthRef.current = explorerWidth;
+  useEffect(() => {
+    if (!settingsReady || explorerLayoutRestored.current) return;
+    explorerLayoutRestored.current = true;
+    explorerWidthRef.current = settings.fileExplorerWidth;
+    setExplorerWidth(settings.fileExplorerWidth);
+  }, [settings.fileExplorerWidth, settingsReady]);
   useEffect(() => {
     const stop = desktop.onEvent((event) => {
       if (event.type === "language_server_confirmation_request") {
@@ -766,6 +830,15 @@ export function InspectorPanel({
     return () => { disposed = true; stop(); };
   }, []);
   useEffect(() => {
+    if (!languageProfileMenu) return;
+    const close = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(".language-profile-menu, .language-build-dropdown")) return;
+      setLanguageProfileMenu(undefined);
+    };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [languageProfileMenu]);
+  useEffect(() => {
     const move = (event: MouseEvent) => {
       if (!resizingExplorer.current || !inspectorRef.current) return;
       const left = inspectorRef.current.getBoundingClientRect().left;
@@ -794,6 +867,9 @@ export function InspectorPanel({
       document.body.classList.remove("is-resizing");
       window.dispatchEvent(new CustomEvent("agent-k-editor-layout-suspended", { detail: false }));
       setExplorerWidth(explorerWidthRef.current);
+      void updateSettings({
+        fileExplorerWidth: Math.round(explorerWidthRef.current),
+      }).catch((cause) => onError(`无法保存文件列表宽度：${String(cause)}`));
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", stop);
@@ -1110,7 +1186,10 @@ export function InspectorPanel({
   }, []);
   const selectTreeEntry = useCallback((entry: FileEntry, element: HTMLElement) => {
     selectedEntryRef.current = entry;
+    setSelectedEntry(entry);
+    setTreeSelectionRevision((revision) => revision + 1);
     paintTreeSelection(entry.path, element);
+    if (entry.isDir && !entry.loaded) void loadDirectory(entry.path);
   }, [paintTreeSelection]);
   useLayoutEffect(() => {
     paintTreeSelection(selectedEntryRef.current?.path);
@@ -1185,13 +1264,17 @@ export function InspectorPanel({
       },
     }));
   }, [active, fileFormatPlugins, root, settings.disabledFileEditors, settings.disabledFileEditorSkills]);
-  const open = async (path: string) => {
+  const open = async (path: string, reportError = true): Promise<{ error?: string; ok: boolean }> => {
+    const failed = (message: string) => {
+      if (reportError) onError(message);
+      return { error: message, ok: false };
+    };
     const pathKey = path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
     const alreadyOpen = (tab: Tab) => tab.path.replaceAll("\\", "/").toLocaleLowerCase("en-US") === pathKey;
     const appendTab = (tab: Tab) => setTabs((current) => current.some(alreadyOpen) ? current : [...current, tab]);
     if (!root || tabs.some(alreadyOpen)) {
       activateTab(path);
-      return;
+      return root ? { ok: true } : failed("无法在没有工作区时打开文件");
     }
     const match = fileMatchContext(path, absoluteWorkspacePath(root, path));
     // An agent can request an open action before the asynchronous plugin
@@ -1204,15 +1287,14 @@ export function InspectorPanel({
         preloadEditorPluginDependencies(plugins);
         setFileFormatPlugins(plugins);
       } catch (cause) {
-        onError(`Editor 插件校验失败：${String(cause)}`);
-        return;
+        return failed(`Editor 插件校验失败：${String(cause)}`);
       }
     }
     const format = resolveFileFormat(match, plugins, settings.disabledFileEditors);
     if (!format) {
       appendTab({ path, content: "", saved: "", unsupported: true });
       activateTab(path);
-      return;
+      return { ok: true };
     }
     const previewKind = format.mediaKind;
     if (format.editor === "plugin" && previewKind) {
@@ -1220,22 +1302,23 @@ export function InspectorPanel({
         const data = await desktop.readBinary(root, path);
         appendTab({ binary: data, content: "", path, previewBytes: data.byteLength, previewCodec: previewKind === "video" ? detectVideoCodec(data) : undefined, mimeType: match.mimeType, saved: "", format });
         activateTab(path);
+        return { ok: true };
       } catch (cause) {
-        onError(`无法预览文件：${String(cause)}`);
+        return failed(`无法预览文件：${String(cause)}`);
       }
-      return;
     }
     if (!(format.editable === true || path.toLowerCase().endsWith(".lock"))) {
       appendTab({ path, content: "", saved: "", unsupported: true, format, mimeType: match.mimeType });
       activateTab(path);
-      return;
+      return { ok: true };
     }
     try {
       const content = await desktop.read(root, path);
       appendTab({ path, content, saved: content, format, mimeType: match.mimeType });
       activateTab(path);
+      return { ok: true };
     } catch (cause) {
-      onError(`无法打开文件：${String(cause)}`);
+      return failed(`无法打开文件：${String(cause)}`);
     }
   };
   useEffect(() => {
@@ -1279,15 +1362,26 @@ export function InspectorPanel({
         action?: string;
         path?: string;
         preview?: boolean;
+        respond?(result: { error?: string; ok: boolean }): void;
       }>).detail;
       if (detail?.action !== "open" || !root || typeof detail.path !== "string") return;
+      if (detail.respond) event.preventDefault();
       const path = relativeWorkspacePath(root, detail.path);
-      if (!path) return;
-      void open(path).then(() => {
+      if (!path) {
+        detail.respond?.({ ok: false, error: "The requested file is outside the current workspace." });
+        return;
+      }
+      void open(path, !detail.respond).then((result) => {
+        detail.respond?.(result);
+        if (!result.ok) return;
         if (detail.preview !== true) return;
         setTabs((currentTabs) => currentTabs.map((tab) =>
           tab.path === path ? { ...tab, previewMode: true } : tab,
         ));
+      }).catch((cause) => {
+        const error = `无法打开文件：${String(cause)}`;
+        if (detail.respond) detail.respond({ ok: false, error });
+        else onError(error);
       });
     };
     window.addEventListener("agent-k-file-format-action", openFromAgent);
@@ -1330,21 +1424,131 @@ export function InspectorPanel({
   const current = tabsRoot.current === root
     ? tabs.find((tab) => tab.path === active)
     : undefined;
-  const currentWorkspacePath = root && current && !current.path.startsWith("web-preview:")
-    ? relativeWorkspacePath(root, current.path)
-    : undefined;
-  const currentIsWorkspaceFile = currentWorkspacePath !== undefined && currentWorkspacePath !== "";
+  const webPreviewScrollbarCss = useMemo(() => {
+    const colors = activeTheme?.colors;
+    const thumb = colors?.["scrollbar-thumb"] ?? (resolvedTheme === "dark" ? "#55514c" : "#c9c4bd");
+    const hover = colors?.["scrollbar-thumb-hover"] ?? (resolvedTheme === "dark" ? "#77716a" : "#a9a39b");
+    const track = colors?.["surface-panel"] ?? (resolvedTheme === "dark" ? "#252422" : "#f6f4f1");
+    return `*{scrollbar-color:${thumb} ${track};scrollbar-width:thin}*::-webkit-scrollbar{height:8px;width:8px}*::-webkit-scrollbar-track{background:${track}}*::-webkit-scrollbar-thumb{background:${thumb};border:2px solid ${track};border-radius:8px}*::-webkit-scrollbar-thumb:hover{background:${hover}}*::-webkit-scrollbar-corner{background:${track}}`;
+  }, [activeTheme, resolvedTheme]);
+  const styleWebPreviewScrollbars = useCallback((url: string) => {
+    void desktopWindow.stylePreviewScrollbars(url, webPreviewScrollbarCss).catch(() => undefined);
+  }, [webPreviewScrollbarCss]);
+  useEffect(() => {
+    if (current?.webPreviewUrl) styleWebPreviewScrollbars(current.webPreviewUrl);
+  }, [current?.webPreviewUrl, styleWebPreviewScrollbars]);
   const currentLanguageProject = root && current
     ? languageProjects.filter((project) => {
       const file = absoluteWorkspacePath(root, current.path).replaceAll("\\", "/").toLowerCase(); const projectRoot = project.root.replaceAll("\\", "/").toLowerCase(); return file.startsWith(`${projectRoot}/`) || file === projectRoot;
     }).sort((a, b) => b.root.length - a.root.length)[0]
     : undefined;
-  const contextLanguageProject = root && contextMenu?.entry.isDir
-    ? languageProjects.find((project) => project.root.replaceAll("\\", "/").toLowerCase() === absoluteWorkspacePath(root, contextMenu.entry.path).replaceAll("\\", "/").toLowerCase())
+  const selectedDirectoryEntry = selectedEntry?.isDir
+    ? findTreeEntry(tree, selectedEntry.path) ?? selectedEntry
     : undefined;
+  const selectedLanguageProject = root && selectedDirectoryEntry
+    ? languageProjects.find((project) =>
+        project.root.replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase("en-US") ===
+          absoluteWorkspacePath(root, selectedDirectoryEntry.path)
+            .replaceAll("\\", "/")
+            .replace(/\/+$/, "")
+            .toLocaleLowerCase("en-US"),
+      )
+    : undefined;
+  const selectedLanguagePlugin = selectedDirectoryEntry
+    ? detectedLanguageProjects.get(normalizedTreePath(selectedDirectoryEntry.path))
+    : undefined;
+  const selectedCppLanguagePlugin = selectedLanguagePlugin?.languages.includes("cpp") &&
+      Boolean(selectedLanguagePlugin.debugServer?.providers.length)
+    ? selectedLanguagePlugin
+    : undefined;
+  const selectedCppProject = root && selectedDirectoryEntry && selectedCppLanguagePlugin
+    ? {
+        languageServerName: selectedLanguageProject?.languageServerName ?? selectedCppLanguagePlugin.displayName,
+        name: selectedLanguageProject?.name ?? selectedDirectoryEntry.name,
+        root: selectedLanguageProject?.root ?? absoluteWorkspacePath(root, selectedDirectoryEntry.path),
+        status: selectedLanguageProject?.status,
+      }
+    : undefined;
+  const selectedProfileAction = selectedCppLanguagePlugin?.projectMenu?.actions?.find((action) => action.profiles?.length);
+  const selectedProfileActionKey = selectedCppProject && selectedProfileAction && selectedCppLanguagePlugin
+    ? `${selectedCppLanguagePlugin.id}:${selectedCppProject.root}:${selectedProfileAction.id}`
+    : undefined;
+  const selectedActionProfile = selectedProfileAction && selectedProfileActionKey
+    ? languageActionProfiles[selectedProfileActionKey] ?? selectedProfileAction.defaultProfile ?? selectedProfileAction.profiles?.[0]?.id
+    : undefined;
+  const runSelectedProjectAction = (action: LanguageProjectAction, profile?: string) => {
+    if (!selectedCppProject || !selectedDirectoryEntry || !selectedCppLanguagePlugin) return;
+    window.dispatchEvent(new CustomEvent("agent-k-file-format-action", {
+      detail: {
+        action: `language-server:${selectedCppLanguagePlugin.id}:${action.method}`,
+        arguments: profile ? [profile] : [],
+        path: selectedDirectoryEntry.path,
+      },
+    }));
+  };
+  const selectedProjectReadme = selectedCppProject && selectedDirectoryEntry
+    ? selectedDirectoryEntry.children.find((entry) =>
+        !entry.isDir && entry.name.toLocaleLowerCase("en-US") === "readme.md",
+      )
+    : undefined;
+  const selectedProjectReadmePath = selectedProjectReadme?.path;
+  const showCreateProjectReadme = Boolean(selectedCppProject && !selectedProjectReadmePath);
+  useEffect(() => {
+    if (!selectedCppProject || !selectedProjectReadmePath) return;
+    let disposed = false;
+    void open(selectedProjectReadmePath).then((result) => {
+      if (disposed || !result.ok) return;
+      setTabs((currentTabs) => currentTabs.map((tab) =>
+        tab.path.replaceAll("\\", "/").toLocaleLowerCase("en-US") ===
+            selectedProjectReadmePath.replaceAll("\\", "/").toLocaleLowerCase("en-US")
+          ? { ...tab, previewMode: true }
+          : tab,
+      ));
+      setReadmeRequestedProject((requested) =>
+        requested === selectedCppProject.root ? undefined : requested,
+      );
+    }).catch((cause) => onError(`无法预览 README.md：${String(cause)}`));
+    return () => { disposed = true; };
+  }, [selectedCppProject?.root, selectedProjectReadmePath, treeSelectionRevision]);
   const contextLanguagePlugin = contextMenu?.entry.isDir
-    ? languagePlugins.find((plugin) => plugin.projectMarkers.some((marker) => contextMenu.entry.children.some((child) => child.name.toLowerCase() === marker.toLowerCase())))
+    ? detectedLanguageProjects.get(normalizedTreePath(contextMenu.entry.path))
     : undefined;
+  const contextLanguageProject = root && contextMenu?.entry.isDir && contextLanguagePlugin
+    ? languageProjects.find((project) =>
+        project.languageServerId === contextLanguagePlugin.id &&
+        project.root.replaceAll("\\", "/").toLowerCase() === absoluteWorkspacePath(root, contextMenu.entry.path).replaceAll("\\", "/").toLowerCase(),
+      )
+    : undefined;
+  const loadLanguageProject = (plugin: LanguageServerPlugin, projectRoot: string) => {
+    const mutationKey = `load:${plugin.id}:${projectRoot}`;
+    setLanguageProjectMutation(mutationKey);
+    setCppProgress({
+      languageServerId: plugin.id,
+      stage: "preparing",
+      detail: en ? `Preparing ${plugin.displayName}…` : `正在准备 ${plugin.displayName}…`,
+    });
+    return desktop.languageServerCall(plugin.id, "load", projectRoot).then((result) => {
+      const project = result as LanguageServerProject;
+      if (project.status === "failed") {
+        setCppProgress((current) => ({
+          ...(current ?? { stage: "failed" }),
+          stage: "failed",
+          error: project.error,
+        }));
+      } else {
+        setCppProgress(undefined);
+      }
+    }).catch((cause) => {
+      setCppProgress({ languageServerId: plugin.id, stage: "failed", error: String(cause) });
+    }).finally(() => setLanguageProjectMutation((current) => current === mutationKey ? undefined : current));
+  };
+  const unloadLanguageProject = (project: LanguageServerProject) => {
+    const mutationKey = `unload:${project.languageServerId}:${project.root}`;
+    setLanguageProjectMutation(mutationKey);
+    return desktop.languageServerCall(project.languageServerId, "unload", project.root)
+      .catch((cause) => onError(String(cause)))
+      .finally(() => setLanguageProjectMutation((current) => current === mutationKey ? undefined : current));
+  };
   const captureRenderedPreview = (requestedOutputPath?: string) => {
     const target = current?.webPreviewUrl
       ? inspectorRef.current?.querySelector<HTMLElement>(".web-project-preview")
@@ -2090,7 +2294,67 @@ export function InspectorPanel({
               </button>
             ))}
           </div>
-          {current && !current.unsupported && current.format?.editable ? (
+          {selectedCppProject ? (
+            <div className="editor-floating-actions is-project-overview">
+              <span className={`cpp-inline-status is-${selectedCppProject.status ?? "unloaded"}`}>
+                <i aria-hidden="true" className="fa-solid fa-code" />
+                <span>{selectedCppProject.languageServerName} · {selectedCppProject.name} · {selectedCppProject.status ?? (en ? "Language service not loaded" : "未加载语言服务")}</span>
+              </span>
+              <button
+                disabled={Boolean(languageProjectMutation)}
+                onClick={() => {
+                  if (selectedLanguageProject) void unloadLanguageProject(selectedLanguageProject);
+                  else if (selectedLanguagePlugin) void loadLanguageProject(selectedLanguagePlugin, selectedCppProject.root);
+                }}
+                title={selectedLanguageProject
+                  ? (selectedLanguagePlugin?.projectMenu?.unloadLabel ?? (en ? "Unload language project" : "卸载语言工程"))
+                  : (selectedLanguagePlugin?.projectMenu?.loadLabel ?? (en ? "Load language project" : "加载语言工程"))}
+                type="button"
+              >
+                <i aria-hidden="true" className={languageProjectMutation ? "fa-solid fa-circle-notch fa-spin" : selectedLanguageProject ? "fa-solid fa-eject" : "fa-solid fa-download"} />
+                {selectedLanguageProject ? (en ? "Unload" : "卸载") : (en ? "Load" : "加载")}
+              </button>
+              {selectedProfileAction && selectedProfileActionKey && selectedActionProfile ? (
+                <span className="language-build-split">
+                  <button
+                    onClick={() => runSelectedProjectAction(selectedProfileAction, selectedActionProfile)}
+                    title={`${selectedProfileAction.label} · ${selectedActionProfile}`}
+                    type="button"
+                  >
+                    <i aria-hidden="true" className="fa-solid fa-hammer" />
+                    {selectedProfileAction.label}
+                  </button>
+                  <button
+                    aria-expanded={languageProfileMenu?.key === selectedProfileActionKey}
+                    aria-haspopup="menu"
+                    className="language-build-dropdown"
+                    onClick={(event) => {
+                      const bounds = event.currentTarget.getBoundingClientRect();
+                      const width = 164;
+                      setLanguageProfileMenu((current) => current?.key === selectedProfileActionKey ? undefined : {
+                        key: selectedProfileActionKey,
+                        left: Math.max(8, Math.min(window.innerWidth - width - 8, bounds.right - width)),
+                        top: bounds.bottom + 4,
+                      });
+                    }}
+                    title={en ? "Choose build profile" : "选择编译 profile"}
+                    type="button"
+                  >
+                    <i aria-hidden="true" className="fa-solid fa-chevron-down" />
+                  </button>
+                </span>
+              ) : null}
+              <button
+                onClick={() => void desktopWindow.openDebug(selectedCppProject.root)
+                  .catch((cause) => onError(String(cause)))}
+                title={en ? "Open native Debug window" : "打开原生调试窗口"}
+                type="button"
+              >
+                <i aria-hidden="true" className="fa-solid fa-bug" />
+                {en ? "Debug" : "调试"}
+              </button>
+            </div>
+          ) : current && !current.unsupported && current.format?.editable ? (
             <div className="editor-floating-actions">
               <>
                   {currentLanguageProject ? <span className={`cpp-inline-status is-${currentLanguageProject.status}`} title={currentLanguageProject.error ?? `${currentLanguageProject.languageServerName} · ${currentLanguageProject.name} · ${currentLanguageProject.status}`}>
@@ -2183,16 +2447,6 @@ export function InspectorPanel({
                       {t("revertFile")}
                     </button>
                   ) : null}
-                  {currentIsWorkspaceFile ? (
-                    <button
-                      onClick={() => { if (root && current) void desktopWindow.openDebug(root, absoluteWorkspacePath(root, current.path)).catch((cause) => onError(String(cause))); }}
-                      title={en ? "Open native Debug window" : "打开原生调试窗口"}
-                      type="button"
-                    >
-                      <i aria-hidden="true" className="fa-solid fa-bug" />
-                      {en ? "Debug" : "调试"}
-                    </button>
-                  ) : null}
                   <button
                     aria-pressed={settings.editorWordWrap}
                     className={settings.editorWordWrap ? "is-active" : undefined}
@@ -2226,7 +2480,30 @@ export function InspectorPanel({
               </>
             </div>
           ) : null}
-          {current?.webPreviewUrl ? (
+          {showCreateProjectReadme && selectedCppProject ? (
+            <div className="cpp-project-readme-empty">
+              <i aria-hidden="true" className="fa-regular fa-file-lines" />
+              <strong>{en ? "This C++ project has no README.md" : "这个 C++ 工程还没有 README.md"}</strong>
+              <p>{en ? "Ask Pi to inspect the project and create an introductory README." : "可以让 Pi 分析工程结构并创建项目说明。"}</p>
+              <button
+                disabled={readmeRequestedProject === selectedCppProject.root}
+                onClick={() => {
+                  setReadmeRequestedProject(selectedCppProject.root);
+                  window.dispatchEvent(new CustomEvent("agent-k-submit-prompt", {
+                    detail: {
+                      message: `请分析 C++ 工程 ${JSON.stringify(selectedCppProject.root)}，并在该工程根目录创建 README.md。README 应准确说明项目用途、主要目录结构、依赖、构建和运行方法。请使用可用的文件工具实际创建文件，不要只在回复中给出内容。`,
+                    },
+                  }));
+                }}
+                type="button"
+              >
+                <i aria-hidden="true" className={readmeRequestedProject === selectedCppProject.root ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-wand-magic-sparkles"} />
+                {readmeRequestedProject === selectedCppProject.root
+                  ? en ? "Pi is creating README.md…" : "Pi 正在创建 README.md…"
+                  : en ? "Create README.md with Pi" : "使用 Pi 创建 README.md"}
+              </button>
+            </div>
+          ) : current?.webPreviewUrl ? (
             <>
               <div className="web-project-preview-actions">
                 <span>{en ? "Web Preview" : "网站预览"}</span>
@@ -2266,6 +2543,7 @@ export function InspectorPanel({
                 allow="autoplay; fullscreen"
                 className="web-project-preview"
                 key={current.webPreviewReloadToken ?? 0}
+                onLoad={() => styleWebPreviewScrollbars(current.webPreviewUrl!)}
                 src={current.webPreviewUrl}
                 title={en ? "Web project preview" : "Web 项目预览"}
               />
@@ -2283,7 +2561,7 @@ export function InspectorPanel({
           ) : null}
           {displayedEditorRuntimeKeys.map((cacheKey) => (
             <CachedPluginEditor
-              active={cacheKey === activeEditorRuntimeKey}
+              active={!showCreateProjectReadme && cacheKey === activeEditorRuntimeKey}
               activeEditorRef={pluginEditorRef}
               frameProps={cacheKey === activeEditorRuntimeKey
                 ? activePluginEditorProps
@@ -2387,7 +2665,7 @@ export function InspectorPanel({
             <button
               onClick={() => {
                 setContextMenu(undefined);
-                void desktop.languageServerCall(contextLanguageProject.languageServerId, "unload", contextLanguageProject.root).catch((cause) => onError(String(cause)));
+                void unloadLanguageProject(contextLanguageProject);
               }}
               role="menuitem"
               type="button"
@@ -2401,12 +2679,7 @@ export function InspectorPanel({
                 if (!root) return;
                 const path = contextMenu.entry.path;
                 setContextMenu(undefined);
-                setCppProgress({ languageServerId: contextLanguagePlugin.id, stage: "preparing", detail: en ? `Preparing ${contextLanguagePlugin.displayName}…` : `正在准备 ${contextLanguagePlugin.displayName}…` });
-                void desktop.languageServerCall(contextLanguagePlugin.id, "load", absoluteWorkspacePath(root, path)).then((result) => {
-                  const project = result as LanguageServerProject;
-                  if (project.status === "failed") setCppProgress((current) => ({ ...(current ?? { stage: "failed" }), stage: "failed", error: project.error }));
-                  else setCppProgress(undefined);
-                }).catch((cause) => setCppProgress({ stage: "failed", error: String(cause) }));
+                void loadLanguageProject(contextLanguagePlugin, absoluteWorkspacePath(root, path));
               }}
               role="menuitem"
               type="button"
@@ -2449,6 +2722,33 @@ export function InspectorPanel({
           ))}
         </div>
       )}
+      {languageProfileMenu && selectedProfileAction && selectedProfileActionKey === languageProfileMenu.key
+        ? createPortal(
+            <div
+              className="language-profile-menu"
+              role="menu"
+              style={{ left: languageProfileMenu.left, top: languageProfileMenu.top }}
+            >
+              {selectedProfileAction.profiles?.map((profile) => (
+                <button
+                  className={profile.id === selectedActionProfile ? "is-selected" : undefined}
+                  key={profile.id}
+                  onClick={() => {
+                    setLanguageActionProfiles((current) => ({ ...current, [selectedProfileActionKey]: profile.id }));
+                    setLanguageProfileMenu(undefined);
+                    runSelectedProjectAction(selectedProfileAction, profile.id);
+                  }}
+                  role="menuitem"
+                  type="button"
+                >
+                  <i aria-hidden="true" className={profile.id === selectedActionProfile ? "fa-solid fa-check" : ""} />
+                  <span>{profile.label}</span>
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
       {newFileDialogOpen ? (
         <div
           className="inspector-dialog-backdrop"

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fitPanelWidths } from "../src/components/layout/panelLayout.ts";
+
+const source = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("clamps an oversized persisted inspector before the first window resize", () => {
   assert.deepEqual(fitPanelWidths(1600, 245, 1343), {
@@ -21,4 +24,22 @@ test("keeps both panel minimums and the workspace minimum", () => {
     left: 240,
     right: 420,
   });
+});
+
+test("all resizable inspector layout is backed by client settings", async () => {
+  const [inspector, dock, settings] = await Promise.all([
+    source("src/components/layout/InspectorPanel.tsx"),
+    source("src/components/layout/DevelopmentDock.tsx"),
+    source("electron/settings.ts"),
+  ]);
+  assert.match(inspector, /useState\(settings\.fileExplorerWidth\)/);
+  assert.match(inspector, /if \(!settingsReady \|\| explorerLayoutRestored\.current\) return/);
+  assert.match(inspector, /updateSettings\(\{\s*fileExplorerWidth:/);
+  assert.match(dock, /useState\(settings\.developmentDockHeight\)/);
+  assert.match(dock, /if \(!settingsReady \|\| layoutRestored\.current\) return/);
+  assert.match(dock, /developmentDockHeight: Math\.round\(heightRef\.current\)/);
+  assert.match(dock, /developmentDockCollapsed: next/);
+  assert.match(dock, /developmentDockTerminalVisible: next/);
+  assert.match(settings, /fileExplorerWidth: 190/);
+  assert.match(settings, /developmentDockHeight: 280/);
 });

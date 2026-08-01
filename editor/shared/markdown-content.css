@@ -1,0 +1,101 @@
+.agent-k-markdown-content {
+  color: var(--markdown-text, var(--text-primary, #302e2b));
+  font-family: var(--markdown-ui-font, var(--font-ui, "Noto Sans SC", "Segoe UI", sans-serif));
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.agent-k-markdown-content ::selection {
+  background: var(--markdown-selection, var(--selection-background, #b6d7ff));
+  color: var(--markdown-selection-text, var(--selection-foreground, inherit));
+}
+
+.agent-k-markdown-content p { margin: 0 0 9px; }
+.agent-k-markdown-content p:last-child { margin-bottom: 0; }
+.agent-k-markdown-content hr {
+  border: 0;
+  border-top: 1px solid var(--markdown-border, var(--border-strong, #dcd7d1));
+  margin: 12px 0;
+}
+.agent-k-markdown-content h1,
+.agent-k-markdown-content h2,
+.agent-k-markdown-content h3,
+.agent-k-markdown-content h4,
+.agent-k-markdown-content h5,
+.agent-k-markdown-content h6 {
+  color: var(--markdown-heading, var(--text-primary, #292724));
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  margin: 14px 0 8px;
+}
+.agent-k-markdown-content h1 { font-size: 17px; }
+.agent-k-markdown-content h2 { font-size: 15px; }
+.agent-k-markdown-content h3,
+.agent-k-markdown-content h4,
+.agent-k-markdown-content h5,
+.agent-k-markdown-content h6 { font-size: 13px; }
+.agent-k-markdown-content ul,
+.agent-k-markdown-content ol {
+  margin: 6px 0 10px;
+  padding-left: 20px;
+}
+.agent-k-markdown-content li { margin: 2px 0; }
+.agent-k-markdown-content blockquote {
+  border-left: 3px solid var(--markdown-border, var(--border-strong, #dcd7d1));
+  color: var(--markdown-muted, var(--text-secondary, #6f6a64));
+  margin: 9px 0;
+  padding-left: 12px;
+}
+.agent-k-markdown-content a {
+  color: var(--markdown-link, var(--info, #477da8));
+  text-decoration: none;
+}
+.agent-k-markdown-content a:hover { text-decoration: underline; }
+.agent-k-markdown-content code {
+  background: var(--markdown-code-background, var(--surface-hover, #ebe8e4));
+  border-radius: 4px;
+  color: var(--markdown-code-text, var(--warning, #a66c12));
+  font-family: var(--markdown-code-font, var(--font-code, "Cascadia Code", Consolas, monospace));
+  font-size: 0.88em;
+  padding: 2px 4px;
+}
+.agent-k-markdown-content pre {
+  background: var(--markdown-pre-background, var(--surface-active, #e6e1dc));
+  border-radius: 9px;
+  color: var(--markdown-pre-text, var(--text-primary, #272625));
+  margin: 10px 0;
+  overflow: auto;
+  padding: 11px;
+}
+.agent-k-markdown-content pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+.agent-k-markdown-content table {
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 9px 0;
+  max-width: 100%;
+  width: 100%;
+}
+.agent-k-markdown-content th,
+.agent-k-markdown-content td {
+  border: 1px solid var(--markdown-table-border, var(--border-strong, #dedad5));
+  overflow-wrap: anywhere;
+  padding: 5px 7px;
+  text-align: left;
+  vertical-align: top;
+}
+.agent-k-markdown-content th {
+  background: var(--markdown-table-heading, var(--surface-active, #e9e6e2));
+}
+.agent-k-markdown-content img {
+  height: auto;
+  max-width: 100%;
+}
+.agent-k-markdown-content input[type="checkbox"] {
+  accent-color: var(--markdown-link, var(--accent, #302d2a));
+  margin-right: 5px;
+}

@@ -90,7 +90,27 @@ function projectMenu(value: unknown): LanguageServerPluginManifest["projectMenu"
   const input = value as Record<string, unknown>;
   if (!(typeof input.loadLabel === "string" && typeof input.unloadLabel === "string" && input.loadLabel.trim() && input.unloadLabel.trim())) return undefined;
   const rawActions = input.actions;
-  const actions = rawActions === undefined ? undefined : Array.isArray(rawActions) ? rawActions.flatMap((item) => item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" && typeof (item as { label?: unknown }).label === "string" && typeof (item as { method?: unknown }).method === "string" ? [{ id: (item as { id: string }).id, label: (item as { label: string }).label, method: (item as { method: string }).method }] : []) : undefined;
+  const actions = rawActions === undefined ? undefined : Array.isArray(rawActions) ? rawActions.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const action = item as Record<string, unknown>;
+    if (!(typeof action.id === "string" && typeof action.label === "string" && typeof action.method === "string")) return [];
+    const rawProfiles = action.profiles;
+    const profiles = rawProfiles === undefined ? undefined : Array.isArray(rawProfiles) ? rawProfiles.flatMap((profile) =>
+      profile && typeof profile === "object" && typeof (profile as { id?: unknown }).id === "string" && typeof (profile as { label?: unknown }).label === "string"
+        ? [{ id: (profile as { id: string }).id, label: (profile as { label: string }).label }]
+        : [],
+    ) : undefined;
+    if (rawProfiles !== undefined && (!profiles || profiles.length === 0 || profiles.length !== (rawProfiles as unknown[]).length)) return [];
+    const defaultProfile = action.defaultProfile;
+    if (defaultProfile !== undefined && (typeof defaultProfile !== "string" || !profiles?.some((profile) => profile.id === defaultProfile))) return [];
+    return [{
+      id: action.id,
+      label: action.label,
+      method: action.method,
+      ...(profiles ? { profiles } : {}),
+      ...(typeof defaultProfile === "string" ? { defaultProfile } : {}),
+    }];
+  }) : undefined;
   return rawActions !== undefined && (!actions || !Array.isArray(rawActions) || actions.length !== rawActions.length) ? undefined : { loadLabel: input.loadLabel.trim(), unloadLabel: input.unloadLabel.trim(), ...(actions ? { actions } : {}) };
 }
 

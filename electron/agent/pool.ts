@@ -268,7 +268,20 @@ export class RpcPool {
 
   async createSession(runtimeId: string): Promise<unknown> {
     const bridge = this.bridge(runtimeId);
+    const previousState = asObject(
+      await this.requestData(bridge, { type: "get_state" }),
+    );
+    const previousModel = asObject(previousState.model);
+    const provider = asString(previousModel.provider);
+    const modelId = asString(previousModel.id);
     await this.requestData(bridge, { type: "new_session" });
+    if (provider && modelId) {
+      await this.requestData(bridge, {
+        type: "set_model",
+        provider,
+        modelId,
+      });
+    }
     return this.requestData(bridge, { type: "get_state" });
   }
 

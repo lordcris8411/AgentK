@@ -24,6 +24,14 @@ import {
 } from "./toolchain.ts";
 import { selectWorkspaceSymbols } from "./skill-symbols.ts";
 import { languageSkillStatusState, languageSkillUsable } from "./skill-status.ts";
+import { cmakeBuildCommand } from "./build-command.ts";
+
+test("project build commands honor the selected CMake profile", () => {
+  const command = cmakeBuildCommand("C:\\source", "C:\\source\\build", "Release", "win32");
+  assert.match(command, /-DCMAKE_BUILD_TYPE=Release/);
+  assert.match(command, /--config Release/);
+  assert.match(command, /\$LASTEXITCODE/);
+});
 
 test("pairs the clangd index with the private CMake build cache key", () => {
   assert.equal(

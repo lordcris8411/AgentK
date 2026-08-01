@@ -21,6 +21,7 @@ import { managedDebuggerArchive, managedDebuggerExecutable, managedDebuggerMarke
 import { selectWorkspaceSymbols, symbolLocation, type SkillLocation as LspLocation, type SkillRange as Range, type SkillSymbol as LspSymbol } from "./skill-symbols.js";
 import { languageSkillStatusState, languageSkillUsable } from "./skill-status.js";
 import { cmakeDebugBuildDirectory, cmakeDebugTargets, cmakeProjectRoots, prioritizeCMakeProjectRoots, type CMakeDebugTarget } from "./cmake-debug.js";
+import { cmakeBuildCommand } from "./build-command.js";
 import {
   systemDebugAdapterLaunch,
   type DebugAdapterLaunch,
@@ -311,7 +312,12 @@ export class CppService {
     });
     const built = refreshed.find((item) => item.id === target.id);
     if (!built?.built) throw new Error(`CMake target '${target.name}' did not produce its declared executable`);
-    return this.debug.start({ ...configuration, program: built.program }, [prepared.build]);
+    const runtimePath = this.environmentPath(prepared.environment);
+    return this.debug.start({
+      ...configuration,
+      ...(runtimePath ? { environment: { PATH: runtimePath } } : {}),
+      program: built.program,
+    }, [prepared.build]);
   }
   debugStop(sessionId?: string) { return this.debug.stop(sessionId); }
   debugCommand(command: "continue" | "pause" | "next" | "stepIn" | "stepOut", sessionId?: string) {
@@ -519,20 +525,16 @@ export class CppService {
     throw new Error(`Native Debug Skill action was not routed: ${action}`);
   }
   /** Declarative project action consumed by the generic terminal bridge. */
-  async terminalCommand(rootInput: string, relativePath: string): Promise<string> {
+  async terminalCommand(rootInput: string, relativePath: string, configurationInput: unknown = "Debug"): Promise<string> {
     const root = await realpath(rootInput);
     const source = resolve(root, relativePath);
     if (source !== root && !source.startsWith(`${root}${process.platform === "win32" ? "\\" : "/"}`))
       throw new Error("Project action path is outside the workspace");
     if (!existsSync(join(source, "CMakeLists.txt")))
       throw new Error("The selected directory is not a CMake project");
+    const configuration = this.cmakeBuildConfiguration(configurationInput);
     const build = join(source, "build");
-    const quote = process.platform === "win32"
-      ? (value: string) => `'${value.replaceAll("'", "''")}'`
-      : (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-    return process.platform === "win32"
-      ? `cmake -S ${quote(source)} -B ${quote(build)}; if ($LASTEXITCODE -eq 0) { cmake --build ${quote(build)} }\r`
-      : `cmake -S ${quote(source)} -B ${quote(build)} && cmake --build ${quote(build)}\r`;
+    return cmakeBuildCommand(source, build, configuration);
   }
   /** High-level, read-oriented clangd operations exposed to Pi by Agent K's
    * C++ Language Skill. Every semantic action is tied to a named, usable CMake
@@ -1338,7 +1340,7 @@ if (typeof process.send === "function") {
           case "restart": result = await service.restart(String(args[0] ?? "")); break;
           case "cancel": service.cancel(); break;
           case "respondConfirmation": result = service.respondConfirmation(String(args[0] ?? ""), args[1] === true); break;
-          case "terminalCommand": result = await service.terminalCommand(String(args[0] ?? ""), String(args[1] ?? "")); break;
+          case "terminalCommand": result = await service.terminalCommand(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
           case "skill": result = await service.skill((args[0] && typeof args[0] === "object" ? args[0] : {}) as CppSkillRequest); break;
           case "debugSkill": result = await service.debugSkill((args[0] && typeof args[0] === "object" ? args[0] : {}) as CppDebugSkillRequest); break;
           case "lsp": result = await service.lsp(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;

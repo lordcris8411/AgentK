@@ -1,5 +1,5 @@
 import type * as Monaco from "monaco-editor";
-import { defineEditor, type EditorTheme, type EditorThemeConfig } from "../../sdk";
+import { defineEditor, themedPreviewDocument, type EditorTheme, type EditorThemeConfig } from "../../sdk";
 import "./editor.css";
 
 const monaco = (globalThis as typeof globalThis & {
@@ -155,7 +155,7 @@ defineEditor((host, initial) => {
   let contextLine: number | undefined;
 
   const updatePreview = () => {
-    preview.srcdoc = model.getValue();
+    preview.srcdoc = themedPreviewDocument(model.getValue(), themeConfig);
   };
   const setPreview = (enabled: boolean) => {
     previewing = enabled;
@@ -252,11 +252,13 @@ defineEditor((host, initial) => {
       document.documentElement.dataset.theme = theme;
       applyThemeConfig(themeConfig);
       monaco.editor.setTheme(activeThemeName());
+      if (previewing) updatePreview();
     },
     setThemeConfig(config: EditorThemeConfig | undefined) {
       applyThemeConfig(config);
       editor.updateOptions({ fontFamily: config?.fonts?.code ?? defaultCodeFont });
       monaco.editor.setTheme(activeThemeName());
+      if (previewing) updatePreview();
     },
     setWordWrap(enabled) {
       editor.updateOptions({ wordWrap: enabled ? "on" : "off" });

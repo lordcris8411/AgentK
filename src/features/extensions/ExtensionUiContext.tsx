@@ -71,6 +71,7 @@ const ExtensionUiContext = createContext<ExtensionUiContextValue | undefined>(
 const ansiSequencePattern =
   /[\u001b\u009b](?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[0-?]*[ -/]*[@-~])/g;
 const fileFormatActionPrefix = "agent-k-file-format-action:";
+const fileFormatOpenRequestPrefix = "agent-k-file-open:";
 const previewConsoleRequestPrefix = "agent-k-preview-console:";
 const cppLanguageServerRequestPrefix = "agent-k-cpp-language-server:";
 const nativeDebuggerRequestPrefix = "agent-k-native-debugger:";
@@ -396,6 +397,42 @@ export function ExtensionUiProvider({ children }: { children: ReactNode }) {
           });
           if (window.dispatchEvent(bridgeEvent))
             respond("No active Agent K web-project preview is available.");
+          return;
+        }
+        if (method === "input" && title.startsWith(fileFormatOpenRequestPrefix)) {
+          const requestId = typeof event.id === "string" ? event.id : "";
+          let responseSent = false;
+          let responseTimer: number | undefined;
+          const respond = (result: { error?: string; ok: boolean }) => {
+            if (responseSent) return;
+            responseSent = true;
+            if (responseTimer !== undefined) window.clearTimeout(responseTimer);
+            void desktop.extensionResponse({
+              type: "extension_ui_response",
+              id: requestId,
+              value: JSON.stringify(result),
+            }, runtimeId).catch(() => undefined);
+          };
+          try {
+            const detail = JSON.parse(title.slice(fileFormatOpenRequestPrefix.length)) as Record<string, unknown>;
+            const bridgeEvent = new CustomEvent("agent-k-file-format-action", {
+              cancelable: true,
+              detail: { ...detail, respond },
+            });
+            if (window.dispatchEvent(bridgeEvent)) {
+              respond({ ok: false, error: "No Agent K editor accepted the file-open request." });
+              return;
+            }
+            if (!responseSent)
+              responseTimer = window.setTimeout(() => {
+                respond({ ok: false, error: "Agent K file editor timed out while opening the file." });
+              }, 30_000);
+          } catch (cause) {
+            respond({
+              ok: false,
+              error: cause instanceof Error ? cause.message : String(cause),
+            });
+          }
           return;
         }
         if (method === "input" && title.startsWith(cppLanguageServerRequestPrefix)) {
