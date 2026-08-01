@@ -104,7 +104,7 @@ function normalize(input: unknown, builtin = false): ThemeDefinition {
   return { id, name, base: base as ThemeDefinition["base"], colors, components, ...(Object.keys(fonts).length ? { fonts: fonts as ThemeDefinition["fonts"] } : {}), monaco: group(source.monaco, MONACO_KEYS, "monaco"), ...(Object.keys(monacoSyntax).length ? { monacoSyntax } : {}), terminal: group(source.terminal, TERMINAL_KEYS, "terminal"), ...(builtin ? { builtin: true } : {}) };
 }
 
-export function themeDirectory() { return join(piAgentDirectory(), "themes"); }
+export function themeDirectory() { return join(piAgentDirectory(), "k_themes"); }
 
 /** Discover themes placed directly in a recognised themes directory or any of
  * its ordinary subdirectories. Nested folders make it practical to organise
