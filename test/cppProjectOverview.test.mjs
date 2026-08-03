@@ -18,6 +18,13 @@ test("C++ project folder selection owns Debug and README presentation", () => {
   assert.match(inspectorSource, /entry\.name\.toLocaleLowerCase\("en-US"\) === "readme\.md"/);
   assert.match(inspectorSource, /prepareAndOpenDebug\(selectedCppLanguagePlugin, selectedCppProject\.root\)/);
   assert.match(inspectorSource, /await desktop\.languageServerCall\(plugin\.id, plugin\.debugServer\.prepareMethod\)[\s\S]*?await desktopWindow\.openDebug\(projectRoot\)/);
+  assert.match(inspectorSource, /project\?: \{ languageServerId: string; path: string \}/);
+  assert.match(inspectorSource, /projectOverview\?: \{ name: string; readmePath\?: string \}/);
+  assert.match(inspectorSource, /project-overview:\$\{selectedTreeLanguagePlugin\.id\}/);
+  assert.match(inspectorSource, /tab\.projectOverview\?\.name \?\? tab\.path/);
+  assert.doesNotMatch(inspectorSource, /open\(selectedProjectReadmePath\)/);
+  assert.match(inspectorSource, /const projectDirectoryEntry = current/);
+  assert.match(inspectorSource, /current\.project \? findTreeEntry\(tree, current\.project\.path\) : undefined/);
   assert.match(inspectorSource, /if \(selectedLanguageProject\) void unloadLanguageProject/);
   assert.match(inspectorSource, /loadLanguageProject\(selectedLanguagePlugin, selectedCppProject\.root\)/);
   assert.doesNotMatch(inspectorSource, /currentIsWorkspaceFile\s*\?\s*\(\s*<button[\s\S]*?openDebug/);

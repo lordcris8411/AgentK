@@ -35,6 +35,8 @@ import {
 type Tab = {
   binary?: ArrayBuffer;
   path: string;
+  project?: { languageServerId: string; path: string };
+  projectOverview?: { name: string; readmePath?: string };
   content: string;
   saved: string;
   unsupported?: boolean;
@@ -1242,6 +1244,10 @@ export function InspectorPanel({
       }));
       return;
     }
+    if (active.startsWith("project-overview:")) {
+      window.dispatchEvent(new CustomEvent("agent-k-file-format-capabilities", { detail: undefined }));
+      return;
+    }
     const plugin = root ? resolveFileFormat(
       fileMatchContext(active, absoluteWorkspacePath(root, active)),
       fileFormatPlugins,
@@ -1271,7 +1277,19 @@ export function InspectorPanel({
     };
     const pathKey = path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
     const alreadyOpen = (tab: Tab) => tab.path.replaceAll("\\", "/").toLocaleLowerCase("en-US") === pathKey;
-    const appendTab = (tab: Tab) => setTabs((current) => current.some(alreadyOpen) ? current : [...current, tab]);
+    const appendTab = (tab: Tab) => {
+      const projectPath = [...detectedLanguageProjects.keys()]
+        .filter((candidate) => {
+          const filePath = normalizedTreePath(tab.path);
+          return candidate === "" || filePath === candidate || filePath.startsWith(`${candidate}/`);
+        })
+        .sort((left, right) => right.length - left.length)[0];
+      const project = projectPath === undefined ? undefined : detectedLanguageProjects.get(projectPath);
+      const tabWithProject = project && projectPath !== undefined
+        ? { ...tab, project: { languageServerId: project.id, path: projectPath } }
+        : tab;
+      setTabs((current) => current.some(alreadyOpen) ? current : [...current, tabWithProject]);
+    };
     if (!root || tabs.some(alreadyOpen)) {
       activateTab(path);
       return root ? { ok: true } : failed("无法在没有工作区时打开文件");
@@ -1424,6 +1442,29 @@ export function InspectorPanel({
   const current = tabsRoot.current === root
     ? tabs.find((tab) => tab.path === active)
     : undefined;
+  useEffect(() => {
+    setTabs((currentTabs) => {
+      let changed = false;
+      const nextTabs = currentTabs.map((tab) => {
+        if (tab.projectOverview) return tab;
+        const projectPath = [...detectedLanguageProjects.keys()]
+          .filter((candidate) => {
+            const filePath = normalizedTreePath(tab.path);
+            return candidate === "" || filePath === candidate || filePath.startsWith(`${candidate}/`);
+          })
+          .sort((left, right) => right.length - left.length)[0];
+        const plugin = projectPath === undefined ? undefined : detectedLanguageProjects.get(projectPath);
+        const project = plugin && projectPath !== undefined
+          ? { languageServerId: plugin.id, path: projectPath }
+          : undefined;
+        if (tab.project?.languageServerId === project?.languageServerId && tab.project?.path === project?.path)
+          return tab;
+        changed = true;
+        return { ...tab, ...(project ? { project } : { project: undefined }) };
+      });
+      return changed ? nextTabs : currentTabs;
+    });
+  }, [detectedLanguageProjects]);
   const webPreviewScrollbarCss = useMemo(() => {
     const colors = activeTheme?.colors;
     const thumb = colors?.["scrollbar-thumb"] ?? (resolvedTheme === "dark" ? "#55514c" : "#c9c4bd");
@@ -1445,27 +1486,52 @@ export function InspectorPanel({
   const selectedDirectoryEntry = selectedEntry?.isDir
     ? findTreeEntry(tree, selectedEntry.path) ?? selectedEntry
     : undefined;
-  const selectedLanguageProject = root && selectedDirectoryEntry
+  const selectedTreeLanguagePlugin = selectedDirectoryEntry
+    ? detectedLanguageProjects.get(normalizedTreePath(selectedDirectoryEntry.path))
+    : undefined;
+  const selectedTreeCppProject = root && selectedDirectoryEntry &&
+      selectedTreeLanguagePlugin?.languages.includes("cpp")
+    ? {
+        root: languageProjects.find((project) =>
+          project.languageServerId === selectedTreeLanguagePlugin.id &&
+          project.root.replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase("en-US") ===
+            absoluteWorkspacePath(root, selectedDirectoryEntry.path)
+              .replaceAll("\\", "/")
+              .replace(/\/+$/, "")
+              .toLocaleLowerCase("en-US"),
+        )?.root ?? absoluteWorkspacePath(root, selectedDirectoryEntry.path),
+      }
+    : undefined;
+  // The floating toolbar belongs to the active editor tab. Tree selection is
+  // used only when no tab is open, so actions cannot remain from another project.
+  const projectDirectoryEntry = current
+    ? current.project ? findTreeEntry(tree, current.project.path) : undefined
+    : selectedDirectoryEntry;
+  const selectedLanguageProject = root && projectDirectoryEntry
     ? languageProjects.find((project) =>
+        (!current?.project || project.languageServerId === current.project.languageServerId) &&
         project.root.replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase("en-US") ===
-          absoluteWorkspacePath(root, selectedDirectoryEntry.path)
+          absoluteWorkspacePath(root, projectDirectoryEntry.path)
             .replaceAll("\\", "/")
             .replace(/\/+$/, "")
             .toLocaleLowerCase("en-US"),
       )
     : undefined;
-  const selectedLanguagePlugin = selectedDirectoryEntry
-    ? detectedLanguageProjects.get(normalizedTreePath(selectedDirectoryEntry.path))
-    : undefined;
+  const selectedLanguagePlugin = current?.project
+    ? languagePlugins.find((plugin) => plugin.id === current.project?.languageServerId) ??
+      detectedLanguageProjects.get(current.project.path)
+    : projectDirectoryEntry
+      ? detectedLanguageProjects.get(normalizedTreePath(projectDirectoryEntry.path))
+      : undefined;
   const selectedCppLanguagePlugin = selectedLanguagePlugin?.languages.includes("cpp") &&
       Boolean(selectedLanguagePlugin.debugServer?.providers.length)
     ? selectedLanguagePlugin
     : undefined;
-  const selectedCppProject = root && selectedDirectoryEntry && selectedCppLanguagePlugin
+  const selectedCppProject = root && projectDirectoryEntry && selectedCppLanguagePlugin
     ? {
         languageServerName: selectedLanguageProject?.languageServerName ?? selectedCppLanguagePlugin.displayName,
-        name: selectedLanguageProject?.name ?? selectedDirectoryEntry.name,
-        root: selectedLanguageProject?.root ?? absoluteWorkspacePath(root, selectedDirectoryEntry.path),
+        name: selectedLanguageProject?.name ?? projectDirectoryEntry.name,
+        root: selectedLanguageProject?.root ?? absoluteWorkspacePath(root, projectDirectoryEntry.path),
         status: selectedLanguageProject?.status,
       }
     : undefined;
@@ -1477,39 +1543,73 @@ export function InspectorPanel({
     ? languageActionProfiles[selectedProfileActionKey] ?? selectedProfileAction.defaultProfile ?? selectedProfileAction.profiles?.[0]?.id
     : undefined;
   const runSelectedProjectAction = (action: LanguageProjectAction, profile?: string) => {
-    if (!selectedCppProject || !selectedDirectoryEntry || !selectedCppLanguagePlugin) return;
+    if (!selectedCppProject || !projectDirectoryEntry || !selectedCppLanguagePlugin) return;
     window.dispatchEvent(new CustomEvent("agent-k-file-format-action", {
       detail: {
         action: `language-server:${selectedCppLanguagePlugin.id}:${action.method}`,
         arguments: profile ? [profile] : [],
-        path: selectedDirectoryEntry.path,
+        path: projectDirectoryEntry.path,
       },
     }));
   };
-  const selectedProjectReadme = selectedCppProject && selectedDirectoryEntry
+  const selectedProjectReadme = selectedTreeCppProject && selectedDirectoryEntry
     ? selectedDirectoryEntry.children.find((entry) =>
         !entry.isDir && entry.name.toLocaleLowerCase("en-US") === "readme.md",
       )
     : undefined;
   const selectedProjectReadmePath = selectedProjectReadme?.path;
-  const showCreateProjectReadme = Boolean(selectedCppProject && !selectedProjectReadmePath);
+  const showCreateProjectReadme = Boolean(current?.projectOverview && !current.projectOverview.readmePath);
   useEffect(() => {
-    if (!selectedCppProject || !selectedProjectReadmePath) return;
+    if (!root || !selectedTreeCppProject || !selectedDirectoryEntry || !selectedTreeLanguagePlugin) return;
     let disposed = false;
-    void open(selectedProjectReadmePath).then((result) => {
-      if (disposed || !result.ok) return;
-      setTabs((currentTabs) => currentTabs.map((tab) =>
-        tab.path.replaceAll("\\", "/").toLocaleLowerCase("en-US") ===
-            selectedProjectReadmePath.replaceAll("\\", "/").toLocaleLowerCase("en-US")
-          ? { ...tab, previewMode: true }
-          : tab,
-      ));
+    const projectTabPath = `project-overview:${selectedTreeLanguagePlugin.id}:${normalizedTreePath(selectedDirectoryEntry.path)}`;
+    void (async () => {
+      let content = "";
+      let format: FileFormatPlugin | undefined;
+      let mimeType: string | undefined;
+      if (selectedProjectReadmePath) {
+        content = await desktop.read(root, selectedProjectReadmePath);
+        const absoluteReadmePath = absoluteWorkspacePath(root, selectedProjectReadmePath);
+        const match = fileMatchContext(selectedProjectReadmePath, absoluteReadmePath);
+        let plugins = fileFormatPlugins;
+        if (!plugins.length) {
+          plugins = (await desktop.fileFormatPlugins(root)) as FileFormatPlugin[];
+          preloadEditorPluginDependencies(plugins);
+          setFileFormatPlugins(plugins);
+        }
+        format = resolveFileFormat(match, plugins, settings.disabledFileEditors);
+        mimeType = match.mimeType;
+      }
+      if (disposed) return;
+      const project = { languageServerId: selectedTreeLanguagePlugin.id, path: selectedDirectoryEntry.path };
+      const projectOverview = {
+        name: selectedDirectoryEntry.name,
+        ...(selectedProjectReadmePath ? { readmePath: selectedProjectReadmePath } : {}),
+      };
+      setTabs((currentTabs) => {
+        const existing = currentTabs.find((tab) => tab.path === projectTabPath);
+        const projectTab: Tab = {
+          ...(existing ?? {}),
+          content,
+          format,
+          mimeType,
+          path: projectTabPath,
+          previewMode: true,
+          project,
+          projectOverview,
+          saved: content,
+        };
+        return existing
+          ? currentTabs.map((tab) => tab.path === projectTabPath ? projectTab : tab)
+          : [...currentTabs, projectTab];
+      });
+      activateTab(projectTabPath);
       setReadmeRequestedProject((requested) =>
-        requested === selectedCppProject.root ? undefined : requested,
+        requested === selectedTreeCppProject.root ? undefined : requested,
       );
-    }).catch((cause) => onError(`无法预览 README.md：${String(cause)}`));
+    })().catch((cause) => onError(`无法预览工程：${String(cause)}`));
     return () => { disposed = true; };
-  }, [selectedCppProject?.root, selectedProjectReadmePath, treeSelectionRevision]);
+  }, [selectedProjectReadmePath, selectedTreeCppProject?.root, treeSelectionRevision]);
   const contextLanguagePlugin = contextMenu?.entry.isDir
     ? detectedLanguageProjects.get(normalizedTreePath(contextMenu.entry.path))
     : undefined;
@@ -1649,7 +1749,7 @@ export function InspectorPanel({
       // clangd from serving an opened translation unit, so both indexing and
       // ready identify an available editor service. Keeping the same identity
       // across that transition also avoids recreating Monaco at index finish.
-      ? `${root}\0${current.format.id}\0${current.path}\0${currentLanguageProject && (currentLanguageProject.status === "ready" || currentLanguageProject.status === "indexing") ? currentLanguageProject.root : "no-language-service"}\0runtime-${editorRuntimeRevision}`
+      ? `${root}\0${current.format.id}\0${current.projectOverview?.readmePath ?? current.path}\0${currentLanguageProject && (currentLanguageProject.status === "ready" || currentLanguageProject.status === "indexing") ? currentLanguageProject.root : "no-language-service"}\0runtime-${editorRuntimeRevision}`
       : undefined;
   const displayedEditorRuntimeKeys = activeEditorRuntimeKey
     ? insertCachedEditorRuntime(
@@ -1696,7 +1796,7 @@ export function InspectorPanel({
     }
   };
   const save = async (): Promise<boolean> => {
-    if (!root || !current || current.unsupported)
+    if (!root || !current || current.unsupported || current.projectOverview)
       return false;
     try {
       const content = current.format?.editor === "plugin"
@@ -1712,7 +1812,7 @@ export function InspectorPanel({
     const saveShortcut = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s")
         return;
-      if (!current || current.unsupported) return;
+      if (!current || current.unsupported || current.projectOverview) return;
       event.preventDefault();
       void save();
     };
@@ -1720,7 +1820,7 @@ export function InspectorPanel({
     return () => window.removeEventListener("keydown", saveShortcut);
   }, [current, root]);
   const undo = () => {
-    if (!current || current.unsupported) return;
+    if (!current || current.unsupported || current.projectOverview) return;
     // The toolbar action means "discard the unsaved edit", rather than a
     // single Monaco history step. Keeping React and Monaco on the saved value
     // also clears the tab's dirty marker deterministically.
@@ -2077,16 +2177,16 @@ export function InspectorPanel({
             : []),
             ...(currentLanguageDiagnostics ? [{ id: "set-language-diagnostics", parameters: { diagnostics: currentLanguageDiagnostics } }] : []),
           ],
-          absolutePath: absoluteWorkspacePath(root, current.path),
+          absolutePath: absoluteWorkspacePath(root, current.projectOverview?.readmePath ?? current.path),
           binary: current.binary,
           byteSize: current.previewBytes,
           codec: current.previewCodec,
           content: current.content,
-          language: current.format.languageId ?? languageFor(current.path),
+          language: current.format.languageId ?? languageFor(current.projectOverview?.readmePath ?? current.path),
           locale: settings.locale,
           mimeType: current.mimeType ?? fileMatchContext(
-            current.path,
-            absoluteWorkspacePath(root, current.path),
+            current.projectOverview?.readmePath ?? current.path,
+            absoluteWorkspacePath(root, current.projectOverview?.readmePath ?? current.path),
           ).mimeType,
           onContentChange(content) {
             setTabs((currentTabs) => currentTabs.map((tab) =>
@@ -2100,8 +2200,9 @@ export function InspectorPanel({
           },
           onError,
           onLanguageRequest(method, parameters) {
-            const file = absoluteWorkspacePath(root, current.path);
-            const language = current.format?.languageId ?? languageFor(current.path);
+            const editorPath = current.projectOverview?.readmePath ?? current.path;
+            const file = absoluteWorkspacePath(root, editorPath);
+            const language = current.format?.languageId ?? languageFor(editorPath);
             if (method === "agent-k/read-file") {
               const requested = parameters as { path?: unknown } | undefined;
               const relative = typeof requested?.path === "string"
@@ -2300,8 +2401,8 @@ export function InspectorPanel({
                 title={tab.externalChanged ? (en ? "Changed on disk; local edits were preserved" : "磁盘文件已变更；已保留本地未保存修改") : undefined}
                 type="button"
               >
-                {tab.path.split(/[\\/]/).pop()}
-                {tab.content !== tab.saved || tab.runtimeDirty ? " •" : ""}
+                {tab.projectOverview?.name ?? tab.path.split(/[\\/]/).pop()}
+                {!tab.projectOverview && (tab.content !== tab.saved || tab.runtimeDirty) ? " •" : ""}
                 {tab.externalChanged ? " ↻" : ""}
                 <span
                   onClick={(event) => {
