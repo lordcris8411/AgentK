@@ -4,6 +4,22 @@ export interface ProviderModelDraft {
   id: string;
   name?: string;
   contextWindow?: number;
+  reasoning?: boolean;
+}
+
+/**
+ * Builds the OpenAI-compatible model endpoint without treating a path such as
+ * `/v1` as a filename. `new URL("models", "…/v1")` otherwise drops `/v1`.
+ */
+export function localModelsEndpoint(baseUrl: string): URL {
+  const base = new URL(baseUrl);
+  if (!['http:', 'https:'].includes(base.protocol))
+    throw new Error("Only HTTP(S) model services are supported");
+  const path = base.pathname.replace(/\/+$/, "");
+  base.pathname = path.endsWith("/v1") ? `${path}/` : `${path}/v1/`;
+  base.search = "";
+  base.hash = "";
+  return new URL("models", base);
 }
 
 function positiveInteger(value: unknown): number | undefined {

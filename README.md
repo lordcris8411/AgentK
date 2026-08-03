@@ -112,7 +112,9 @@ and agent workflow are shipped together.
 - **Manage the Pi ecosystem visually:** inspect, install, enable, or disable Skills and Extensions without manually editing
   configuration files. File editors and language features have their own controls.
 - **Choose models and permissions:** manage providers, switch models, select reasoning levels, and control whether a session may
-  run actions.
+  run actions. Local OpenAI-compatible services accept either a service root or `/v1` URL (with or without a trailing slash),
+  discover their models and context window, and can enable reasoning per model. Custom Provider names stay consistent in the
+  model picker and conversation history.
 - **Keep long conversations useful:** optional automatic context cleanup preserves the important recent state before the context
   becomes full.
 - **Match your desktop:** choose light, HDR-friendly soft light, dark, system, or an imported custom theme. A complete theme can
@@ -558,7 +560,9 @@ Agent K 还具备自扩展能力：**用户可以直接在 Agent K 中与 Pi 协
 - **使用真正的项目终端：** 运行日常命令、复制终端内容，或把选中的输出直接加入聊天框。在 Linux 上，Agent K 会保留用户
   的 Bash 配置，同时让标准 ANSI 颜色及已安装的 Starship 跟随当前主题。
 - **可视化管理 Pi 生态：** 查看、安装、启用或关闭 Skills 和 Extensions，无需手动编辑配置文件；文件编辑器和语言功能也有独立开关。
-- **选择模型和权限：** 管理 Provider、切换模型、选择思考级别，并决定某个会话是否允许执行操作。
+- **选择模型和权限：** 管理 Provider、切换模型、选择思考级别，并决定某个会话是否允许执行操作。本地 OpenAI 兼容服务可填写
+  服务根地址或 `/v1` 地址（末尾带或不带 `/` 均可），可发现模型与上下文窗口，并能按模型启用思考；自定义 Provider 名称会在
+  模型选择器和聊天历史中保持一致。
 - **保持长对话可用：** 可选的自动上下文整理会在容量耗尽前保留近期的重要信息。
 - **适应你的桌面习惯：** 支持浅色、适合 HDR 显示器的柔和亮色、深色、跟随系统及导入的自定义主题。完整主题可以统一应用
   界面、Monaco 语法、终端调色板和 UI/代码字体，并记住窗口大小、边栏宽度、终端高度及面板开关状态。

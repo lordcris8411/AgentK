@@ -5,7 +5,7 @@ import { basename, isAbsolute, join } from "node:path";
 import { shell } from "electron";
 import type { PiLaunch } from "./pi-runtime.js";
 import type { ClientSettings, JsonObject } from "./types.js";
-import { discoveredModels, type ProviderModelDraft } from "./model-discovery.js";
+import { discoveredModels, localModelsEndpoint, type ProviderModelDraft } from "./model-discovery.js";
 import {
   asArray,
   asObject,
@@ -18,6 +18,7 @@ import {
 
 export interface ProviderDraft {
   id: string;
+  previousId?: string;
   name: string;
   baseUrl: string;
   api: string;
@@ -360,8 +361,11 @@ async function jsonObject(path: string): Promise<JsonObject> {
 
 export async function saveModelProvider(provider: ProviderDraft): Promise<void> {
   const id = provider.id.trim();
+  const previousId = provider.previousId?.trim();
   if (!validProviderId(id))
     throw new Error("Provider ID may contain only letters, numbers, - and _");
+  if (previousId && !validProviderId(previousId))
+    throw new Error("Previous provider ID may contain only letters, numbers, - and _");
   new URL(provider.baseUrl);
   if (!provider.models.length || provider.models.some((model) => !model.id.trim()))
     throw new Error("At least one model ID is required");
@@ -373,6 +377,7 @@ export async function saveModelProvider(provider: ProviderDraft): Promise<void> 
       id: model.id.trim(),
       name: model.name?.trim() || model.id.trim(),
       ...(model.contextWindow === undefined ? {} : { contextWindow }),
+      ...(model.reasoning === true ? { reasoning: true } : {}),
     };
   });
   const directory = piAgentDirectory();
@@ -389,6 +394,7 @@ export async function saveModelProvider(provider: ProviderDraft): Promise<void> 
       ? { apiKey: provider.id === "ollama" ? "ollama" : "local" }
       : {}),
   };
+  if (previousId && previousId !== id) delete providers[previousId];
   root.providers = providers;
   await atomicWrite(path, JSON.stringify(root, null, 2));
 }
@@ -749,7 +755,7 @@ export async function discoverLocalModels(baseUrl: string, ollama: boolean): Pro
   if (!['http:', 'https:'].includes(base.protocol))
     throw new Error("Only HTTP(S) model services are supported");
   const isOllama = ollama || (await detectLocalService(baseUrl)).kind === "ollama";
-  const modelsUrl = new URL(base.pathname.replace(/\/$/, "").endsWith("/v1") ? "models" : "v1/models", base);
+  const modelsUrl = localModelsEndpoint(baseUrl);
   try {
     const body = asObject(await fetchJson(modelsUrl, 8_000));
     const models = discoveredModels(body);

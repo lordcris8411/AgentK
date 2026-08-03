@@ -137,6 +137,7 @@ const THINKING_LEVELS = [
 type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 type ModelOption = {
   provider: string;
+  providerName?: string;
   id: string;
   name?: string;
   input?: string[];
@@ -2044,10 +2045,11 @@ export function ConversationWorkspace({
       void Promise.all([
         desktop.command({ type: "get_state" }, session?.runtimeId),
         desktop.command({ type: "get_available_models" }, session?.runtimeId),
+        desktop.providerCatalog(session?.runtimeId).catch(() => []),
         desktop.command({ type: "get_session_stats" }, session?.runtimeId)
           .catch(() => null),
       ])
-        .then(([state, available, stats]) => {
+        .then(([state, available, providerCatalog, stats]) => {
           const model = (
             state as {
               model?: Partial<ModelOption>;
@@ -2060,13 +2062,19 @@ export function ConversationWorkspace({
             thinkingLevel?: unknown;
           };
           const isStreaming = sessionState.isStreaming;
+          const providerNames = new Map(
+            providerCatalog.map((provider) => [provider.id, provider.name || provider.id]),
+          );
           const models = (
             available as {
               models?: ModelOption[];
             }
           ).models?.filter((entry) =>
             modelIsEnabled(settings, entry.provider, entry.id),
-          ) ?? [];
+          ).map((entry) => ({
+            ...entry,
+            providerName: providerNames.get(entry.provider) ?? entry.provider,
+          })) ?? [];
           const listed = models?.find(
             (entry) =>
               entry.provider === model?.provider && entry.id === model?.id,
@@ -3566,7 +3574,9 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
       (model) =>
         model.provider === item.modelProvider && model.id === item.modelId,
     );
-    return listed?.name ?? item.modelName ?? item.modelId ?? modelName;
+    const name = listed?.name ?? item.modelName ?? item.modelId ?? modelName;
+    const provider = listed?.providerName ?? item.modelProvider;
+    return provider && name ? `${name} · ${provider}` : name;
   };
   const deepSeekModel = /^deepseek\/(deepseek-v4-(?:flash|pro))$/i.exec(currentModelKey)?.[1]?.toLowerCase();
   const currentProvider = currentModelKey.split("/", 1)[0]?.toLowerCase();
@@ -4595,7 +4605,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
                         type="button"
                       >
                         <span>{model.name ?? model.id}</span>
-                        <small>{model.provider}</small>
+                        <small>{model.providerName ?? model.provider}</small>
                         {key === currentModelKey && (
                           <i aria-hidden="true" className="fa-solid fa-check" />
                         )}

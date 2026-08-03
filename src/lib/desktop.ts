@@ -205,17 +205,19 @@ export type ProviderCatalogItem = {
   source: "builtin" | "custom" | "extension";
   configured: boolean;
   authMethods: Array<"api_key" | "oauth">;
-  models: Array<{ id: string; name?: string; contextWindow?: number }>;
+  models: Array<{ id: string; name?: string; contextWindow?: number; reasoning?: boolean }>;
   agentKManaged?: boolean;
 };
 
 export type ProviderDraft = {
   id: string;
+  /** ID before an edit; lets the backend atomically replace a renamed provider. */
+  previousId?: string;
   name: string;
   baseUrl: string;
   api: string;
   apiKey: string;
-  models: Array<{ id: string; name?: string; contextWindow?: number }>;
+  models: Array<{ id: string; name?: string; contextWindow?: number; reasoning?: boolean }>;
   local: boolean;
 };
 export type ProviderBalance = {
@@ -326,7 +328,7 @@ export const desktop = {
   detectLocalService: (baseUrl: string) =>
     invoke<LocalServiceInfo>("detect_local_service", { baseUrl }),
   discoverModels: (baseUrl: string, ollama = false) =>
-    invoke<Array<{ id: string; contextWindow?: number }>>("discover_local_models", { baseUrl, ollama }),
+    invoke<Array<{ id: string; contextWindow?: number; reasoning?: boolean }>>("discover_local_models", { baseUrl, ollama }),
   localModels: () => invoke<LocalModelSnapshot>("local_models_list"),
   searchLocalModels: (source: Exclude<LocalModelSource, "import">, query: string) => invoke<HubModelResult[]>("local_models_search", { source, query }),
   inspectLocalModelRepository: (source: Exclude<LocalModelSource, "import">, repository: string) => invoke<{ repository: string; revision: string; files: HubGgufFile[]; downloadable: boolean; reason?: string }>("local_models_inspect", { source, repository }),
