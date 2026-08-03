@@ -309,7 +309,7 @@ terminal; imported themes are previewed before selection and can be removed inde
 
 Custom theme files can be imported from **Settings → Appearance and language** or created with Pi through the bundled
 `create-agent-k-theme` Skill. Agent K watches the user theme directory and applies valid external updates without requiring a
-rebuild. See the [Retro Terminal example](examples/theme/retro-terminal.json) for a complete theme definition.
+rebuild. The bundled [Retro Terminal theme](themes/retro-terminal.json) is a complete theme definition.
 
 ### Programmable file Editor SDK
 
@@ -743,7 +743,7 @@ Agent K 主题是经过校验的 JSON 包，而不只是一个浅色/深色开�
 
 用户可以从**设置 → 外观与语言**导入主题文件，也可以通过内置 `create-agent-k-theme` Skill 让 Pi 创建主题。Agent K 会监控用户
 主题目录，并在有效文件发生变化时直接应用，无需重新构建。完整定义可参考
-[Retro Terminal 示例](examples/theme/retro-terminal.json)。
+[内置 Retro Terminal 主题](themes/retro-terminal.json)提供完整的主题定义。
 
 ### 可编程文件 Editor SDK
 
