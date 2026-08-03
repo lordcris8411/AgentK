@@ -17,7 +17,7 @@ import {
   privateClangdIndexDirectory,
   recordCompilationDatabase,
 } from "./cmake-cache.js";
-import { managedDebuggerArchive, managedDebuggerExecutable, managedDebuggerMarker, managedToolchainArchives, managedToolchainDownloadPrompt, managedToolchainMarker, toolchainArchiveFormat, type ToolchainArchive } from "./toolchain.js";
+import { findToolchainExecutable, managedDebuggerArchive, managedDebuggerExecutable, managedDebuggerMarker, managedToolchainArchives, managedToolchainDownloadPrompt, managedToolchainMarker, toolchainArchiveFormat, type ToolchainArchive } from "./toolchain.js";
 import { selectWorkspaceSymbols, symbolLocation, type SkillLocation as LspLocation, type SkillRange as Range, type SkillSymbol as LspSymbol } from "./skill-symbols.js";
 import { languageSkillStatusState, languageSkillUsable } from "./skill-status.js";
 import { cmakeDebugBuildDirectory, cmakeDebugTargets, cmakeProjectRoots, prioritizeCMakeProjectRoots, type CMakeDebugTarget } from "./cmake-debug.js";
@@ -269,6 +269,10 @@ export class CppService {
     return true;
   }
   debugStatus(sessionId?: string) { return this.debug.status(sessionId); }
+  async debugPrepare(): Promise<void> {
+    await this.managedBin();
+    this.managedDebugAdapter = await this.managedDebugger();
+  }
   debugSessions() { return this.debug.list(); }
   debugSelectSession(sessionId: string) { return this.debug.select(sessionId); }
   debugCloseSession(sessionId: string) { return this.debug.close(sessionId); }
@@ -1037,8 +1041,7 @@ export class CppService {
     return { c, cpp };
   }
   private async findExecutable(directory: string, name: string): Promise<string | undefined> {
-    const entries = await readdir(directory, { withFileTypes: true });
-    for (const entry of entries) { const full = join(directory, entry.name); if (entry.isFile() && entry.name === name) return full; if (entry.isDirectory()) { const found = await this.findExecutable(full, name); if (found) return found; } } return undefined;
+    return findToolchainExecutable(directory, name);
   }
   private async moveDirectoryEntries(source: string, destination: string): Promise<void> {
     for (const entry of await readdir(source)) { const from = join(source, entry); const to = join(destination, entry); if (from !== to && !existsSync(to)) await rename(from, to); }
@@ -1060,7 +1063,7 @@ export class CppService {
   private async archiveMatches(path: string, expectedSha256: string): Promise<boolean> { if (!existsSync(path)) return false; try { const hash = createHash("sha256"); const { createReadStream } = await import("node:fs"); await pipeline(createReadStream(path), hash); return hash.digest("hex") === expectedSha256; } catch { return false; } }
   private async downloadRelease(owner: string, repo: string, tag: string, assetName: string, directory: string, archiveCache: string, tool: string, expectedSha256: string, signal: AbortSignal): Promise<void> {
     const archive = join(directory, assetName); const cachedArchive = join(archiveCache, assetName);
-    if (await this.archiveMatches(cachedArchive, expectedSha256)) { const size = (await stat(cachedArchive)).size; this.emit({ type: "language_server_progress", stage: "downloading", tool, bytes: size, total: size, rate: 0, detail: `${assetName} (reused cache)` }); await copyFile(cachedArchive, archive); this.emit({ type: "language_server_progress", stage: "extracting", tool, detail: assetName }); await this.extract(archive, directory); await rm(archive, { force: true }); return; }
+    if (await this.archiveMatches(cachedArchive, expectedSha256)) { const size = (await stat(cachedArchive)).size; this.emit({ type: "language_server_progress", stage: "downloading", tool, bytes: size, total: size, rate: 0, detail: `${assetName} (reused cache)` }); await copyFile(cachedArchive, archive); this.emit({ type: "language_server_progress", stage: "extracting", tool, detail: assetName }); await this.extract(archive, directory, tool); this.emit({ type: "language_server_progress", stage: "preparing", tool, detail: `Finalizing ${tool}` }); await rm(archive, { force: true }); return; }
     await rm(cachedArchive, { force: true }); const api = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/tags/${tag}`, { headers: { Accept: "application/vnd.github+json", "User-Agent": "Agent-K" }, signal }); if (!api.ok) throw new Error(`Unable to locate ${tool} release (${api.status})`);
     const release = await api.json() as { assets?: Array<{ name: string; browser_download_url: string }> }; const asset = release.assets?.find((item) => item.name === assetName); if (!asset) throw new Error(`Release asset is unavailable for ${tool}`); const response = await fetch(asset.browser_download_url, { headers: { "User-Agent": "Agent-K" }, signal }); if (!response.ok || !response.body) throw new Error(`Unable to download ${tool} (${response.status})`);
     const total = Number(response.headers.get("content-length") ?? 0); let received = 0; const started = Date.now(); const reader = response.body.getReader(); const emit = this.emit;
@@ -1070,14 +1073,18 @@ export class CppService {
     if (signal.aborted) abortDownload(); else signal.addEventListener("abort", abortDownload, { once: true });
     try { await pipeline(stream, createWriteStream(archive)); } finally { signal.removeEventListener("abort", abortDownload); }
     if (!await this.archiveMatches(archive, expectedSha256)) throw new Error(`Checksum verification failed for ${tool}`); const cachedPartial = `${cachedArchive}.partial`; await rm(cachedPartial, { force: true }); await copyFile(archive, cachedPartial); await rename(cachedPartial, cachedArchive);
-    this.emit({ type: "language_server_progress", stage: "extracting", tool, detail: assetName }); await this.extract(archive, directory); await rm(archive, { force: true });
+    this.emit({ type: "language_server_progress", stage: "extracting", tool, detail: assetName }); await this.extract(archive, directory, tool); this.emit({ type: "language_server_progress", stage: "preparing", tool, detail: `Finalizing ${tool}` }); await rm(archive, { force: true });
   }
-  private async extract(archive: string, directory: string): Promise<void> {
-    if (toolchainArchiveFormat(archive) === "zip") {
-      await extractZip(archive, { dir: directory });
-      return;
-    }
-    await this.run(process.platform === "win32" ? "tar.exe" : "tar", ["-xf", archive, "-C", directory], directory, "");
+  private async extract(archive: string, directory: string, tool: string): Promise<void> {
+    const started = Date.now();
+    const heartbeat = setInterval(() => this.emit({ type: "language_server_progress", stage: "extracting", tool, detail: `${basename(archive)} · ${Math.max(1, Math.round((Date.now() - started) / 1_000))}s` }), 2_000);
+    try {
+      if (toolchainArchiveFormat(archive) === "zip") {
+        await extractZip(archive, { dir: directory });
+        return;
+      }
+      await this.run(process.platform === "win32" ? "tar.exe" : "tar", ["-xf", archive, "-C", directory], directory, "");
+    } finally { clearInterval(heartbeat); }
   }
   private configure(root: string, bin: string): Promise<{ commandsDir: string; environment: NodeJS.ProcessEnv }> {
     return this.withCMake(root, () => this.configureUnlocked(root, bin));
@@ -1346,6 +1353,7 @@ if (typeof process.send === "function") {
           case "lsp": result = await service.lsp(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
           case "notify": result = await service.notify(String(args[0] ?? ""), String(args[1] ?? ""), args[2]); break;
           case "debugStatus": result = service.debugStatus(typeof args[0] === "string" ? args[0] : undefined); break;
+          case "debugPrepare": result = await service.debugPrepare(); break;
           case "debugSessions": result = service.debugSessions(); break;
           case "debugSelectSession": result = service.debugSelectSession(String(args[0] ?? "")); break;
           case "debugCloseSession": result = await service.debugCloseSession(String(args[0] ?? "")); break;

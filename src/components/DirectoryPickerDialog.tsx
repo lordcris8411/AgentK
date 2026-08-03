@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { desktop } from "../lib/desktop";
 
-type DirectoryState = { path: string; parent: string; directories: string[]; files: string[]; drives: string[] };
+type MountedVolume = { name: string; path: string; device?: string; uuid?: string };
+type DirectoryState = { path: string; parent: string; directories: string[]; files: string[]; drives: MountedVolume[] };
 
 function normalizedPath(path: string): string {
   return path.replaceAll("\\", "/").replace(/\/$/, "").toLowerCase();
@@ -99,9 +100,11 @@ export function DirectoryPickerDialog({ acceptedFileExtensions, initialPath, onC
     };
   }, [drivePickerOpen]);
   const atRestrictedRoot = !!state && !!restrictedRoot && normalizedPath(state.path) === normalizedPath(restrictedRoot);
-  const activeDrive = state?.drives.find((drive) =>
-    state.path.toLowerCase().startsWith(drive.toLowerCase()),
-  ) ?? state?.drives[0];
+  const activeDrive = state?.drives.find((drive) => {
+    const path = normalizedPath(state.path);
+    const root = normalizedPath(drive.path);
+    return path === root || path.startsWith(`${root}/`);
+  });
   return createPortal(
     <div className="directory-picker-backdrop">
       <section aria-modal="true" className="directory-picker" role="dialog" style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}>
@@ -125,7 +128,7 @@ export function DirectoryPickerDialog({ acceptedFileExtensions, initialPath, onC
         )}
         {state?.drives.length && !restrictedRoot ? (
           <div className="directory-picker-drives">
-            <span>驱动器</span>
+            <span>设备</span>
             <div className="directory-picker-drive-select" ref={drivePicker}>
               <button
                 aria-expanded={drivePickerOpen}
@@ -134,24 +137,25 @@ export function DirectoryPickerDialog({ acceptedFileExtensions, initialPath, onC
                 onClick={() => setDrivePickerOpen((open) => !open)}
                 type="button"
               >
-                <span>{activeDrive}</span>
+                <span>{activeDrive?.name ?? "选择设备"}</span>
                 <i className="fa-solid fa-chevron-down" />
               </button>
               {drivePickerOpen ? (
                 <div className="directory-picker-drive-options" role="listbox">
                   {state.drives.map((drive) => (
                     <button
-                      aria-selected={drive === activeDrive}
-                      className={drive === activeDrive ? "is-selected" : undefined}
-                      key={drive}
+                      aria-selected={drive.path === activeDrive?.path}
+                      className={drive.path === activeDrive?.path ? "is-selected" : undefined}
+                      key={drive.path}
                       onClick={() => {
                         setDrivePickerOpen(false);
-                        load(drive);
+                        load(drive.path);
                       }}
                       role="option"
                       type="button"
                     >
-                      {drive}
+                      <span><i className="fa-solid fa-hard-drive" /> {drive.name}</span>
+                      <small>{drive.path}</small>
                     </button>
                   ))}
                 </div>

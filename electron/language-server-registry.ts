@@ -44,7 +44,7 @@ function isInside(root: string, candidate: string): boolean {
 
 function parseDebugServer(value: unknown): LanguageServerPluginManifest["debugServer"] | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const input = value as { adapters?: unknown; protocol?: unknown; providers?: unknown };
+  const input = value as { adapters?: unknown; prepareMethod?: unknown; protocol?: unknown; providers?: unknown };
   if (input.protocol !== "dap" || !Array.isArray(input.adapters)) return undefined;
   const adapters = input.adapters.flatMap((adapter) => {
     if (!adapter || typeof adapter !== "object") return [];
@@ -67,7 +67,10 @@ function parseDebugServer(value: unknown): LanguageServerPluginManifest["debugSe
       ? [{ fileExtensions: fileExtensions.map((item) => item.toLowerCase()), id: candidate.id, label: candidate.label.trim(), languages, modes, priority, projectMarkers }]
       : [];
   });
-  return providers.length === input.providers.length ? { adapters, protocol: "dap", providers } : undefined;
+  const prepareMethod = typeof input.prepareMethod === "string" && /^[A-Za-z][A-Za-z0-9]*$/u.test(input.prepareMethod)
+    ? input.prepareMethod : undefined;
+  if (input.prepareMethod !== undefined && !prepareMethod) return undefined;
+  return providers.length === input.providers.length ? { adapters, ...(prepareMethod ? { prepareMethod } : {}), protocol: "dap", providers } : undefined;
 }
 function editorContribution(value: unknown): LanguageServerPluginManifest["editorContribution"] | undefined {
   if (value === undefined) return undefined;

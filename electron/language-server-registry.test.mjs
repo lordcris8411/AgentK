@@ -28,13 +28,14 @@ test("discovers a trusted native language-server manifest", async () => {
     },
     commands: [{ id: "active-example-projects", title: "Active Example projects", kind: "project-manager" }],
     worker: "worker.js",
-    debugServer: { protocol: "dap", adapters: [{ command: "example-debug", platforms: ["win32"] }], providers: [{ id: "example-debug", label: "Example", languages: ["example"], fileExtensions: [".example"], projectMarkers: ["example.config"], modes: ["launch", "attach"], priority: 50 }] },
+    debugServer: { protocol: "dap", prepareMethod: "debugPrepare", adapters: [{ command: "example-debug", platforms: ["win32"] }], providers: [{ id: "example-debug", label: "Example", languages: ["example"], fileExtensions: [".example"], projectMarkers: ["example.config"], modes: ["launch", "attach"], priority: 50 }] },
   });
   try {
     const plugins = await discoverLanguageServerPlugins(source.directory);
     assert.equal(plugins.length, 1);
     assert.equal(plugins[0]?.id, "example-lsp");
     assert.deepEqual(plugins[0]?.debugServer?.adapters, [{ command: "example-debug", platforms: ["win32"] }]);
+    assert.equal(plugins[0]?.debugServer?.prepareMethod, "debugPrepare");
     assert.deepEqual(plugins[0]?.debugServer?.providers[0], { id: "example-debug", label: "Example", languages: ["example"], fileExtensions: [".example"], projectMarkers: ["example.config"], modes: ["launch", "attach"], priority: 50 });
     assert.deepEqual(plugins[0]?.commands, [{ id: "active-example-projects", title: "Active Example projects", kind: "project-manager" }]);
     assert.deepEqual(plugins[0]?.projectMenu?.actions?.[0], { id: "build", label: "Build", method: "terminalCommand", defaultProfile: "Debug", profiles: [{ id: "Debug", label: "Debug" }, { id: "Release", label: "Release" }] });

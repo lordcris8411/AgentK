@@ -7,6 +7,7 @@ import {
 } from "../.electron-dist/terminal-profile.js";
 
 test("keeps the Agent K Starship profile on the theme-controlled ANSI palette", () => {
+  assert.match(agentKStarshipConfig, /^command_timeout = 3000$/m);
   assert.match(agentKStarshipConfig, /bg:16/);
   assert.match(agentKStarshipConfig, /fg:16/);
   assert.match(agentKStarshipConfig, /fg:17 bg:16/);

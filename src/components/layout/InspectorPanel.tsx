@@ -702,12 +702,13 @@ export function InspectorPanel({
     y: number;
   }>();
   const [pluginMenuActions, setPluginMenuActions] = useState<PluginMenuAction[]>([]);
-  const [cppProgress, setCppProgress] = useState<{ languageServerId?: string; detail?: string; error?: string; log?: string; rate?: number; stage: string; bytes?: number; total?: number }>();
+  const [cppProgress, setCppProgress] = useState<{ languageServerId?: string; detail?: string; error?: string; log?: string; purpose?: "debug" | "language"; rate?: number; stage: string; bytes?: number; total?: number }>();
   const [languageServerConfirmation, setLanguageServerConfirmation] = useState<{ languageServerId: string; message: string; requestId: string; title: string }>();
   const [cppDiagnostics, setCppDiagnostics] = useState<Record<string, Array<Record<string, unknown>>>>({});
   const [languageProjects, setLanguageProjects] = useState<LanguageServerProject[]>([]);
   const [languagePlugins, setLanguagePlugins] = useState<LanguageServerPlugin[]>([]);
   const [languageProjectMutation, setLanguageProjectMutation] = useState<string>();
+  const debugOpenRequest = useRef(0);
   const [languageActionProfiles, setLanguageActionProfiles] = useState<Record<string, string>>({});
   const [languageProfileMenu, setLanguageProfileMenu] = useState<{ key: string; left: number; top: number }>();
   const detectedLanguageProjects = useMemo(
@@ -793,7 +794,6 @@ export function InspectorPanel({
         ...(typeof value.error === "string" ? { error: value.error } : {}),
         ...(stage === "configuring" && rawDetail ? { log: `${previous.log ?? ""}${rawDetail}`.slice(-16_000) } : {}),
       }) : previous);
-      if (value.stage === "ready") window.setTimeout(() => setCppProgress(undefined), 900);
     });
     return stop;
   }, [en]);
@@ -1524,6 +1524,7 @@ export function InspectorPanel({
     setLanguageProjectMutation(mutationKey);
     setCppProgress({
       languageServerId: plugin.id,
+      purpose: "language",
       stage: "preparing",
       detail: en ? `Preparing ${plugin.displayName}…` : `正在准备 ${plugin.displayName}…`,
     });
@@ -1539,7 +1540,7 @@ export function InspectorPanel({
         setCppProgress(undefined);
       }
     }).catch((cause) => {
-      setCppProgress({ languageServerId: plugin.id, stage: "failed", error: String(cause) });
+      setCppProgress({ languageServerId: plugin.id, purpose: "language", stage: "failed", error: String(cause) });
     }).finally(() => setLanguageProjectMutation((current) => current === mutationKey ? undefined : current));
   };
   const unloadLanguageProject = (project: LanguageServerProject) => {
@@ -1548,6 +1549,25 @@ export function InspectorPanel({
     return desktop.languageServerCall(project.languageServerId, "unload", project.root)
       .catch((cause) => onError(String(cause)))
       .finally(() => setLanguageProjectMutation((current) => current === mutationKey ? undefined : current));
+  };
+  const prepareAndOpenDebug = async (plugin: LanguageServerPlugin, projectRoot: string) => {
+    const request = ++debugOpenRequest.current;
+    setCppProgress({
+      languageServerId: plugin.id,
+      purpose: "debug",
+      stage: "preparing",
+      detail: en ? "Preparing Debug dependencies…" : "正在准备调试依赖…",
+    });
+    try {
+      if (plugin.debugServer?.prepareMethod)
+        await desktop.languageServerCall(plugin.id, plugin.debugServer.prepareMethod);
+      if (debugOpenRequest.current !== request) return;
+      setCppProgress(undefined);
+      await desktopWindow.openDebug(projectRoot);
+    } catch (cause) {
+      if (debugOpenRequest.current !== request) return;
+      setCppProgress({ languageServerId: plugin.id, purpose: "debug", stage: "failed", error: String(cause) });
+    }
   };
   const captureRenderedPreview = (requestedOutputPath?: string) => {
     const target = current?.webPreviewUrl
@@ -2345,8 +2365,8 @@ export function InspectorPanel({
                 </span>
               ) : null}
               <button
-                onClick={() => void desktopWindow.openDebug(selectedCppProject.root)
-                  .catch((cause) => onError(String(cause)))}
+                disabled={Boolean(cppProgress)}
+                onClick={() => { if (selectedCppLanguagePlugin) void prepareAndOpenDebug(selectedCppLanguagePlugin, selectedCppProject.root); }}
                 title={en ? "Open native Debug window" : "打开原生调试窗口"}
                 type="button"
               >
@@ -2948,6 +2968,7 @@ export function InspectorPanel({
             className="inspector-dialog language-server-confirmation"
             onKeyDown={(event) => {
               if (event.key !== "Escape") return;
+              debugOpenRequest.current += 1;
               const request = languageServerConfirmation;
               setLanguageServerConfirmation(undefined);
               setCppProgress(undefined);
@@ -2962,6 +2983,7 @@ export function InspectorPanel({
                 aria-label={en ? "Cancel" : "取消"}
                 className="inspector-dialog-close"
                 onClick={() => {
+                  debugOpenRequest.current += 1;
                   const request = languageServerConfirmation;
                   setLanguageServerConfirmation(undefined);
                   setCppProgress(undefined);
@@ -2973,17 +2995,19 @@ export function InspectorPanel({
             <p className="language-server-confirmation-message">{languageServerConfirmation.message}</p>
             <footer>
               <button onClick={() => {
+                debugOpenRequest.current += 1;
                 const request = languageServerConfirmation;
                 setLanguageServerConfirmation(undefined);
                 setCppProgress(undefined);
                 void desktop.languageServerCall(request.languageServerId, "respondConfirmation", request.requestId, false).catch((cause) => onError(String(cause)));
               }} type="button">{en ? "Cancel" : "取消"}</button>
-              <button autoFocus className="primary" onClick={() => {
-                const request = languageServerConfirmation;
-                setLanguageServerConfirmation(undefined);
-                void desktop.languageServerCall(request.languageServerId, "respondConfirmation", request.requestId, true).catch((cause) => {
-                  setCppProgress({ stage: "failed", error: String(cause) });
-                });
+                  <button autoFocus className="primary" onClick={() => {
+                    const request = languageServerConfirmation;
+                    const purpose = cppProgress?.purpose;
+                    setLanguageServerConfirmation(undefined);
+                    void desktop.languageServerCall(request.languageServerId, "respondConfirmation", request.requestId, true).catch((cause) => {
+                      setCppProgress({ purpose, stage: "failed", error: String(cause) });
+                    });
               }} type="button">{en ? "Download" : "下载"}</button>
             </footer>
           </section>
@@ -2993,8 +3017,8 @@ export function InspectorPanel({
       {cppProgress && !languageServerConfirmation ? createPortal(
         <div className="inspector-dialog-backdrop is-viewport">
           <section aria-modal="true" className="inspector-dialog cpp-progress-dialog" role="dialog">
-            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{cppProgress.stage === "failed" ? (en ? "Language project load failed" : "语言工程加载失败") : (en ? "Preparing language project" : "正在准备语言工程")}</h2><p>{cppProgress.detail ?? cppProgress.stage}</p></div><button aria-label={cppProgress.stage === "failed" ? (en ? "Close" : "关闭") : (en ? "Cancel language project load" : "取消加载语言工程")} className="cpp-progress-close" disabled={cppProgress.stage === "cancelling"} onClick={() => { if (cppProgress.stage === "failed") { setCppProgress(undefined); return; } setCppProgress((current) => current ? { ...current, stage: "cancelling", detail: en ? "Cancelling…" : "正在取消…" } : current); if (cppProgress.languageServerId) void desktop.languageServerCall(cppProgress.languageServerId, "cancel").then(() => setCppProgress(undefined)).catch((cause) => setCppProgress({ stage: "failed", error: String(cause) })); else setCppProgress(undefined); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
-            {cppProgress.total ? <progress className="cpp-toolchain-progress" max={cppProgress.total} value={Math.min(cppProgress.bytes ?? 0, cppProgress.total)} /> : <p>{en ? "Working…" : "处理中…"}</p>}
+            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{cppProgress.purpose === "debug" ? (cppProgress.stage === "failed" ? (en ? "Dependency preparation failed" : "调试依赖准备失败") : (en ? "Preparing Debug dependencies" : "正在准备调试依赖")) : (cppProgress.stage === "failed" ? (en ? "Language project load failed" : "语言工程加载失败") : (en ? "Preparing language project" : "正在准备语言工程"))}</h2><p>{cppProgress.detail ?? cppProgress.stage}</p></div><button aria-label={cppProgress.stage === "failed" ? (en ? "Close" : "关闭") : (en ? "Cancel current operation" : "取消当前操作")} className="cpp-progress-close" disabled={cppProgress.stage === "cancelling"} onClick={() => { if (cppProgress.stage === "failed") { setCppProgress(undefined); return; } debugOpenRequest.current += 1; setCppProgress((current) => current ? { ...current, stage: "cancelling", detail: en ? "Cancelling…" : "正在取消…" } : current); if (cppProgress.languageServerId) void desktop.languageServerCall(cppProgress.languageServerId, "cancel").then(() => setCppProgress(undefined)).catch((cause) => setCppProgress({ purpose: cppProgress.purpose, stage: "failed", error: String(cause) })); else setCppProgress(undefined); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
+            {cppProgress.total ? <progress className="cpp-toolchain-progress" max={cppProgress.total} value={Math.min(cppProgress.bytes ?? 0, cppProgress.total)} /> : <progress aria-label={en ? "Working" : "处理中"} className="cpp-toolchain-progress" />}
             {cppProgress.bytes !== undefined ? <small>{formatMegabytes(cppProgress.bytes)}{cppProgress.total ? ` / ${formatMegabytes(cppProgress.total)} · ${(Math.min(cppProgress.bytes, cppProgress.total) / cppProgress.total * 100).toFixed(2)}%` : ""}{cppProgress.rate !== undefined ? ` · ${formatMegabytes(cppProgress.rate)}/s` : ""}</small> : null}
             {cppProgress.error ? <p>{cppProgress.error}</p> : null}
             {cppProgress.log ? <details><summary>{en ? "Configuration output" : "工程配置输出"}</summary><pre className="cpp-progress-log">{cppProgress.log}</pre></details> : null}

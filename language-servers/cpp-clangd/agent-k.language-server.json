@@ -35,6 +35,7 @@
   "worker": "dist/worker.js",
   "debugServer": {
     "protocol": "dap",
+    "prepareMethod": "debugPrepare",
     "providers": [{
       "id": "cpp-native",
       "label": "C/C++ Native",

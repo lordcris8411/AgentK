@@ -55,6 +55,7 @@ import {
 } from "./terminal-profile.js";
 import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
 import { mergeWorkspaceWatchKind, type WorkspaceWatchKind } from "./workspace-watch.js";
+import { mountedVolumes } from "./mounted-volumes.js";
 import {
   LOCAL_MODEL_PROVIDER_ID,
   LocalModelManager,
@@ -587,7 +588,7 @@ export class DesktopBackend {
       case "browse_directories": {
         const path = optionalString(args.path) ?? homedir();
         const entries = readdirSync(path, { withFileTypes: true });
-        const drives = process.platform === "win32" ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => `${letter}:\\`).filter(existsSync) : [];
+        const drives = mountedVolumes();
         return { path, parent: dirname(path), directories: entries.filter((entry) => entry.isDirectory() && entry.name !== "node_modules").map((entry) => entry.name).sort((a, b) => a.localeCompare(b)), files: entries.filter((entry) => entry.isFile()).map((entry) => entry.name).sort((a, b) => a.localeCompare(b)), drives };
       }
       case "create_browsed_directory": {

@@ -17,6 +17,10 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".webp": "image/webp",
 };
 
+export function isInvalidPiSessionError(cause: unknown): boolean {
+  return /session file is not a valid pi session:/i.test(errorMessage(cause));
+}
+
 export interface RpcPoolOptions {
   appDataPath: string;
   autoCompactionEnabled?: boolean;
@@ -310,14 +314,36 @@ export class RpcPool {
           });
           try {
             const sessionFile = old.sessionFile();
+            let state: JsonObject | undefined;
             if (sessionFile) {
-              await this.requestData(replacement, {
-                type: "switch_session",
-                sessionPath: sessionFile,
-              });
-              replacement.setSessionFile(sessionFile);
+              try {
+                await this.requestData(replacement, {
+                  type: "switch_session",
+                  sessionPath: sessionFile,
+                });
+                replacement.setSessionFile(sessionFile);
+              } catch (cause) {
+                if (!isInvalidPiSessionError(cause)) throw cause;
+                await this.requestData(replacement, { type: "new_session" });
+                state = asObject(
+                  await this.requestData(replacement, { type: "get_state" }),
+                );
+                const recoveredSessionFile = asString(state.sessionFile);
+                if (!recoveredSessionFile)
+                  throw new Error("Pi did not provide a replacement session file");
+                replacement.setSessionFile(recoveredSessionFile);
+                this.options.emit({
+                  type: "session_changed",
+                  runtimeId: replacement.runtimeId,
+                  previousSessionFile: sessionFile,
+                  sessionFile: recoveredSessionFile,
+                  sessionId: state.sessionId ?? null,
+                });
+              }
             }
-            await this.requestData(replacement, { type: "get_state" });
+            state ??= asObject(
+              await this.requestData(replacement, { type: "get_state" }),
+            );
             await this.requestData(replacement, {
               type: "set_auto_compaction",
               enabled: this.autoCompactionEnabled,

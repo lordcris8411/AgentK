@@ -16,7 +16,8 @@ test("C++ project folder selection owns Debug and README presentation", () => {
   assert.match(inspectorSource, /plugin\.projectMarkers\.some/);
   assert.match(inspectorSource, /selectedLanguageProject\?\.root \?\? absoluteWorkspacePath/);
   assert.match(inspectorSource, /entry\.name\.toLocaleLowerCase\("en-US"\) === "readme\.md"/);
-  assert.match(inspectorSource, /desktopWindow\.openDebug\(selectedCppProject\.root\)/);
+  assert.match(inspectorSource, /prepareAndOpenDebug\(selectedCppLanguagePlugin, selectedCppProject\.root\)/);
+  assert.match(inspectorSource, /await desktop\.languageServerCall\(plugin\.id, plugin\.debugServer\.prepareMethod\)[\s\S]*?await desktopWindow\.openDebug\(projectRoot\)/);
   assert.match(inspectorSource, /if \(selectedLanguageProject\) void unloadLanguageProject/);
   assert.match(inspectorSource, /loadLanguageProject\(selectedLanguagePlugin, selectedCppProject\.root\)/);
   assert.doesNotMatch(inspectorSource, /currentIsWorkspaceFile\s*\?\s*\(\s*<button[\s\S]*?openDebug/);

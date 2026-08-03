@@ -296,7 +296,9 @@ body.is-native-debug-window { min-width: 0; }
 .directory-picker-drive-trigger[aria-expanded="true"] { border-color: var(--accent); outline: 1px solid color-mix(in srgb, var(--accent) 72%, transparent); outline-offset: -1px; }
 .directory-picker-drive-trigger i { color: var(--text-secondary); font-size: 9px; }
 .directory-picker-drive-options { background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: 6px; box-shadow: 0 8px 18px #0006; display: grid; left: 0; max-height: 180px; min-width: 100%; overflow-y: auto; padding: 3px; position: absolute; top: calc(100% + 4px); z-index: 3; }
-.directory-picker .directory-picker-drive-options button { background: transparent; border: 0; border-radius: 4px; color: var(--text-primary); padding: 5px 7px; text-align: left; white-space: nowrap; }
+.directory-picker .directory-picker-drive-options button { background: transparent; border: 0; border-radius: 4px; color: var(--text-primary); display: grid; gap: 2px; padding: 6px 7px; text-align: left; white-space: nowrap; }
+.directory-picker .directory-picker-drive-options button span { align-items: center; display: flex; gap: 6px; }
+.directory-picker .directory-picker-drive-options button small { color: var(--text-secondary); font-size: 10px; }
 .directory-picker .directory-picker-drive-options button:hover { background: var(--surface-hover); }
 .directory-picker .directory-picker-drive-options button.is-selected { background: var(--selection-background); color: var(--selection-foreground); }
 .directory-picker-list { display: grid; max-height: 260px; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-color: var(--border-strong) var(--surface-raised); scrollbar-width: thin; }.directory-picker-list::-webkit-scrollbar { width: 8px; }.directory-picker-list::-webkit-scrollbar-track { background: var(--surface-raised); }.directory-picker-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; }.directory-picker-list button { border: 0; border-radius: 0; font-size: 12px; padding: 5px 7px; text-align: left; }
@@ -4309,6 +4311,8 @@ body.is-tree-dragging * {
 .cpp-toolchain-progress::-webkit-progress-bar { background: var(--surface-active); border: 1px solid var(--border-strong); border-radius: 4px; }
 .cpp-toolchain-progress::-webkit-progress-value { background: var(--accent); border-radius: 3px; }
 .cpp-toolchain-progress::-moz-progress-bar { background: var(--accent); border-radius: 3px; }
+.cpp-toolchain-progress:indeterminate::-webkit-progress-value { animation: cpp-toolchain-indeterminate 1.1s ease-in-out infinite; background: linear-gradient(90deg, transparent 0 15%, var(--accent) 35% 65%, transparent 85% 100%); background-size: 220% 100%; }
+@keyframes cpp-toolchain-indeterminate { from { background-position: 100% 0; } to { background-position: -120% 0; } }
 .cpp-progress-dialog { padding: 20px; width: min(430px, 100%); }
 .language-server-confirmation { width: min(430px, 100%); }
 .language-server-confirmation > header { padding-right: 28px; }

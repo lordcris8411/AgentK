@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,6 +14,7 @@ import {
 } from "./cmake-cache.ts";
 
 import {
+  findToolchainExecutable,
   managedDebuggerArchive,
   managedDebuggerExecutable,
   managedDebuggerMarker,
@@ -118,6 +119,23 @@ test("routes ZIP tool archives away from tar", () => {
   assert.equal(toolchainArchiveFormat("cmake-linux.tar.gz"), "tar");
   assert.equal(toolchainArchiveFormat("llvm.tar.xz"), "tar");
   assert.throws(() => toolchainArchiveFormat("download.html"), /Unsupported toolchain archive/);
+});
+
+test("finds preferred toolchain executables without traversing the extracted LLVM tree", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agent-k-toolchain-"));
+  try {
+    await mkdir(join(root, "bin"));
+    const executable = join(root, "bin", "clang");
+    await writeFile(executable, "");
+    assert.equal(await findToolchainExecutable(root, "clang"), executable);
+    if (process.platform !== "win32") {
+      await rm(executable);
+      await symlink("/bin/sh", executable);
+      assert.equal(await findToolchainExecutable(root, "clang"), executable);
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });
 
 test("describes the isolated LLVM download before provisioning", () => {

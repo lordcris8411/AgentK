@@ -55,6 +55,7 @@ export type LanguageServerPlugin = {
   commands?: Array<{ id: string; title: string; kind: "project-manager" }>;
   debugServer?: {
     adapters: Array<{ command: string; platforms: string[] }>;
+    prepareMethod?: string;
     providers: Array<{ fileExtensions: string[]; id: string; label: string; languages: string[]; modes: Array<"attach" | "dump" | "launch">; priority: number; projectMarkers: string[] }>;
     protocol: "dap";
   };
@@ -391,7 +392,7 @@ export const desktop = {
   projectContext: (root: string) => invoke<string>("project_context", { root }),
   directory: (root: string, path: string, depth: 1 | 2 = 2) =>
     invoke<FileEntry>("directory_tree", { root, path, depth }),
-  browseDirectories: (path?: string) => invoke<{ path: string; parent: string; directories: string[]; files: string[]; drives: string[] }>("browse_directories", { path }),
+  browseDirectories: (path?: string) => invoke<{ path: string; parent: string; directories: string[]; files: string[]; drives: Array<{ name: string; path: string; device?: string; uuid?: string }> }>("browse_directories", { path }),
   createBrowsedDirectory: (parent: string, name: string) =>
     invoke<string>("create_browsed_directory", { name, parent }),
   read: (root: string, path: string) =>

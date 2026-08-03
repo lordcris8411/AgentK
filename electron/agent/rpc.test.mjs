@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import test from "node:test";
-import { RpcPool } from "../../.electron-dist/agent/pool.js";
+import { isInvalidPiSessionError, RpcPool } from "../../.electron-dist/agent/pool.js";
 import { buildEnvironmentSystemPrompt, piSpawnUsesShell, RpcBridge } from "../../.electron-dist/agent/rpc.js";
 import { selectPiCommandCandidate } from "../../.electron-dist/pi-runtime.js";
 
@@ -39,6 +39,76 @@ function bridgeFixture() {
 }
 
 const flushLines = () => new Promise((resolve) => setImmediate(resolve));
+
+test("configuration reload recognizes an invalid Pi session", () => {
+  assert.equal(isInvalidPiSessionError(
+    new Error("Session file is not a valid pi session: /tmp/broken.jsonl"),
+  ), true);
+  assert.equal(isInvalidPiSessionError(new Error("Pi RPC request timed out")), false);
+});
+
+test("configuration reload replaces an invalid Pi session instead of failing the save", async () => {
+  const events = [];
+  let oldStopped = false;
+  let replacementStopped = false;
+  let replacementSession;
+  const old = {
+    runtimeId: "runtime-reload",
+    isClosed: () => false,
+    isAvailable: () => true,
+    workspaceMatches: () => true,
+    workspaceCwd: () => "/tmp/agent-k-rpc-test/workspace",
+    sessionFile: () => "/tmp/invalid.jsonl",
+    stop: () => { oldStopped = true; },
+  };
+  const replacement = {
+    runtimeId: "runtime-reload",
+    async request(command) {
+      if (command.type === "switch_session") return {
+        success: false,
+        error: "Session file is not a valid pi session: /tmp/invalid.jsonl",
+      };
+      if (command.type === "get_state") return {
+        success: true,
+        data: { sessionFile: "/tmp/recovered.jsonl", sessionId: "recovered" },
+      };
+      return { success: true, data: {} };
+    },
+    setSessionFile: (path) => { replacementSession = path; },
+    stop: () => { replacementStopped = true; },
+  };
+  const originalStart = RpcBridge.start;
+  RpcBridge.start = async () => replacement;
+  const pool = new RpcPool({
+    appDataPath: "/tmp/agent-k-rpc-test",
+    bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
+    bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
+    firstPartyEditorExtensions: [],
+    firstPartyLanguageServerSkills: [],
+    launch: { executable: "pi", args: [] },
+    minimum: 2,
+    permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
+    emit: (event) => events.push(event),
+  });
+  pool.workers.set(old.runtimeId, old);
+  try {
+    await pool.reload();
+    assert.equal(oldStopped, true);
+    assert.equal(replacementStopped, false);
+    assert.equal(replacementSession, "/tmp/recovered.jsonl");
+    assert.equal(pool.workers.get(old.runtimeId), replacement);
+    assert.deepEqual(events.find((event) => event.type === "session_changed"), {
+      type: "session_changed",
+      runtimeId: "runtime-reload",
+      previousSessionFile: "/tmp/invalid.jsonl",
+      sessionFile: "/tmp/recovered.jsonl",
+      sessionId: "recovered",
+    });
+  } finally {
+    RpcBridge.start = originalStart;
+    pool.shutdown();
+  }
+});
 
 test("environment prompt identifies the Windows host and its Bash boundary", () => {
   const prompt = buildEnvironmentSystemPrompt("win32", "x64", "Example CPU");

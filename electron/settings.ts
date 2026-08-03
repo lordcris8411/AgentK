@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import { shell } from "electron";
+import { configuredProviderModels } from "./model-provider.js";
 import type { PiLaunch } from "./pi-runtime.js";
 import type { ClientSettings, JsonObject } from "./types.js";
 import { discoveredModels, localModelsEndpoint, type ProviderModelDraft } from "./model-discovery.js";
@@ -385,11 +386,12 @@ export async function saveModelProvider(provider: ProviderDraft): Promise<void> 
   const path = join(directory, "models.json");
   const root = await jsonObject(path);
   const providers = asObject(root.providers);
+  const existingProvider = asObject(providers[id]);
   providers[id] = {
     name: provider.name.trim() || id,
     baseUrl: provider.baseUrl.trim(),
     api: provider.api,
-    models,
+    models: configuredProviderModels(existingProvider, models),
     ...(provider.local
       ? { apiKey: provider.id === "ollama" ? "ollama" : "local" }
       : {}),

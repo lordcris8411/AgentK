@@ -1,3 +1,7 @@
+import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+
 export type ToolchainArchive = {
   asset: string;
   bytes?: number;
@@ -6,6 +10,22 @@ export type ToolchainArchive = {
   sha256: string;
   tag: string;
 };
+
+export async function findToolchainExecutable(directory: string, name: string): Promise<string | undefined> {
+  for (const candidate of [join(directory, name), join(directory, "bin", name)])
+    if (existsSync(candidate)) return candidate;
+  const pending = [directory];
+  for (let index = 0; index < pending.length; index += 1) {
+    const current = pending[index];
+    if (!current) continue;
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries)
+      if ((entry.isFile() || entry.isSymbolicLink()) && entry.name === name) return join(current, entry.name);
+    for (const entry of entries)
+      if (entry.isDirectory()) pending.push(join(current, entry.name));
+  }
+  return undefined;
+}
 
 /** Portable LLDB DAP distribution used only by the trusted debug worker. */
 export function managedDebuggerArchive(platform: NodeJS.Platform, architecture: string): ToolchainArchive | undefined {

@@ -29,6 +29,7 @@ export type LanguageServerPluginManifest = {
   worker: URL;
   debugServer?: {
     adapters: Array<{ command: string; platforms: NodeJS.Platform[] }>;
+    prepareMethod?: string;
     providers: Array<{
       fileExtensions: string[];
       id: string;

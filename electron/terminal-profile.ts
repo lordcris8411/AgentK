@@ -17,7 +17,9 @@ export function windowsTerminalInitialization(
  * color names rather than literal RGB values. xterm can then map every prompt
  * segment through the active theme instead of inheriting fixed host colors.
  */
-export const agentKStarshipConfig = `format = """
+export const agentKStarshipConfig = `command_timeout = 3000
+
+format = """
 [░▒▓](fg:16)\\
 $os\\
 $directory\\

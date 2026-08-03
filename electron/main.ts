@@ -651,8 +651,7 @@ function registerIpc(): void {
     if (typeof command !== "string") throw new Error("Desktop command must be a string");
     if (!backend || !backendReady) throw new Error("Desktop backend is unavailable");
     await backendReady;
-    const result = await backend.invoke(command, args);
-    return result;
+    return backend.invoke(command, args);
   });
   ipcMain.handle("agent-k:app-version", () => app.getVersion());
   ipcMain.handle("agent-k:clipboard-write", (_event, value: unknown) => {
