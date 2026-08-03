@@ -16,7 +16,7 @@ export type ThemeMode = string;
 export type ResolvedTheme = "light" | "soft-light" | "dark";
 
 const fallback: ClientSettings = {
-  version: 14,
+  version: 15,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
@@ -24,6 +24,7 @@ const fallback: ClientSettings = {
   cacheDirectory: "",
   localModelDirectory: "",
   piExecutable: "",
+  terminalCharset: "utf-8",
   workerPoolSize: 4,
   agentLoopDetectionEnabled: true,
   environmentPromptEnabled: false,
@@ -93,6 +94,10 @@ const dictionaries = {
     piExecutable: "Pi 可执行文件路径",
     piExecutableDescription: "留空时依次使用环境变量、系统 PATH 中的 Pi，最后使用内置 Pi。修改后重启 Agent K 生效。",
     piExecutablePlaceholder: "自动检测（推荐）",
+    terminalCharset: "终端字符集",
+    terminalCharsetDescription: "控制内置终端的输入、输出和代码页。修改后会重新启动当前终端；Linux 始终使用 UTF-8。",
+    terminalCharsetUtf8: "UTF-8（推荐）",
+    terminalCharsetGbk: "GBK / CP936（简体中文 Windows）",
     workerPoolSize: "常驻 Pi 进程",
     workerPoolDescription: "保持 2–4 个 Pi 进程待命；忙时会自动扩容，空闲后回收到此数量。",
     agentLoopDetection: "模型循环检测",
@@ -257,6 +262,10 @@ const dictionaries = {
     piExecutable: "Pi executable path",
     piExecutableDescription: "When empty, Agent K uses the environment variable, Pi on PATH, then the bundled Pi. Restart Agent K after changing it.",
     piExecutablePlaceholder: "Auto-detect (recommended)",
+    terminalCharset: "Terminal character set",
+    terminalCharsetDescription: "Controls the integrated terminal's input, output, and code page. Changing it restarts the current terminal; Linux always uses UTF-8.",
+    terminalCharsetUtf8: "UTF-8 (recommended)",
+    terminalCharsetGbk: "GBK / CP936 (Simplified Chinese Windows)",
     workerPoolSize: "Warm Pi processes",
     workerPoolDescription: "Keep 2–4 Pi processes ready. The pool grows while busy and returns to this size when idle.",
     agentLoopDetection: "Model loop detection",

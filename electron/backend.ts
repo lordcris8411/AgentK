@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 import type {
+  ClientSettings,
   FileFormatPluginResource,
   JsonObject,
   PiResourceChange,
@@ -47,7 +48,11 @@ import { installSkillHub, previewSkillHub } from "./skill-hub.js";
 import { importTheme, listThemes, removeTheme, themeDirectory } from "./themes.js";
 import { LanguageServerRegistry } from "./language-server-registry.js";
 import type { WorkspaceFileChange } from "./language-server-host.js";
-import { agentKBashRcConfig, agentKStarshipConfig } from "./terminal-profile.js";
+import {
+  agentKBashRcConfig,
+  agentKStarshipConfig,
+  windowsTerminalInitialization,
+} from "./terminal-profile.js";
 import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
 import { mergeWorkspaceWatchKind, type WorkspaceWatchKind } from "./workspace-watch.js";
 import {
@@ -87,6 +92,7 @@ export class DesktopBackend {
   private readonly bundledSkillsDirectory: string;
   private readonly terminalProfilePath: string;
   private readonly terminalBashRcPath: string;
+  private terminalCharset: ClientSettings["terminalCharset"] = "utf-8";
   private firstPartyEditorPlugins: FileFormatPluginResource[] = [];
   private piLaunch?: PiLaunch;
   private pool?: RpcPool;
@@ -122,6 +128,7 @@ export class DesktopBackend {
 
   async initialize(): Promise<void> {
     const settings = await loadClientSettings(this.options.appDataPath);
+    this.terminalCharset = settings.terminalCharset;
     const startupTheme = settings.theme;
     const startupText = (english: string, chinese: string) =>
       settings.locale === "en-US" ? english : chinese;
@@ -337,6 +344,7 @@ export class DesktopBackend {
             ? requestedDisabledProviders.filter((id) => id !== LOCAL_MODEL_PROVIDER_ID)
             : [...new Set([...requestedDisabledProviders, LOCAL_MODEL_PROVIDER_ID])];
           const saved = await saveClientSettings(this.options.appDataPath, { ...input, disabledModelProviders });
+          this.terminalCharset = saved.terminalCharset;
           for (const plugin of this.languageServers.list()) this.languageServers.setEnabled(plugin.id, !saved.disabledLanguageServers.includes(plugin.id));
           if (environmentPromptChanged || autoCompactionChanged) {
             try {
@@ -807,7 +815,7 @@ export class DesktopBackend {
           ? "/bin/bash"
           : "/bin/sh";
     const args = isWindows
-      ? ["-NoLogo"]
+      ? ["-NoLogo", "-NoExit", "-Command", windowsTerminalInitialization(this.terminalCharset)]
       : basename(executable).toLocaleLowerCase("en-US") === "bash"
         ? ["--rcfile", this.terminalBashRcPath, "-i"]
         : [];

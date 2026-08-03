@@ -328,7 +328,7 @@ export function ProjectConsole({ root, onError, docked = false }: { root?: strin
         void desktop.stopProjectConsole(createdId);
       }
     };
-  }, [fitTerminal, root]);
+  }, [fitTerminal, root, settings.terminalCharset]);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {

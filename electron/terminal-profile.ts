@@ -1,3 +1,17 @@
+import type { ClientSettings } from "./types.js";
+
+export function windowsTerminalInitialization(
+  charset: ClientSettings["terminalCharset"],
+): string {
+  const codePage = charset === "gbk" ? 936 : 65001;
+  return [
+    `[Console]::InputEncoding=[System.Text.Encoding]::GetEncoding(${codePage})`,
+    `[Console]::OutputEncoding=[System.Text.Encoding]::GetEncoding(${codePage})`,
+    `$OutputEncoding=[System.Text.Encoding]::GetEncoding(${codePage})`,
+    `chcp ${codePage} > $null`,
+  ].join("; ");
+}
+
 /**
  * Agent K's Starship profile uses an Agent K-reserved indexed accent and ANSI
  * color names rather than literal RGB values. xterm can then map every prompt

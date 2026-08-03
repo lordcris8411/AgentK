@@ -69,6 +69,7 @@ export type ClientSettings = {
   cacheDirectory: string;
   localModelDirectory: string;
   piExecutable: string;
+  terminalCharset: "utf-8" | "gbk";
   workerPoolSize: 2 | 3 | 4;
   agentLoopDetectionEnabled: boolean;
   environmentPromptEnabled: boolean;

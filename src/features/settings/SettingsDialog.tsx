@@ -908,6 +908,18 @@ export function SettingsDialog({
                   />
                 </div>
                 <div className="settings-section">
+                  <label htmlFor="settings-terminal-charset">{t("terminalCharset")}</label>
+                  <p className="settings-inline-description">{t("terminalCharsetDescription")}</p>
+                  <select
+                    id="settings-terminal-charset"
+                    onChange={(event) => void update({ terminalCharset: event.target.value as "utf-8" | "gbk" })}
+                    value={settings.terminalCharset}
+                  >
+                    <option value="utf-8">{t("terminalCharsetUtf8")}</option>
+                    <option value="gbk">{t("terminalCharsetGbk")}</option>
+                  </select>
+                </div>
+                <div className="settings-section">
                   <label htmlFor="settings-cache-directory">{t("cacheDirectory")}</label>
                   <p className="settings-inline-description">{t("cacheDirectoryDescription")}</p>
                   <div className="inline-field settings-path-field">

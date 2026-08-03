@@ -26,7 +26,7 @@ export interface ProviderDraft {
 }
 
 const DEFAULT_SETTINGS: ClientSettings = {
-  version: 14,
+  version: 15,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
@@ -34,6 +34,7 @@ const DEFAULT_SETTINGS: ClientSettings = {
   cacheDirectory: "",
   localModelDirectory: "",
   piExecutable: "",
+  terminalCharset: "utf-8",
   workerPoolSize: 4,
   agentLoopDetectionEnabled: true,
   environmentPromptEnabled: false,
@@ -143,6 +144,8 @@ export function parseClientSettings(value: unknown): ClientSettings {
   ) settings.localModelDirectory = source.localModelDirectory.trim();
   if (typeof source.piExecutable === "string" && source.piExecutable.length <= 4096)
     settings.piExecutable = source.piExecutable.trim();
+  if (["utf-8", "gbk"].includes(String(source.terminalCharset)))
+    settings.terminalCharset = source.terminalCharset as ClientSettings["terminalCharset"];
   if ([2, 3, 4].includes(Number(source.workerPoolSize)))
     settings.workerPoolSize = Number(source.workerPoolSize) as 2 | 3 | 4;
   if (typeof source.agentLoopDetectionEnabled === "boolean")
@@ -203,7 +206,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.windowHeight = Number(source.windowHeight);
   if (typeof source.windowMaximized === "boolean")
     settings.windowMaximized = source.windowMaximized;
-  settings.version = Math.max(14, Number(source.version) || 14);
+  settings.version = Math.max(15, Number(source.version) || 15);
   return settings;
 }
 
@@ -227,6 +230,7 @@ export async function saveClientSettings(
     settings.cacheDirectory === original.cacheDirectory &&
     settings.localModelDirectory === original.localModelDirectory &&
     settings.piExecutable === original.piExecutable &&
+    settings.terminalCharset === original.terminalCharset &&
     settings.workerPoolSize === original.workerPoolSize &&
     settings.agentLoopDetectionEnabled === original.agentLoopDetectionEnabled &&
     settings.environmentPromptEnabled === original.environmentPromptEnabled &&
