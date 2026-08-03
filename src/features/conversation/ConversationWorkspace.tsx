@@ -26,6 +26,7 @@ import {
   latestContextTokens,
   piCompactionThreshold,
 } from "./contextUsage";
+import { mergePersistedItems } from "./historyMerge";
 import { displayUserContent } from "./messageContent";
 import { toolActivityContent } from "./toolActivity";
 import { useSettings } from "../settings/SettingsContext";
@@ -228,17 +229,6 @@ type Item = {
   localImageUrls?: string[];
   localFiles?: Array<{ kind: "document" | "text"; name: string }>;
 };
-
-function mergePersistedItems(persisted: Item[], current: Item[]): Item[] {
-  const pendingUsers = current.filter((item) =>
-    item.optimistic &&
-    item.role === "user" &&
-    !persisted.some((candidate) =>
-      candidate.role === "user" && candidate.content === item.content,
-    ),
-  );
-  return pendingUsers.length ? [...persisted, ...pendingUsers] : persisted;
-}
 
 function mergeAssistantItem(previous: Item | undefined, next: Item): Item {
   if (!previous) return next;
@@ -1626,6 +1616,7 @@ export function ConversationWorkspace({
     onError(undefined);
   };
   const [items, setItems] = useState<Item[]>([]);
+  const historySessionPathRef = useRef<string | undefined>(undefined);
   const notifiedErrorRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!error) {
@@ -1944,6 +1935,8 @@ export function ConversationWorkspace({
   }, [activeSlashIndex, slashMenuVisible]);
   useLayoutEffect(() => {
     let cancelled = false;
+    const previousHistoryPath = historySessionPathRef.current;
+    historySessionPathRef.current = session?.path;
     discardAssistantUpdate();
     streamingId.current = undefined;
     manualCompactionRef.current = false;
@@ -1958,7 +1951,11 @@ export function ConversationWorkspace({
     }
     if (initialMessages) {
       setItems((current) =>
-        mergePersistedItems(toItems(initialMessages), current),
+        mergePersistedItems(
+          toItems(initialMessages),
+          current,
+          previousHistoryPath === session.path,
+        ),
       );
       setReportedContextTokens(latestContextTokens(initialMessages));
       const path = session.path;
@@ -2011,7 +2008,11 @@ export function ConversationWorkspace({
             if (!merged.some((item) => item.toolCallId === live.toolCallId))
               merged.push(live);
           }
-          return mergePersistedItems(merged, current);
+          return mergePersistedItems(
+            merged,
+            current,
+            previousHistoryPath === session.path,
+          );
         });
       })
       .catch((cause) => {

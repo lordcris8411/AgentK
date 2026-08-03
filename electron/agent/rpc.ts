@@ -49,6 +49,13 @@ function piEnvironment(
   };
 }
 
+export function piSpawnUsesShell(
+  executable: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === "win32" && /\.(?:cmd|bat)$/i.test(executable.trim());
+}
+
 type PendingRequest = {
   resolve(value: JsonObject): void;
   reject(error: Error): void;
@@ -323,7 +330,7 @@ export class RpcBridge {
           AGENT_K_SETTINGS_PATH: join(options.appDataPath, "client-settings.json"),
           AGENT_K_ENVIRONMENT_PROMPT: environmentPrompt,
         },
-        shell: process.platform === "win32",
+        shell: piSpawnUsesShell(options.launch.executable),
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
@@ -666,7 +673,7 @@ async function generateSessionName(
       {
         cwd,
         env: piEnvironment(options.launch.environment),
-        shell: process.platform === "win32",
+        shell: piSpawnUsesShell(options.launch.executable),
         stdio: ["ignore", "pipe", "ignore"],
         windowsHide: true,
       },

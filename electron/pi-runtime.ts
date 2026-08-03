@@ -7,14 +7,38 @@ export type PiLaunch = {
   environment?: NodeJS.ProcessEnv;
 };
 
+export function selectPiCommandCandidate(
+  candidates: string[],
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  const available = candidates.map((candidate) => candidate.trim()).filter(Boolean);
+  if (platform !== "win32") return available[0];
+  for (const extension of [".exe", ".cmd", ".bat"]) {
+    const candidate = available.find((path) => path.toLocaleLowerCase("en-US").endsWith(extension));
+    if (candidate) return candidate;
+  }
+  for (const candidate of available) {
+    for (const extension of [".exe", ".cmd", ".bat"]) {
+      const wrapper = `${candidate}${extension}`;
+      if (existsSync(wrapper)) return wrapper;
+    }
+  }
+  return available[0];
+}
+
 function commandOnPath(command: string): string | undefined {
   const locator = process.platform === "win32" ? "where.exe" : "which";
   const result = spawnSync(locator, [command], { encoding: "utf8", windowsHide: true });
-  return result.status === 0 ? result.stdout.split(/\r?\n/)[0]?.trim() : undefined;
+  return result.status === 0
+    ? selectPiCommandCandidate(result.stdout.split(/\r?\n/))
+    : undefined;
 }
 
 function externalPi(executable: string): PiLaunch {
-  return { executable, args: [] };
+  return {
+    executable: selectPiCommandCandidate([executable]) ?? executable,
+    args: [],
+  };
 }
 
 export function resolvePiLaunch(configuredExecutable: string, bundledCli: string): PiLaunch {

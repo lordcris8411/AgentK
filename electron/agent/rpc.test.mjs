@@ -3,7 +3,8 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { RpcPool } from "../../.electron-dist/agent/pool.js";
-import { buildEnvironmentSystemPrompt, RpcBridge } from "../../.electron-dist/agent/rpc.js";
+import { buildEnvironmentSystemPrompt, piSpawnUsesShell, RpcBridge } from "../../.electron-dist/agent/rpc.js";
+import { selectPiCommandCandidate } from "../../.electron-dist/pi-runtime.js";
 
 function bridgeFixture() {
   const child = new EventEmitter();
@@ -47,6 +48,28 @@ test("environment prompt identifies the Windows host and its Bash boundary", () 
   assert.match(prompt, /Git Bash/);
   assert.match(prompt, /do not assume Linux package managers/);
   assert.doesNotMatch(prompt, /Current system local time/);
+});
+
+test("Windows launches executable Pi runtimes directly and uses a shell only for command wrappers", () => {
+  assert.equal(piSpawnUsesShell("C:\\Program Files\\Agent K\\Agent-K.exe", "win32"), false);
+  assert.equal(piSpawnUsesShell("C:\\Users\\example\\AppData\\Roaming\\npm\\pi.cmd", "win32"), true);
+  assert.equal(piSpawnUsesShell("C:\\tools\\pi.bat", "win32"), true);
+  assert.equal(piSpawnUsesShell("/usr/local/bin/pi", "linux"), false);
+});
+
+test("Windows selects an executable npm Pi wrapper instead of its POSIX shim", () => {
+  assert.equal(
+    selectPiCommandCandidate([
+      "C:\\workspace\\node_modules\\.bin\\pi",
+      "C:\\workspace\\node_modules\\.bin\\pi.cmd",
+      "C:\\workspace\\node_modules\\.bin\\pi.ps1",
+    ], "win32"),
+    "C:\\workspace\\node_modules\\.bin\\pi.cmd",
+  );
+  assert.equal(
+    selectPiCommandCandidate(["/usr/local/bin/pi", "/opt/pi"], "linux"),
+    "/usr/local/bin/pi",
+  );
 });
 
 function respondWithState(child, state) {
@@ -221,5 +244,47 @@ test("new sessions preserve the model shown by their prepared runtime", async ()
     { type: "get_state" },
   ]);
   assert.deepEqual(state.model, { provider: "local", id: "qwen3.6-27b" });
+  pool.shutdown();
+});
+
+test("new sessions do not restore Pi's unconfigured placeholder model", async () => {
+  const pool = new RpcPool({
+    appDataPath: "/tmp/agent-k-rpc-test",
+    bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
+    bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
+    firstPartyEditorExtensions: [],
+    firstPartyLanguageServerSkills: [],
+    launch: { executable: "pi", args: [] },
+    minimum: 2,
+    permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
+    emit() {},
+  });
+  const commands = [];
+  const fakeBridge = {
+    isClosed: () => false,
+    request: async (value) => {
+      commands.push(value);
+      return value.type === "get_state"
+        ? {
+            success: true,
+            data: {
+              model: { provider: "unknown", id: "unknown" },
+              sessionId: "session-unconfigured",
+            },
+          }
+        : { success: true, data: {} };
+    },
+    stop() {},
+  };
+  pool.workers.set("runtime-test", fakeBridge);
+
+  const state = await pool.createSession("runtime-test");
+
+  assert.deepEqual(commands, [
+    { type: "get_state" },
+    { type: "new_session" },
+    { type: "get_state" },
+  ]);
+  assert.equal(state.sessionId, "session-unconfigured");
   pool.shutdown();
 });

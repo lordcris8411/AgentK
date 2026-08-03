@@ -5,6 +5,7 @@ import { basename, isAbsolute, join } from "node:path";
 import { shell } from "electron";
 import type { PiLaunch } from "./pi-runtime.js";
 import type { ClientSettings, JsonObject } from "./types.js";
+import { discoveredModels, type ProviderModelDraft } from "./model-discovery.js";
 import {
   asArray,
   asObject,
@@ -21,9 +22,11 @@ export interface ProviderDraft {
   baseUrl: string;
   api: string;
   apiKey: string;
-  models: string[];
+  models: ProviderModelDraft[];
   local: boolean;
 }
+
+export type { ProviderModelDraft } from "./model-discovery.js";
 
 const DEFAULT_SETTINGS: ClientSettings = {
   version: 15,
@@ -360,8 +363,18 @@ export async function saveModelProvider(provider: ProviderDraft): Promise<void> 
   if (!validProviderId(id))
     throw new Error("Provider ID may contain only letters, numbers, - and _");
   new URL(provider.baseUrl);
-  if (!provider.models.length || provider.models.some((model) => !model.trim()))
+  if (!provider.models.length || provider.models.some((model) => !model.id.trim()))
     throw new Error("At least one model ID is required");
+  const models = provider.models.map((model) => {
+    const contextWindow = Number(model.contextWindow);
+    if (model.contextWindow !== undefined && (!Number.isInteger(contextWindow) || contextWindow <= 0))
+      throw new Error("Model context window must be a positive integer");
+    return {
+      id: model.id.trim(),
+      name: model.name?.trim() || model.id.trim(),
+      ...(model.contextWindow === undefined ? {} : { contextWindow }),
+    };
+  });
   const directory = piAgentDirectory();
   await mkdir(directory, { recursive: true });
   const path = join(directory, "models.json");
@@ -371,7 +384,7 @@ export async function saveModelProvider(provider: ProviderDraft): Promise<void> 
     name: provider.name.trim() || id,
     baseUrl: provider.baseUrl.trim(),
     api: provider.api,
-    models: provider.models.map((model) => ({ id: model.trim(), name: model.trim() })),
+    models,
     ...(provider.local
       ? { apiKey: provider.id === "ollama" ? "ollama" : "local" }
       : {}),
@@ -731,7 +744,7 @@ export async function detectLocalService(baseUrl: string): Promise<JsonObject> {
   return { kind: "openai-compatible", displayName: "OpenAI-compatible" };
 }
 
-export async function discoverLocalModels(baseUrl: string, ollama: boolean): Promise<string[]> {
+export async function discoverLocalModels(baseUrl: string, ollama: boolean): Promise<ProviderModelDraft[]> {
   const base = new URL(baseUrl);
   if (!['http:', 'https:'].includes(base.protocol))
     throw new Error("Only HTTP(S) model services are supported");
@@ -739,10 +752,9 @@ export async function discoverLocalModels(baseUrl: string, ollama: boolean): Pro
   const modelsUrl = new URL(base.pathname.replace(/\/$/, "").endsWith("/v1") ? "models" : "v1/models", base);
   try {
     const body = asObject(await fetchJson(modelsUrl, 8_000));
-    const models = asArray(body.data)
-      .map((item) => asString(asObject(item).id))
-      .filter((item): item is string => Boolean(item));
-    if (models.length) return [...new Set(models)].sort();
+    const models = discoveredModels(body);
+    if (models.length) return [...new Map(models.map((model) => [model.id, model])).values()]
+      .sort((left, right) => left.id.localeCompare(right.id));
   } catch {
     // Ollama has a separate model-list endpoint.
   }
@@ -750,7 +762,8 @@ export async function discoverLocalModels(baseUrl: string, ollama: boolean): Pro
   const body = asObject(await fetchJson(new URL("/api/tags", base), 8_000));
   return [...new Set(asArray(body.models)
     .map((item) => asString(asObject(item).name))
-    .filter((item): item is string => Boolean(item)))].sort();
+    .filter((item): item is string => Boolean(item)))].sort()
+    .map((id) => ({ id }));
 }
 
 export function openProviderLogin(providerId: string, launch: PiLaunch): void {

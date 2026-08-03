@@ -154,6 +154,7 @@ export function SettingsDialog({
     local: false,
   });
   const [manualModel, setManualModel] = useState("");
+  const [manualContextWindow, setManualContextWindow] = useState("");
   const [pendingDelete, setPendingDelete] = useState<ProviderCatalogItem>();
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(
     () => new Set(),
@@ -248,7 +249,10 @@ export function SettingsDialog({
         apiKey: service.kind === "ollama" ? "ollama" : current.apiKey || "local",
         models: found,
       }));
-      if (found[0]) setManualModel(found[0]);
+      if (found[0]) {
+        setManualModel(found[0].id);
+        setManualContextWindow(found[0].contextWindow?.toString() ?? "");
+      }
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -635,20 +639,26 @@ export function SettingsDialog({
     }
   };
   const saveDraft = async () => {
-    const ids = [...draft.models, manualModel.trim()].filter(Boolean);
-    if (!draft.id.trim() || !draft.baseUrl.trim() || ids.length === 0) {
+    const models = new Map(draft.models.map((model) => [model.id, model]));
+    const contextWindow = manualContextWindow.trim() ? Number(manualContextWindow) : undefined;
+    if (manualModel.trim()) models.set(manualModel.trim(), {
+      id: manualModel.trim(),
+      ...(contextWindow === undefined ? {} : { contextWindow }),
+    });
+    if (!draft.id.trim() || !draft.baseUrl.trim() || models.size === 0) {
       setError("Provider ID、Base URL 和至少一个模型 ID 为必填项");
       return;
     }
     setBusy(true);
     try {
-      await desktop.saveProvider({ ...draft, models: [...new Set(ids)] });
+      await desktop.saveProvider({ ...draft, models: [...models.values()] });
       if (draft.apiKey) {
         await desktop.saveProviderApiKey(draft.id, draft.apiKey);
       }
       await reloadModelConfiguration();
       setEditor(undefined);
       setManualModel("");
+      setManualContextWindow("");
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -1299,7 +1309,7 @@ export function SettingsDialog({
                   <label>{t("defaultModel")}<select value={settings.defaultModel} onChange={(event) => void update({ defaultModel: event.target.value })}><option value="">—</option>{enabledModels.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name ?? model.id} · {model.provider === "ollama" ? "Ollama" : model.provider === "vllm" ? "vLLM" : model.provider}</option>)}</select></label>
                 </div>
                 <LocalModelsSettings />
-                {providers.length > 0 && <div className="provider-actions"><button onClick={() => { setDraft({ id: "", name: "", baseUrl: "https://", api: "openai-completions", apiKey: "", models: [], local: false }); setEditor("provider"); }} type="button"><i className="fa-solid fa-plus" /> {t("providerAdd")}</button><button onClick={() => { setDraft({ id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKey: "ollama", models: [], local: true }); setEditor("local"); }} type="button"><i className="fa-solid fa-desktop" /> {t("localAdd")}</button></div>}
+                {providers.length > 0 && <div className="provider-actions"><button onClick={() => { setDraft({ id: "", name: "", baseUrl: "https://", api: "openai-completions", apiKey: "", models: [], local: false }); setManualModel(""); setManualContextWindow(""); setEditor("provider"); }} type="button"><i className="fa-solid fa-plus" /> {t("providerAdd")}</button><button onClick={() => { setDraft({ id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKey: "ollama", models: [], local: true }); setManualModel(""); setManualContextWindow(""); setEditor("local"); }} type="button"><i className="fa-solid fa-desktop" /> {t("localAdd")}</button></div>}
                 {[...grouped.custom, ...grouped.builtIn].map((provider) => {
                   const providerEnabled = !settings.disabledModelProviders.includes(provider.id);
                   const expanded = expandedProviders.has(provider.id);
@@ -1324,7 +1334,7 @@ export function SettingsDialog({
                             <i className={`fa-solid fa-chevron-${expanded ? "up" : "down"}`} />
                           </button>
                         )}
-                        {provider.source === "custom" && <button aria-label="Edit" onClick={() => { setDraft({ id: provider.id, name: providerDisplayName(provider), baseUrl: provider.baseUrl ?? "", api: provider.api ?? "openai-completions", apiKey: "", models: provider.models.map((model) => model.id), local: provider.baseUrl?.includes("localhost") ?? false }); setManualModel(provider.models[0]?.id ?? ""); setEditor("provider"); }} type="button"><i className="fa-regular fa-pen-to-square" /></button>}
+                        {provider.source === "custom" && <button aria-label="Edit" onClick={() => { setDraft({ id: provider.id, name: providerDisplayName(provider), baseUrl: provider.baseUrl ?? "", api: provider.api ?? "openai-completions", apiKey: "", models: provider.models, local: provider.baseUrl?.includes("localhost") ?? false }); setManualModel(provider.models[0]?.id ?? ""); setManualContextWindow(provider.models[0]?.contextWindow?.toString() ?? ""); setEditor("provider"); }} type="button"><i className="fa-regular fa-pen-to-square" /></button>}
                         {provider.authMethods.includes("api_key") && <button disabled={busy} onClick={() => void authenticate(provider, "api_key")} type="button">{t("apiKey")}</button>}
                         {provider.authMethods.includes("oauth") && <button disabled={busy} onClick={() => void authenticate(provider, "oauth")} type="button">{t("oauth")}</button>}
                         {provider.configured && <button disabled={busy} onClick={() => void logout(provider)} type="button">{t("logout")}</button>}
@@ -1377,7 +1387,7 @@ export function SettingsDialog({
             )}
           </main>
         </div>
-        {editor && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{editor === "local" ? t("localAdd") : t("providerAdd")}</h3><label>{t("providerId")}<input value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} /></label><label>{t("displayName")}<input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label><label>{t("baseUrl")}<input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} /></label><label>{t("apiProtocol")}<select value={draft.api} onChange={(e) => setDraft({ ...draft, api: e.target.value })}><option value="openai-completions">OpenAI Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option></select></label><label>{t("apiKey")}<input autoComplete="off" type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} /></label><label>{t("modelId")}<div className="inline-field"><input value={manualModel} onChange={(e) => setManualModel(e.target.value)} /><button disabled={!draft.baseUrl || busy} onClick={() => void discoverLocal()} type="button">{t("discover")}</button></div></label>{draft.models.length > 0 && <div className="discovered-models">{draft.models.map((id) => <button key={id} onClick={() => setManualModel(id)} type="button">{id}</button>)}</div>}<footer><button onClick={() => setEditor(undefined)} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy} onClick={() => void saveDraft()} type="button">{t("save")}</button></footer></div></div>}
+        {editor && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{editor === "local" ? t("localAdd") : t("providerAdd")}</h3><label>{t("providerId")}<input value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} /></label><label>{t("displayName")}<input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label><label>{t("baseUrl")}<input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} /></label><label>{t("apiProtocol")}<select value={draft.api} onChange={(e) => setDraft({ ...draft, api: e.target.value })}><option value="openai-completions">OpenAI Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option></select></label><label>{t("apiKey")}<input autoComplete="off" type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} /></label><label>{t("modelId")}<div className="inline-field"><input value={manualModel} onChange={(e) => setManualModel(e.target.value)} /><button disabled={!draft.baseUrl || busy} onClick={() => void discoverLocal()} type="button">{t("discover")}</button></div></label><label>{t("contextWindow")}<input min="1" onChange={(e) => setManualContextWindow(e.target.value)} placeholder="e.g. 524288" step="1" type="number" value={manualContextWindow} /><small>{t("contextWindowDetected")}</small></label>{draft.models.length > 0 && <div className="discovered-models">{draft.models.map((model) => <button key={model.id} onClick={() => { setManualModel(model.id); setManualContextWindow(model.contextWindow?.toString() ?? ""); }} type="button">{model.id}{model.contextWindow ? ` · ${(model.contextWindow / 1024).toLocaleString()}K` : ""}</button>)}</div>}<footer><button onClick={() => setEditor(undefined)} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy} onClick={() => void saveDraft()} type="button">{t("save")}</button></footer></div></div>}
         {authTarget && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{providerDisplayName(authTarget)} · {t("apiKey")}</h3><label>{t("apiKey")}<input autoComplete="off" autoFocus type="password" value={authKey} onChange={(event) => setAuthKey(event.target.value)} /></label><footer><button onClick={() => { setAuthTarget(undefined); setAuthKey(""); }} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy || !authKey.trim()} onClick={() => void saveAuthKey()} type="button">{t("save")}</button></footer></div></div>}
         {pendingDelete && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{t("delete")} {pendingDelete.name}?</h3><p className="settings-description">{pendingDelete.id} will be removed from models.json.</p><footer><button onClick={() => setPendingDelete(undefined)} type="button">{t("cancel")}</button><button className="danger-button" disabled={busy} onClick={() => void deleteProvider(pendingDelete)} type="button">{t("delete")}</button></footer></div></div>}
         {selectedSkill && <div className="settings-subdialog"><div className="settings-subdialog-card skill-details"><h3>{t("skillDetails")}</h3><dl><div><dt>{t("displayName")}</dt><dd>{selectedSkill.name}</dd></div><div><dt>{t("skillDescriptionLabel")}</dt><dd>{selectedSkill.description || t("noSkillDescription")}</dd></div><div><dt>{t("skillScopeLabel")}</dt><dd>{selectedSkill.scope === "project" ? t("projectScope") : t("userScope")}</dd></div><div><dt>{t("skillPathLabel")}</dt><dd>{selectedSkill.path}</dd></div></dl><footer><button className="primary-button" onClick={() => setSelectedSkill(undefined)} type="button">{t("close")}</button></footer></div></div>}

@@ -275,7 +275,12 @@ export class RpcPool {
     const provider = asString(previousModel.provider);
     const modelId = asString(previousModel.id);
     await this.requestData(bridge, { type: "new_session" });
-    if (provider && modelId) {
+    if (
+      provider &&
+      modelId &&
+      provider !== "unknown" &&
+      modelId !== "unknown"
+    ) {
       await this.requestData(bridge, {
         type: "set_model",
         provider,
