@@ -7,7 +7,7 @@ const source = () => readFile(
   "utf8",
 );
 
-test("provider settings discard stale pre-login catalog state", async () => {
+test("provider settings reload the runtime before reading the provider catalog", async () => {
   const settings = await source();
   assert.match(
     settings,
@@ -15,7 +15,7 @@ test("provider settings discard stale pre-login catalog state", async () => {
   );
   assert.match(
     settings,
-    /const reloadModelConfiguration = async \(\) => \{\s*[^}]*await refresh\(true\);\s*await desktop\.reloadPiRuntimes\(\)/,
+    /const reloadModelConfiguration = async \(\) => \{\s*await desktop\.reloadPiRuntimes\(\);[\s\S]*?await refresh\(true\);/,
   );
 });
 

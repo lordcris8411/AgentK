@@ -1,6 +1,6 @@
 {
   "name": "agent-k",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Standalone Electron desktop client for the Pi coding agent",
   "author": "AgentK contributors",
   "desktopName": "agent-k.desktop",
