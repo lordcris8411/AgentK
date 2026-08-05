@@ -14,12 +14,13 @@
     "clean": "shx rm -rf dist .electron-dist",
     "dev": "npm run prepare:native && node script/electron-dev.mjs",
     "dev:web": "vite",
-    "build": "npm run build:language-servers && npm run build:desktop && npm run build:web",
+    "build": "npm run prepare:native && npm run build:language-servers && npm run build:desktop && npm run build:web",
     "build:web": "tsc -b && npm run build:editors && vite build",
     "build:editors": "node script/build-editor-extensions.mjs",
     "build:desktop": "tsc -p tsconfig.electron.json",
     "build:language-servers": "node script/build-language-server-plugins.mjs",
     "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:windows": "npm run build && electron-builder --win",
     "check": "npm run check:web && npm run check:desktop && npm run check:language-servers && npm run check:editors && npm run check:k-plan",
@@ -81,6 +82,7 @@
     "appId": "com.lordcris8411.agentk",
     "productName": "Agent K",
     "beforePack": "./script/prepare-pi-runtime.mjs",
+    "afterPack": "./script/verify-packaged-runtime.mjs",
     "asar": true,
     "npmRebuild": false,
     "directories": {
@@ -112,8 +114,8 @@
         "to": "language-servers"
       },
       {
-        "from": ".pi-runtime",
-        "to": "pi-runtime"
+        "from": ".pi-runtime/packages",
+        "to": "pi-runtime/node_modules"
       },
       {
         "from": "skills",
@@ -132,6 +134,15 @@
       "category": "Development",
       "icon": "assets/icons/icon.png",
       "syncDesktopName": true
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "Agent-K-${version}-mac-${arch}.${ext}",
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icons/icon.icns"
     },
     "win": {
       "target": [

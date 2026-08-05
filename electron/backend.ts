@@ -72,6 +72,7 @@ export interface DesktopBackendOptions {
   bundledSkillsSource: string;
   bundledThemesSource: string;
   bundledPiCli: string;
+  bundledPiNode: string;
   cachePath: string;
   localModelRoot?: string;
   permissionExtensionSource: string;
@@ -157,7 +158,11 @@ export class DesktopBackend {
     this.firstPartyEditorPlugins = await loadFirstPartyFileFormatPlugins(
       this.options.firstPartyEditorExtensionsSource,
     );
-    this.piLaunch = resolvePiLaunch(settings.piExecutable, this.options.bundledPiCli);
+    this.piLaunch = resolvePiLaunch(
+      settings.piExecutable,
+      this.options.bundledPiCli,
+      this.options.bundledPiNode,
+    );
     this.startSettingsWatch();
     await this.startThemeWatch();
     let loadingStartupLocalModel = false;
@@ -373,7 +378,11 @@ export class DesktopBackend {
       case "delete_model_provider":
         return deleteModelProvider(requiredString(args.providerId, "providerId"));
       case "get_provider_catalog":
-        return providerCatalog(await pool.command({ type: "get_available_models" }, optionalString(args.runtimeId)));
+        return providerCatalog(await pool.commandConnected(
+          { type: "get_available_models" },
+          homedir(),
+          optionalString(args.runtimeId),
+        ));
       case "save_provider_api_key":
         return saveProviderApiKey(requiredString(args.providerId, "providerId"), requiredString(args.apiKey, "apiKey"));
       case "logout_provider":

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -193,7 +193,7 @@ test("serves versioned Editor dependencies through cached internal URLs", async 
         "asset",
         "worker-abc.js",
       ),
-      join(assets, "worker-abc.js"),
+      await realpath(join(assets, "worker-abc.js")),
     );
     await assert.rejects(
       editorPluginDependencyFilePath(

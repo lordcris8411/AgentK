@@ -13,7 +13,10 @@ async function packageManifest(path) {
 async function copyPiRuntime(projectDir) {
   const sourceNodeModules = join(projectDir, "node_modules");
   const runtimeRoot = join(projectDir, ".pi-runtime");
-  const runtimeNodeModules = join(runtimeRoot, "node_modules");
+  // electron-builder always filters a root directory named node_modules from
+  // extraResources. Stage the same package tree under a neutral name and map
+  // it back to node_modules in the packaged application.
+  const runtimeNodeModules = join(runtimeRoot, "packages");
   const pending = ["@earendil-works/pi-coding-agent"];
   const copied = new Set();
 

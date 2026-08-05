@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { fork } from "node:child_process";
-import { copyFile, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { fork, spawnSync } from "node:child_process";
+import { constants } from "node:fs";
+import { access, copyFile, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { builtinModules } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -60,6 +61,36 @@ test("Electron main-process packages are shipped as production dependencies", as
       `${dependency} is imported by the Electron main process but is not a production dependency`,
     );
   }
+});
+
+test("desktop distribution targets include Windows, Linux, and macOS", async () => {
+  const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  assert.equal(manifest.scripts?.["dist:mac"], "npm run build && electron-builder --mac");
+  assert.equal(manifest.scripts?.["dist:linux"], "npm run build && electron-builder --linux");
+  assert.equal(manifest.scripts?.["dist:windows"], "npm run build && electron-builder --win");
+  assert.deepEqual(manifest.build?.mac?.target, ["dmg", "zip"]);
+  assert.equal(manifest.build?.mac?.icon, "assets/icons/icon.icns");
+  assert.equal(manifest.build?.beforePack, "./script/prepare-pi-runtime.mjs");
+  assert.equal(manifest.build?.afterPack, "./script/verify-packaged-runtime.mjs");
+  assert.ok(manifest.build?.extraResources?.some((entry) => entry.from === ".pi-runtime/packages" && entry.to === "pi-runtime/node_modules"));
+  assert.deepEqual(manifest.build?.linux?.target, ["AppImage"]);
+  assert.deepEqual(manifest.build?.win?.target, ["portable"]);
+});
+
+test("native preparation makes the node-pty spawn helper executable", async (context) => {
+  if (process.platform === "win32") {
+    context.skip("node-pty uses a different launcher on Windows");
+    return;
+  }
+  const prepared = spawnSync(process.execPath, [join(root, "script", "prepare-native.mjs")], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  assert.equal(prepared.status, 0, prepared.stderr);
+  await access(
+    join(root, "node_modules", "node-pty", "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper"),
+    constants.X_OK,
+  );
 });
 
 test("bundled language workers do not depend on host node_modules", async () => {

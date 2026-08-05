@@ -1,10 +1,25 @@
 import { spawnSync } from "node:child_process";
+import { chmod, readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 
 const root = join(import.meta.dirname, "..");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const npmCli = process.env.npm_execpath;
+
+async function makeSpawnHelpersExecutable() {
+  if (process.platform === "win32") return;
+  const prebuilds = join(root, "node_modules", "node-pty", "prebuilds");
+  if (!existsSync(prebuilds)) return;
+  for (const entry of await readdir(prebuilds, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const helper = join(prebuilds, entry.name, "spawn-helper");
+    if (existsSync(helper)) await chmod(helper, 0o755);
+  }
+}
+
+await makeSpawnHelpersExecutable();
 
 function canLoadNodePty() {
   return spawnSync(process.execPath, ["-e", "require('node-pty')"], {

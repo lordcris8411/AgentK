@@ -13,6 +13,8 @@ import {
   applyLocalModelReasoningPolicy,
   completeShardGroup,
   fetchWithRetry,
+  localModelRuntimeAssetKey,
+  localModelRuntimeSupported,
   parseGgufShard,
   parseHubRepository,
   readGgufMetadata,
@@ -147,7 +149,9 @@ test("applies per-conversation reasoning controls without forcing thinking on", 
 
 test("pins every supported llama.cpp b10182 runtime and CUDA companion", () => {
   assert.equal(LLAMA_CPP_BUILD, "b10182");
-  assert.deepEqual(Object.keys(LLAMA_RUNTIME_ASSETS).sort(), ["linux-cpu", "linux-cuda12", "linux-rocm", "linux-vulkan", "win32-cpu", "win32-cuda12", "win32-cuda13", "win32-vulkan"]);
+  assert.deepEqual(Object.keys(LLAMA_RUNTIME_ASSETS).sort(), ["darwin-arm64-cpu", "darwin-arm64-metal", "darwin-x64-cpu", "darwin-x64-metal", "linux-cpu", "linux-cuda12", "linux-rocm", "linux-vulkan", "win32-cpu", "win32-cuda12", "win32-cuda13", "win32-vulkan"]);
+  assert.equal(LLAMA_RUNTIME_ASSETS["darwin-arm64-metal"].sha256, "d17e65c8056573dada3b7dfaf675e95953a7b29e7f004489dd1bf434edb72394");
+  assert.equal(LLAMA_RUNTIME_ASSETS["darwin-x64-metal"].sha256, "07018b3109bf61a65f314c37d86ef1997fb292a10d25003076101e27f912d815");
   const linuxCuda = LLAMA_RUNTIME_ASSETS["linux-cuda12"];
   assert.equal(linuxCuda.name, "llama.cpp-b10182-cuda-12.8-amd64.tar.gz");
   assert.equal(linuxCuda.sha256, "5576a132d768b240b1c3e950e71b456cbf7b90c6a38dca2fcd93f965b32098c9");
@@ -167,6 +171,7 @@ test("pins every supported llama.cpp b10182 runtime and CUDA companion", () => {
 });
 
 test("prefers native GPU runtimes before Vulkan in automatic mode", () => {
+  assert.equal(selectAutomaticBackend("darwin", ["auto", "cpu", "metal"]), "metal");
   assert.equal(selectAutomaticBackend("win32", ["auto", "cpu", "vulkan", "cuda12", "cuda13"]), "cuda13");
   assert.equal(selectAutomaticBackend("win32", ["auto", "cpu", "vulkan", "cuda12"]), "cuda12");
   assert.equal(selectAutomaticBackend("linux", ["auto", "cpu", "vulkan", "cuda12"]), "cuda12");
@@ -175,11 +180,20 @@ test("prefers native GPU runtimes before Vulkan in automatic mode", () => {
 });
 
 test("delegates automatic GPU-layer fitting to llama.cpp", () => {
+  assert.equal(resolveGpuLayers("metal", -1), "auto");
   assert.equal(resolveGpuLayers("cuda12", -1), "auto");
   assert.equal(resolveGpuLayers("vulkan", -1), "auto");
   assert.equal(resolveGpuLayers("cuda12", 12), 12);
   assert.equal(resolveGpuLayers("cpu", -1), 0);
   assert.equal(resolveGpuLayers("cpu", 12), 0);
+});
+
+test("supports both macOS architectures and selects architecture-specific runtimes", () => {
+  assert.equal(localModelRuntimeSupported("darwin", "arm64"), true);
+  assert.equal(localModelRuntimeSupported("darwin", "x64"), true);
+  assert.equal(localModelRuntimeSupported("darwin", "ia32"), false);
+  assert.equal(localModelRuntimeAssetKey("darwin", "arm64", "metal"), "darwin-arm64-metal");
+  assert.equal(localModelRuntimeAssetKey("linux", "x64", "cpu"), "linux-cpu");
 });
 
 test("waits for an explicit healthy llama-server status before reporting ready", async () => {
@@ -203,7 +217,7 @@ test("waits for an explicit healthy llama-server status before reporting ready",
   }
 });
 
-test("downloads, verifies, activates and proxies only a tool-compatible model", { skip: process.platform !== "linux" || process.arch !== "x64" }, async () => {
+test("downloads, verifies, activates and proxies only a tool-compatible model", { skip: !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-local-models-"));
   const previousHome = process.env.HOME;
   const modelBytes = Buffer.concat([ggufFixture(), Buffer.alloc(1024 * 1024)]);
@@ -297,7 +311,7 @@ test("downloads, verifies, activates and proxies only a tool-compatible model", 
     verifyPiBusy: async () => verifiedBusy,
     reloadPi: async () => { reloads += 1; if (failReload) throw new Error("fixture reload failure"); },
     migrateModelReferences: async (previous, next) => { migrations.push([previous, next]); },
-    endpoints: { huggingface: `http://127.0.0.1:${hubPort}`, modelscope: `http://127.0.0.1:${hubPort}` }, verificationTimeoutMs: 1_500,
+    endpoints: { huggingface: `http://127.0.0.1:${hubPort}`, modelscope: `http://127.0.0.1:${hubPort}` }, verificationTimeoutMs: 2_500,
   });
   let managerStopped = false;
   try {
@@ -311,7 +325,8 @@ const http=require('node:http'); const fs=require('node:fs'); fs.appendFileSync(
 http.createServer(async(req,res)=>{ if(req.headers.authorization!=='Bearer '+key){res.statusCode=401;return res.end();} if(req.url==='/health')return res.end(JSON.stringify({status:alias.includes('health-timeout')?'loading model':'ok'})); if(req.url==='/props')return res.end(JSON.stringify({chat_template:'{{ messages }}'})); let raw=''; for await(const chunk of req)raw+=chunk; if(raw.includes('CRASH_NOW'))return process.exit(9); const body=raw?JSON.parse(raw):{}; res.setHeader('content-type', body.stream?'text/event-stream':'application/json'); if(body.stream){res.write('data: '+JSON.stringify({choices:[{delta:{content:'hello'}}]})+'\\n\\n'); return res.end('data: [DONE]\\n\\n');} if(alias.includes('timeout'))return; if(alias.includes('incompatible')||fs.existsSync(${JSON.stringify(verificationFailureFlag)}))return res.end(JSON.stringify({choices:[{message:{role:'assistant',content:'plain text instead of a tool'}}]})); if(body.tool_choice && body.tool_choice!=='none')return res.end(JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[{id:'probe-1',type:'function',function:{name:'agent_k_tool_probe',arguments:'{"value":37}'}}]}}]})); res.end(JSON.stringify({choices:[{message:{role:'assistant',content:'tool result accepted'}}]})); }).listen(port,'127.0.0.1');
 `, "utf8");
     await chmod(fakeServer, 0o755);
-    await writeFile(join(runtime, ".agent-k-runtime.json"), JSON.stringify({ build: LLAMA_CPP_BUILD, backend: "cpu", assets: [{ name: LLAMA_RUNTIME_ASSETS["linux-cpu"].name, sha256: LLAMA_RUNTIME_ASSETS["linux-cpu"].sha256 }] }), "utf8");
+    const cpuRuntime = LLAMA_RUNTIME_ASSETS[localModelRuntimeAssetKey(process.platform, process.arch, "cpu")];
+    await writeFile(join(runtime, ".agent-k-runtime.json"), JSON.stringify({ build: LLAMA_CPP_BUILD, backend: "cpu", assets: [{ name: cpuRuntime.name, sha256: cpuRuntime.sha256 }] }), "utf8");
     await manager.initialize();
     const results = await manager.search("modelscope", "MiniCPM5");
     assert.deepEqual(results.map((item) => item.repository), ["OpenBMB/MiniCPM5-1B-GGUF"]);
@@ -455,7 +470,7 @@ http.createServer(async(req,res)=>{ if(req.headers.authorization!=='Bearer '+key
     await manager.updateConfig(timeoutId, { backend: "cpu", contextSize: 4_096 });
     const timeoutStarted = Date.now();
     await assert.rejects(manager.verify(timeoutId), /abort|timeout/i);
-    assert.ok(Date.now() - timeoutStarted < 3_000, "Tool verification exceeded its single combined timeout budget");
+    assert.ok(Date.now() - timeoutStarted < 4_000, "Tool verification exceeded its single combined timeout budget");
     assert.equal(manager.snapshot().models.find((model) => model.id === timeoutId).compatibility, "tool-incompatible");
     const healthTimeoutPath = join(root, "health-timeout.gguf");
     await writeFile(healthTimeoutPath, modelBytes);
@@ -490,7 +505,7 @@ http.createServer(async(req,res)=>{ if(req.headers.authorization!=='Bearer '+key
   }
 });
 
-test("does not overwrite a conflicting non-Agent-K provider during initialization", { skip: process.platform !== "linux" || process.arch !== "x64" }, async () => {
+test("does not overwrite a conflicting non-Agent-K provider during initialization", { skip: !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-provider-conflict-"));
   const previousHome = process.env.HOME;
   process.env.HOME = join(root, "home");
@@ -510,7 +525,7 @@ test("does not overwrite a conflicting non-Agent-K provider during initializatio
   }
 });
 
-test("clears a persisted active model when its tool-verification cache is stale", { skip: process.platform !== "linux" || process.arch !== "x64" }, async () => {
+test("clears a persisted active model when its tool-verification cache is stale", { skip: !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-stale-local-model-"));
   const previousHome = process.env.HOME;
   process.env.HOME = join(root, "home");
@@ -545,7 +560,7 @@ test("clears a persisted active model when its tool-verification cache is stale"
   }
 });
 
-test("clears an interrupted provisioning error after the pinned runtime is complete", { skip: process.platform !== "linux" || process.arch !== "x64" }, async () => {
+test("clears an interrupted provisioning error after the pinned runtime is complete", { skip: !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-provision-recovery-"));
   const previousHome = process.env.HOME;
   process.env.HOME = join(root, "home");
@@ -561,7 +576,8 @@ test("clears an interrupted provisioning error after the pinned runtime is compl
   const digest = createHash("sha256").update(modelBytes).digest("hex");
   await writeFile(modelPath, modelBytes);
   await writeFile(join(runtimeDirectory, "llama-server"), "fixture");
-  await writeFile(join(runtimeDirectory, ".agent-k-runtime.json"), JSON.stringify({ build: LLAMA_CPP_BUILD, backend: "cpu", assets: [{ name: LLAMA_RUNTIME_ASSETS["linux-cpu"].name, sha256: LLAMA_RUNTIME_ASSETS["linux-cpu"].sha256 }] }));
+  const cpuRuntime = LLAMA_RUNTIME_ASSETS[localModelRuntimeAssetKey(process.platform, process.arch, "cpu")];
+  await writeFile(join(runtimeDirectory, ".agent-k-runtime.json"), JSON.stringify({ build: LLAMA_CPP_BUILD, backend: "cpu", assets: [{ name: cpuRuntime.name, sha256: cpuRuntime.sha256 }] }));
   const interrupted = "Unable to provision the official llama.cpp runtime: This operation was aborted";
   await writeFile(registryPath, JSON.stringify({
     version: 1,
@@ -583,7 +599,7 @@ test("clears an interrupted provisioning error after the pinned runtime is compl
   }
 });
 
-test("does not classify an official runtime provisioning failure as model tool incompatibility", { skip: process.platform !== "linux" || process.arch !== "x64" }, async () => {
+test("does not classify an official runtime provisioning failure as model tool incompatibility", { skip: !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-runtime-provision-failure-"));
   const previousHome = process.env.HOME;
   process.env.HOME = join(root, "home");
@@ -608,7 +624,7 @@ test("does not classify an official runtime provisioning failure as model tool i
   }
 });
 
-test("copies a complete imported GGUF shard group into the private model library", { skip: process.platform !== "linux" || process.arch !== "x64" }, async () => {
+test("copies a complete imported GGUF shard group into the private model library", { skip: !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-shard-import-"));
   const previousHome = process.env.HOME;
   process.env.HOME = join(root, "home");

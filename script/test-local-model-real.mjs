@@ -7,7 +7,10 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { LLAMA_RUNTIME_ASSETS, LOCAL_MODEL_PROVIDER_ID, LocalModelManager } from "../.electron-dist/local-models.js";
 
-if (!["linux", "win32"].includes(process.platform) || process.arch !== "x64") throw new Error("This smoke test requires Windows x64 or Linux x64");
+const supportedPlatform = process.platform === "darwin"
+  ? ["arm64", "x64"].includes(process.arch)
+  : ["linux", "win32"].includes(process.platform) && process.arch === "x64";
+if (!supportedPlatform) throw new Error("This smoke test requires Windows x64, Linux x64, or macOS on Apple Silicon/Intel");
 
 const root = process.env.AGENT_K_LOCAL_MODEL_TEST_ROOT || await mkdtemp(join(tmpdir(), "agent-k-local-model-real-"));
 const previousHome = process.env.HOME;
@@ -79,7 +82,11 @@ try {
   const selected = inspected.files.find((file) => file.name === "MiniCPM5-1B-Q4_K_M.gguf");
   assert.ok(selected, "Q4_K_M GGUF was not found");
   assert.equal(selected.sha256, "81b64d05a23b17b34c475f42b3e72fbde62d4b92cc34541f7a8031d0752deafa");
-  if (!manager.snapshot().models.some((item) => item.source === "modelscope")) await manager.enqueue("modelscope", repository, selected.name);
+  if (!manager.snapshot().models.some((item) => item.source === "modelscope")) {
+    const interrupted = manager.snapshot().downloads.find((item) => item.source === "modelscope" && item.repository === repository && (item.status === "failed" || item.status === "paused"));
+    if (interrupted) await manager.resumeDownload(interrupted.id);
+    else if (!manager.snapshot().downloads.some((item) => item.source === "modelscope" && item.repository === repository)) await manager.enqueue("modelscope", repository, selected.name);
+  }
   const model = await waitFor(() => {
     const snapshot = manager.snapshot();
     const failed = snapshot.downloads.find((task) => task.status === "failed");
@@ -89,7 +96,11 @@ try {
   assert.equal(model.sha256.length, 64);
   const hfSelected = huggingFaceRepo.files.find((file) => file.name === selected.name);
   assert.ok(hfSelected);
-  if (!manager.snapshot().models.some((item) => item.source === "huggingface" && item.repository?.toLowerCase() === huggingFaceRepo.repository.toLowerCase())) await manager.enqueue("huggingface", huggingFaceRepo.repository, hfSelected.name);
+  if (!manager.snapshot().models.some((item) => item.source === "huggingface" && item.repository?.toLowerCase() === huggingFaceRepo.repository.toLowerCase())) {
+    const interrupted = manager.snapshot().downloads.find((item) => item.source === "huggingface" && item.repository.toLowerCase() === huggingFaceRepo.repository.toLowerCase() && (item.status === "failed" || item.status === "paused"));
+    if (interrupted) await manager.resumeDownload(interrupted.id);
+    else if (!manager.snapshot().downloads.some((item) => item.source === "huggingface" && item.repository.toLowerCase() === huggingFaceRepo.repository.toLowerCase())) await manager.enqueue("huggingface", huggingFaceRepo.repository, hfSelected.name);
+  }
   const huggingFaceModel = await waitFor(() => {
     const snapshot = manager.snapshot(); const failed = snapshot.downloads.find((task) => task.status === "failed");
     if (failed) throw new Error(failed.error || "Hugging Face model download failed");
@@ -116,7 +127,7 @@ try {
   await rm(marker, { force: true });
   const piPackage = [
     join(process.cwd(), "node_modules", "@earendil-works", "pi-coding-agent"),
-    join(process.cwd(), ".pi-runtime", "node_modules", "@earendil-works", "pi-coding-agent"),
+    join(process.cwd(), ".pi-runtime", "packages", "@earendil-works", "pi-coding-agent"),
   ].find((candidate) => existsSync(join(candidate, "dist", "cli.js")));
   assert.ok(piPackage, "The Pi coding agent package is required for the real tool-call test");
   const cli = join(piPackage, "dist", "cli.js");
@@ -140,7 +151,7 @@ try {
   const configuredBackends = process.env.AGENT_K_LOCAL_MODEL_TEST_BACKENDS?.split(",").map((value) => value.trim()).filter(Boolean);
   const extraBackends = configuredBackends?.filter((backend) => backend !== "cpu") ?? availableBackends.filter((backend) => backend !== "auto" && backend !== "cpu");
   for (const backend of extraBackends) {
-    assert.ok(["vulkan", "rocm", "cuda12", "cuda13"].includes(backend), `Unknown requested backend ${backend}`);
+    assert.ok(["metal", "vulkan", "rocm", "cuda12", "cuda13"].includes(backend), `Unknown requested backend ${backend}`);
     assert.ok(availableBackends.includes(backend) || process.env.AGENT_K_LOCAL_MODEL_TEST_ALLOW_UNDETECTED_BACKENDS === "1", `Requested backend ${backend} was not detected; prerequisites are missing`);
     await manager.updateConfig(model.id, { backend, gpuLayers: -1 });
     assert.equal(manager.snapshot().models.find((item) => item.id === model.id).compatibility, "unverified");

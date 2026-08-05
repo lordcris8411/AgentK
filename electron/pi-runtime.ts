@@ -41,7 +41,11 @@ function externalPi(executable: string): PiLaunch {
   };
 }
 
-export function resolvePiLaunch(configuredExecutable: string, bundledCli: string): PiLaunch {
+export function resolvePiLaunch(
+  configuredExecutable: string,
+  bundledCli: string,
+  bundledNodeExecutable = process.execPath,
+): PiLaunch {
   const environmentExecutable = process.env.AGENT_K_PI_EXECUTABLE?.trim();
   if (environmentExecutable) return externalPi(environmentExecutable);
   if (configuredExecutable) return externalPi(configuredExecutable);
@@ -50,8 +54,11 @@ export function resolvePiLaunch(configuredExecutable: string, bundledCli: string
   if (!existsSync(bundledCli))
     throw new Error("No Pi executable was found and the bundled Pi runtime is unavailable");
   return {
-    executable: process.execPath,
+    executable: bundledNodeExecutable,
     args: [bundledCli],
-    environment: { ELECTRON_RUN_AS_NODE: "1" },
+    environment: {
+      AGENT_K_NODE_EXECUTABLE: bundledNodeExecutable,
+      ELECTRON_RUN_AS_NODE: "1",
+    },
   };
 }

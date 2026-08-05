@@ -47,3 +47,21 @@ test("conversation readiness status always stays on one line", () => {
     /\.header-action\s*{[^}]*flex:\s*0 0 auto;[^}]*white-space:\s*nowrap;/s,
   );
 });
+
+test("model picker does not report a connection attempt without a session", () => {
+  assert.match(
+    workspaceSource,
+    /!session\s*\?\s*\(en \? "No session" : "未选择会话"\)/,
+  );
+});
+
+test("composer ignores Enter while an IME composition is active", () => {
+  const guard = workspaceSource.indexOf(
+    "event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229",
+  );
+  const sendShortcut = workspaceSource.indexOf(
+    'if (event.key === "Enter" && !event.shiftKey)',
+  );
+  assert.ok(guard >= 0, "composer is missing its IME composition guard");
+  assert.ok(guard < sendShortcut, "IME composition must be checked before Enter sends");
+});

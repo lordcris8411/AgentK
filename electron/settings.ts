@@ -7,6 +7,7 @@ import { configuredProviderModels } from "./model-provider.js";
 import type { PiLaunch } from "./pi-runtime.js";
 import type { ClientSettings, JsonObject } from "./types.js";
 import { discoveredModels, localModelsEndpoint, type ProviderModelDraft } from "./model-discovery.js";
+import { macTerminalLoginArguments } from "./provider-login.js";
 import {
   asArray,
   asObject,
@@ -783,14 +784,19 @@ export function openProviderLogin(providerId: string, launch: PiLaunch): void {
     : { executable: "sh", args: ["-lc", `printf '\\nAgent K: enter /login ${id} in Pi to authenticate.\\n\\n'; exec \"$1\"`, "agent-k-login", launch.executable, ...launch.args] };
   const candidates: Array<{ executable: string; args: string[] }> = process.platform === "win32"
     ? [command]
-    : [
+    : process.platform === "darwin"
+      ? [{
+          executable: "/usr/bin/osascript",
+          args: macTerminalLoginArguments(cwd, id, launch),
+        }]
+      : [
         { executable: "xdg-terminal-exec", args: [command.executable, ...command.args] },
         { executable: "konsole", args: ["--workdir", cwd, "-e", command.executable, ...command.args] },
         { executable: "gnome-terminal", args: [`--working-directory=${cwd}`, "--", command.executable, ...command.args] },
         { executable: "kitty", args: ["--directory", cwd, command.executable, ...command.args] },
         { executable: "x-terminal-emulator", args: ["-e", command.executable, ...command.args] },
         { executable: "xterm", args: ["-e", command.executable, ...command.args] },
-      ];
+        ];
   for (const candidate of candidates) {
     if (
       process.platform !== "win32" &&

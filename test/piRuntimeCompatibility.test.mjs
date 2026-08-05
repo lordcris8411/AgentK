@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import test from "node:test";
 
 const projectDirectory = resolve(import.meta.dirname, "..");
-const piCli = join(
+const piCli = process.env.AGENT_K_TEST_PI_CLI || join(
   projectDirectory,
   "node_modules",
   "@earendil-works",
@@ -15,11 +15,22 @@ const piCli = join(
   "dist",
   "cli.js",
 );
+const nodeExecutable = process.env.AGENT_K_TEST_NODE_EXECUTABLE || process.execPath;
+const permissionExtension = process.env.AGENT_K_TEST_PERMISSION_EXTENSION || join(
+  projectDirectory,
+  "agent-k-permissions.ts",
+);
+const kPlanExtension = process.env.AGENT_K_TEST_K_PLAN_EXTENSION || join(
+  projectDirectory,
+  "extensions",
+  "k-plan",
+  "index.ts",
+);
 
 test("the pinned Pi runtime serves Agent K's RPC contract and extensions", { timeout: 30_000 }, async () => {
   const temporary = await mkdtemp(join(tmpdir(), "agent-k-pi-contract-"));
   const child = spawn(
-    process.execPath,
+    nodeExecutable,
     [
       piCli,
       "--mode",
@@ -30,9 +41,9 @@ test("the pinned Pi runtime serves Agent K's RPC contract and extensions", { tim
       "--no-context-files",
       "--offline",
       "--extension",
-      join(projectDirectory, "agent-k-permissions.ts"),
+      permissionExtension,
       "--extension",
-      join(projectDirectory, "extensions", "k-plan", "index.ts"),
+      kPlanExtension,
     ],
     {
       cwd: projectDirectory,

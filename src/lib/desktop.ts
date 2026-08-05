@@ -256,7 +256,7 @@ export type LocalServiceInfo = {
 };
 
 export type LocalModelSource = "huggingface" | "modelscope" | "import";
-export type LocalModelBackend = "auto" | "cpu" | "vulkan" | "rocm" | "cuda12" | "cuda13";
+export type LocalModelBackend = "auto" | "cpu" | "metal" | "vulkan" | "rocm" | "cuda12" | "cuda13";
 export type LocalModelKvCacheType = "f32" | "f16" | "bf16" | "q8_0" | "q4_0" | "q4_1" | "iq4_nl" | "q5_0" | "q5_1";
 export type LocalModelCompatibility = "unverified" | "verifying-tools" | "tool-compatible" | "tool-incompatible";
 export type LocalModelStatus = "queued" | "downloading" | "paused" | "verifying-download" | "ready" | "provisioning" | "loading" | "verifying-tools" | "running" | "stopping" | "failed" | "missing";

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { isInvalidPiSessionError, RpcPool } from "../../.electron-dist/agent/pool.js";
 import { buildEnvironmentSystemPrompt, piSpawnUsesShell, RpcBridge } from "../../.electron-dist/agent/rpc.js";
-import { selectPiCommandCandidate } from "../../.electron-dist/pi-runtime.js";
+import { resolvePiLaunch, selectPiCommandCandidate } from "../../.electron-dist/pi-runtime.js";
 
 function bridgeFixture() {
   const child = new EventEmitter();
@@ -45,6 +46,45 @@ test("configuration reload recognizes an invalid Pi session", () => {
     new Error("Session file is not a valid pi session: /tmp/broken.jsonl"),
   ), true);
   assert.equal(isInvalidPiSessionError(new Error("Pi RPC request timed out")), false);
+});
+
+test("workspace-backed commands connect Pi when no runtime is active", async () => {
+  const commands = [];
+  const pool = new RpcPool({
+    appDataPath: "/tmp/agent-k-rpc-test",
+    bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
+    bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
+    firstPartyEditorExtensions: [],
+    firstPartyLanguageServerSkills: [],
+    launch: { executable: "pi", args: [] },
+    minimum: 2,
+    permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
+    emit() {},
+  });
+  const runtimeId = "runtime-settings";
+  pool.connect = async (cwd) => {
+    assert.equal(cwd, "/tmp/agent-k-rpc-test/home");
+    pool.workers.set(runtimeId, {
+      isClosed: () => false,
+      sessionFile: () => undefined,
+      stop() {},
+      async request(command) {
+        commands.push(command);
+        return { success: true, data: { models: [] } };
+      },
+    });
+    return runtimeId;
+  };
+  try {
+    const result = await pool.commandConnected(
+      { type: "get_available_models" },
+      "/tmp/agent-k-rpc-test/home",
+    );
+    assert.deepEqual(result, { models: [] });
+    assert.deepEqual(commands, [{ type: "get_available_models" }]);
+  } finally {
+    pool.shutdown();
+  }
 });
 
 test("configuration reload replaces an invalid Pi session instead of failing the save", async () => {
@@ -140,6 +180,24 @@ test("Windows selects an executable npm Pi wrapper instead of its POSIX shim", (
     selectPiCommandCandidate(["/usr/local/bin/pi", "/opt/pi"], "linux"),
     "/usr/local/bin/pi",
   );
+});
+
+test("bundled Pi uses the macOS background helper as its Node executable", () => {
+  const helper = "/Applications/Agent K.app/Contents/Frameworks/Agent K Helper.app/Contents/MacOS/Agent K Helper";
+  const previousPath = process.env.PATH;
+  process.env.PATH = "";
+  try {
+    const launch = resolvePiLaunch(
+      "",
+      resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js"),
+      helper,
+    );
+    assert.equal(launch.executable, helper);
+    assert.equal(launch.environment?.ELECTRON_RUN_AS_NODE, "1");
+    assert.equal(launch.environment?.AGENT_K_NODE_EXECUTABLE, helper);
+  } finally {
+    process.env.PATH = previousPath;
+  }
 });
 
 function respondWithState(child, state) {

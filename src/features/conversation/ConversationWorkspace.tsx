@@ -2033,7 +2033,9 @@ export function ConversationWorkspace({
   useEffect(() => {
     let cancelled = false;
     if (!connected || !session?.runtimeId) {
-      setModelName(en ? "Connecting…" : "正在连接…");
+      setModelName(
+        !session ? (en ? "No session" : "未选择会话") : (en ? "Connecting…" : "正在连接…"),
+      );
       setAvailableModels([]);
       setCurrentModelKey("");
       setContextWindow(undefined);
@@ -4330,6 +4332,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
             else queueDraftCommit(value);
           }}
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
             if (event.key === "ArrowUp" && pendingSteer && !draftValueRef.current.trim()) {
               event.preventDefault();
               const pending = pendingSteer;

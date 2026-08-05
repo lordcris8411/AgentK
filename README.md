@@ -5,7 +5,7 @@
 
   **A visual workspace where the [Pi coding agent](https://github.com/earendil-works/pi) can understand and use purpose-built Editors.**
 
-  Bring conversations, projects, files, tools, models, and Pi extensions together on Windows and Linux.
+  Bring conversations, projects, files, tools, models, and Pi extensions together on Windows, macOS, and Linux.
 
   [Product overview](#part-i-product-overview) · [Product tour](#product-tour) · [Technical guide](#part-ii-technical-guide) · [中文](#第一部分产品介绍)
 
@@ -13,6 +13,7 @@
   [![Electron 43](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
   [![React 19](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)](https://react.dev/)
   [![Windows](https://img.shields.io/badge/Windows-supported-0078D4?logo=windows)](#platform-support)
+  [![macOS](https://img.shields.io/badge/macOS-supported-000000?logo=apple)](#platform-support)
   [![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)](#platform-support)
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 </div>
@@ -227,18 +228,21 @@ Installed language packages may add their own project actions.
 ### Platform support
 
 - Windows 10/11 x64
+- macOS on Apple Silicon or Intel
 - Modern Linux x64 desktops using X11 or Wayland
-- Light, HDR-friendly soft light, dark, system, and importable custom themes on both platforms
+- Light, HDR-friendly soft light, dark, system, and importable custom themes on all desktop platforms
+
+Managed local llama.cpp models are available on Windows x64, Linux x64, and Apple Silicon or Intel Mac. On macOS,
+Agent K uses the pinned official llama.cpp runtime with Metal acceleration and CPU fallback.
 
 Release builds include a compatible, unmodified Pi distribution, so a separate global Pi installation is not required.
 
 ### Product roadmap
 
-- One-click local model packages with llama.cpp and downloads from ModelScope or Hugging Face.
 - More built-in Skills and Extensions, plus in-app discovery across compatible Skill catalogs.
 - A broader catalog for community-created Editor and Language Service Extensions.
 - Integrated debugging workflows for C/C++, Python, and JavaScript/TypeScript.
-- A supported macOS release.
+- Signed and notarized macOS release packages.
 
 ## Part II: Technical guide
 
@@ -398,7 +402,7 @@ does not execute npm lifecycle scripts.
 - Provider catalogs come from Pi's public `get_available_models` RPC.
 - API keys cross an isolated Electron IPC boundary and are written to Pi's `auth.json`; they are never stored in browser storage.
 - OAuth and structured authentication use the official Pi interactive terminal.
-- Credential paths are `~/.pi/agent/auth.json` on Linux and `%USERPROFILE%\.pi\agent\auth.json` on Windows.
+- Credential paths are `~/.pi/agent/auth.json` on macOS/Linux and `%USERPROFILE%\.pi\agent\auth.json` on Windows.
 - The renderer is Chromium-sandboxed, but Pi and approved tools run with the current user's OS permissions. Execution approval is
   not an operating-system sandbox; use a container or VM for untrusted code.
 
@@ -411,7 +415,16 @@ See [Security policy](SECURITY.md).
 | Node.js | 22.19 or newer |
 | Pi | Bundled in release builds; optional external Pi 0.80.10 or compatible |
 | Windows | Windows 10/11 x64 |
+| macOS | Apple Silicon or Intel Mac with command line build tools for source startup |
 | Linux | Modern x64 desktop with X11 or Wayland |
+
+macOS:
+
+~~~bash
+git clone https://github.com/lordcris8411/AgentK.git
+cd AgentK
+./script/run-macos.sh
+~~~
 
 Linux:
 
@@ -453,8 +466,8 @@ npm run prepare:native
 node node_modules/electron/install.js
 ~~~
 
-Building `node-pty` from source on Linux requires Python 3, `make`, and a C++ compiler. Release packages contain the prepared
-native module.
+Building `node-pty` from source on macOS or Linux requires Python 3, `make`, and a C++ compiler. Release packages contain the
+prepared native module.
 
 | Command | Purpose |
 | --- | --- |
@@ -467,10 +480,11 @@ native module.
 | `npm run build:language-servers` | Build trusted first-party native language workers |
 | `npm test` | Run the repository test suite |
 | `npm run build` | Build language workers, Electron, Editors, and renderer |
+| `npm run dist:mac` | Build macOS DMG and ZIP packages |
 | `npm run dist:linux` | Build the Linux AppImage |
-| `npm run dist:windows` | Build the Windows NSIS installer |
+| `npm run dist:windows` | Build the Windows portable package |
 
-Platform checks are also available through `./script/test-linux.sh` and `script\test-windows.bat`.
+Platform checks are also available through `./script/test-macos.sh`, `./script/test-linux.sh`, and `script\test-windows.bat`.
 
 ### Repository layout
 
@@ -485,7 +499,7 @@ AgentK/
 ├── skills/                 # bundled Pi Skills
 ├── themes/                 # built-in complete theme definitions
 ├── screenshots/            # product screenshots used by this README
-├── script/                 # Windows/Linux run, test, and build scripts
+├── script/                 # macOS/Windows/Linux run, test, and build scripts
 └── docs/                   # protocol and architecture documentation
 ~~~
 
@@ -667,18 +681,21 @@ Agent K 不会静默信任或安装生成的代码。Editor Extension 通过校�
 ### 平台支持
 
 - Windows 10/11 x64
+- Apple Silicon 或 Intel Mac
 - 使用 X11 或 Wayland 的现代 Linux x64 桌面
-- 两个平台都支持浅色、适合 HDR 显示器的柔和亮色、深色、跟随系统及可导入的自定义主题
+- 所有桌面平台都支持浅色、适合 HDR 显示器的柔和亮色、深色、跟随系统及可导入的自定义主题
+
+托管本地 llama.cpp 模型支持 Windows x64、Linux x64，以及 Apple Silicon 或 Intel Mac。macOS 使用固定版本的
+llama.cpp 官方运行时，支持 Metal 加速和 CPU 回退。
 
 正式安装包包含兼容且未经修改的 Pi 发行物，不要求用户另外全局安装 Pi。
 
 ### 产品路线图
 
-- 内置 llama.cpp，并支持从 ModelScope 或 Hugging Face 下载本地模型后直接使用。
 - 提供更多内置 Skills 和 Extensions，并在应用内浏览兼容的 Skill 目录。
 - 建立更丰富的社区 Editor Extension 与 Language Service Extension 目录。
 - 集成 C/C++、Python、JavaScript/TypeScript 调试流程。
-- 提供正式支持的 macOS 版本。
+- 提供已签名并完成 notarization 的 macOS 发行包。
 
 ## 第二部分：技术说明
 
@@ -825,7 +842,7 @@ Skill Hub 接受 `skills add` 命令、skills.sh URL、GitHub 仓库 URL 和直�
 - Provider 目录来自 Pi 公开的 `get_available_models` RPC。
 - API Key 通过隔离的 Electron IPC 写入 Pi 的 `auth.json`，不会进入浏览器存储。
 - OAuth 与结构化认证使用 Pi 官方交互终端。
-- Linux 凭据路径为 `~/.pi/agent/auth.json`；Windows 为 `%USERPROFILE%\.pi\agent\auth.json`。
+- macOS/Linux 凭据路径为 `~/.pi/agent/auth.json`；Windows 为 `%USERPROFILE%\.pi\agent\auth.json`。
 - 渲染层使用 Chromium sandbox，但 Pi 和经过确认的工具仍以当前用户的系统权限运行。执行确认不等于操作系统沙箱；处理不受信任
   代码时应使用容器或虚拟机。
 
@@ -838,7 +855,16 @@ Skill Hub 接受 `skills add` 命令、skills.sh URL、GitHub 仓库 URL 和直�
 | Node.js | 22.19 或更新版本 |
 | Pi | 正式发行包内置；也可使用外部 Pi 0.80.10 或兼容版本 |
 | Windows | Windows 10/11 x64 |
+| macOS | Apple Silicon 或 Intel Mac，源码启动需要命令行构建工具 |
 | Linux | 支持 X11 或 Wayland 的现代 x64 桌面 |
+
+macOS：
+
+~~~bash
+git clone https://github.com/lordcris8411/AgentK.git
+cd AgentK
+./script/run-macos.sh
+~~~
 
 Linux：
 
@@ -879,7 +905,7 @@ npm run prepare:native
 node node_modules/electron/install.js
 ~~~
 
-Linux 源码环境构建 `node-pty` 需要 Python 3、`make` 和 C++ 编译器；正式发行包已包含准备好的原生模块。
+macOS 或 Linux 源码环境构建 `node-pty` 需要 Python 3、`make` 和 C++ 编译器；正式发行包已包含准备好的原生模块。
 
 | 命令 | 用途 |
 | --- | --- |
@@ -892,10 +918,11 @@ Linux 源码环境构建 `node-pty` 需要 Python 3、`make` 和 C++ 编译器�
 | `npm run build:language-servers` | 构建受信任的第一方原生语言 worker |
 | `npm test` | 运行仓库测试套件 |
 | `npm run build` | 构建语言 worker、Electron、Editors 和渲染层 |
+| `npm run dist:mac` | 生成 macOS DMG 和 ZIP 包 |
 | `npm run dist:linux` | 生成 Linux AppImage |
-| `npm run dist:windows` | 生成 Windows NSIS 安装包 |
+| `npm run dist:windows` | 生成 Windows portable 包 |
 
-还可以使用 `./script/test-linux.sh` 和 `script\test-windows.bat` 运行平台检查。
+还可以使用 `./script/test-macos.sh`、`./script/test-linux.sh` 和 `script\test-windows.bat` 运行平台检查。
 
 ### 仓库结构
 
@@ -910,7 +937,7 @@ AgentK/
 ├── skills/                 # 内置 Pi Skills
 ├── themes/                 # 内置完整主题定义
 ├── screenshots/            # README 使用的产品截图
-├── script/                 # Windows/Linux 运行、测试与构建脚本
+├── script/                 # macOS/Windows/Linux 运行、测试与构建脚本
 └── docs/                   # 协议与架构文档
 ~~~
 

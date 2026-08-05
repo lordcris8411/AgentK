@@ -245,6 +245,20 @@ export class RpcPool {
     return response;
   }
 
+  async commandConnected(
+    input: JsonObject,
+    fallbackCwd: string,
+    runtimeId?: string,
+  ): Promise<unknown> {
+    if (runtimeId) return this.command(input, runtimeId);
+    this.removeClosed();
+    const connectedRuntime =
+      this.activeRuntime && this.workers.has(this.activeRuntime)
+        ? this.activeRuntime
+        : await this.connect(fallbackCwd);
+    return this.command(input, connectedRuntime);
+  }
+
   async abort(runtimeId?: string): Promise<void> {
     // Pi's abort handler resolves only after AgentSession.waitForIdle().  Keep
     // this as a request (rather than a fire-and-forget notification) so the

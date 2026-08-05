@@ -25,7 +25,7 @@ const MAX_LOG_LINES = 3_000;
 const VERIFY_TIMEOUT_MS = 90_000;
 
 export type LocalModelSource = "huggingface" | "modelscope" | "import";
-export type LocalModelBackend = "auto" | "cpu" | "vulkan" | "rocm" | "cuda12" | "cuda13";
+export type LocalModelBackend = "auto" | "cpu" | "metal" | "vulkan" | "rocm" | "cuda12" | "cuda13";
 export type LocalModelKvCacheType = "f32" | "f16" | "bf16" | "q8_0" | "q4_0" | "q4_1" | "iq4_nl" | "q5_0" | "q5_1";
 export type LocalModelCompatibility = "unverified" | "verifying-tools" | "tool-compatible" | "tool-incompatible";
 export type LocalModelStatus = "queued" | "downloading" | "paused" | "verifying-download" | "ready" | "provisioning" | "loading" | "verifying-tools" | "running" | "stopping" | "failed" | "missing";
@@ -198,6 +198,10 @@ class RuntimeProvisionError extends Error {
 }
 
 export const LLAMA_RUNTIME_ASSETS: Record<string, RuntimeAsset> = {
+  "darwin-arm64-cpu": { name: "llama-b10182-bin-macos-arm64.tar.gz", sha256: "d17e65c8056573dada3b7dfaf675e95953a7b29e7f004489dd1bf434edb72394" },
+  "darwin-arm64-metal": { name: "llama-b10182-bin-macos-arm64.tar.gz", sha256: "d17e65c8056573dada3b7dfaf675e95953a7b29e7f004489dd1bf434edb72394" },
+  "darwin-x64-cpu": { name: "llama-b10182-bin-macos-x64.tar.gz", sha256: "07018b3109bf61a65f314c37d86ef1997fb292a10d25003076101e27f912d815" },
+  "darwin-x64-metal": { name: "llama-b10182-bin-macos-x64.tar.gz", sha256: "07018b3109bf61a65f314c37d86ef1997fb292a10d25003076101e27f912d815" },
   "linux-cpu": { name: "llama-b10182-bin-ubuntu-x64.tar.gz", sha256: "9a087d633cc03a8e93f2d689bc80adbfb680efca025bc9a328d5e186d528757a" },
   "linux-cuda12": {
     name: "llama.cpp-b10182-cuda-12.8-amd64.tar.gz", sha256: "5576a132d768b240b1c3e950e71b456cbf7b90c6a38dca2fcd93f965b32098c9", repository: "ai-dock/llama.cpp-cuda", thirdParty: true,
@@ -272,7 +276,7 @@ function boundedInteger(value: unknown, minimum: number, maximum: number, fallba
 }
 
 function validateConfig(value: Partial<LocalModelRuntimeConfig>, previous = DEFAULT_CONFIG): LocalModelRuntimeConfig {
-  const backend = ["auto", "cpu", "vulkan", "rocm", "cuda12", "cuda13"].includes(String(value.backend)) ? value.backend as LocalModelBackend : previous.backend;
+  const backend = ["auto", "cpu", "metal", "vulkan", "rocm", "cuda12", "cuda13"].includes(String(value.backend)) ? value.backend as LocalModelBackend : previous.backend;
   const cacheTypeK = ["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"].includes(String(value.cacheTypeK)) ? value.cacheTypeK as LocalModelKvCacheType : previous.cacheTypeK;
   const cacheTypeV = ["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"].includes(String(value.cacheTypeV)) ? value.cacheTypeV as LocalModelKvCacheType : previous.cacheTypeV;
   const context = boundedInteger(value.contextSize, 512, 1_048_576, previous.contextSize);
@@ -290,9 +294,11 @@ function validateConfig(value: Partial<LocalModelRuntimeConfig>, previous = DEFA
 }
 
 export function selectAutomaticBackend(platform: NodeJS.Platform, available: LocalModelBackend[]): Exclude<LocalModelBackend, "auto"> {
-  const preference: Array<Exclude<LocalModelBackend, "auto">> = platform === "win32"
-    ? ["cuda13", "cuda12", "vulkan", "cpu"]
-    : ["cuda12", "rocm", "vulkan", "cpu"];
+  const preference: Array<Exclude<LocalModelBackend, "auto">> = platform === "darwin"
+    ? ["metal", "cpu"]
+    : platform === "win32"
+      ? ["cuda13", "cuda12", "vulkan", "cpu"]
+      : ["cuda12", "rocm", "vulkan", "cpu"];
   return preference.find((backend) => available.includes(backend)) ?? "cpu";
 }
 
@@ -318,6 +324,9 @@ function detectHardware(): HardwareInfo {
       if (cudaVersion >= 13.3) availableBackends.push("cuda13");
       if (cudaVersion >= 12.4) availableBackends.push("cuda12");
     }
+  } else if (process.platform === "darwin") {
+    availableBackends.push("metal");
+    gpu = process.arch === "arm64" ? "Apple Silicon Metal" : "Metal";
   } else if (process.platform === "linux") {
     const vulkan = spawnSync("vulkaninfo", ["--summary"], { encoding: "utf8" });
     if (vulkan.status === 0) availableBackends.push("vulkan");
@@ -340,6 +349,15 @@ function detectHardware(): HardwareInfo {
     }
   }
   return { platform: process.platform, architecture: process.arch, totalMemory: totalmem(), availableBackends: [...new Set(availableBackends)], ...(gpu ? { gpu } : {}), ...(vram ? { vram } : {}) };
+}
+
+export function localModelRuntimeSupported(platform: NodeJS.Platform = process.platform, architecture = process.arch): boolean {
+  if (platform === "darwin") return architecture === "arm64" || architecture === "x64";
+  return (platform === "linux" || platform === "win32") && architecture === "x64";
+}
+
+export function localModelRuntimeAssetKey(platform: NodeJS.Platform, architecture: string, backend: Exclude<LocalModelBackend, "auto">): string {
+  return platform === "darwin" ? `${platform}-${architecture}-${backend}` : `${platform}-${backend}`;
 }
 
 async function sha256File(path: string, signal?: AbortSignal): Promise<string> {
@@ -489,7 +507,11 @@ export class LocalModelManager {
   }
 
   async initialize(): Promise<void> {
-    if (!(["linux", "win32"] as NodeJS.Platform[]).includes(process.platform) || process.arch !== "x64") throw new Error("Local models currently require Windows x64 or Linux x64");
+    if (!localModelRuntimeSupported()) {
+      this.enabled = false;
+      await this.syncProvider();
+      return;
+    }
     await Promise.all([mkdir(this.modelsDirectory, { recursive: true }), mkdir(this.downloadsDirectory, { recursive: true }), mkdir(this.runtimeDirectory, { recursive: true })]);
     this.registry = await readJson<LocalModelRegistry>(this.registryPath, { version: 1, models: [], downloads: [] });
     this.registry.version = 1;
@@ -736,6 +758,7 @@ export class LocalModelManager {
 
   async setEnabled(enabled: boolean): Promise<void> {
     if (this.enabled === enabled) return;
+    if (enabled && !localModelRuntimeSupported()) throw new Error("Managed local models require Windows x64, Linux x64, or macOS on Apple Silicon/Intel");
     if (!enabled && (this.server || this.serverStarting) && await this.piBusy()) throw new Error("Wait for Pi to stop before disabling managed local models");
     const previous = this.enabled;
     try {
@@ -780,11 +803,11 @@ export class LocalModelManager {
     return selectAutomaticBackend(process.platform, this.hardware.availableBackends);
   }
   private resolvedGpuLayers(model: LocalModelRecord, backend: Exclude<LocalModelBackend, "auto">): number | "auto" { return resolveGpuLayers(backend, model.config.gpuLayers); }
-  private compatibilityKey(model: LocalModelRecord): string { const backend = this.resolvedBackend(model); const runtime = LLAMA_RUNTIME_ASSETS[`${process.platform}-${backend}`]; return createHash("sha256").update(JSON.stringify({ files: model.files.map((file) => file.sha256), build: LLAMA_CPP_BUILD, runtime: runtime ? runtimeAssetChain(runtime).map((asset) => asset.sha256) : [], backend, contextSize: model.config.contextSize, gpuLayers: this.resolvedGpuLayers(model, backend), threads: model.config.threads, cacheTypeK: model.config.cacheTypeK, cacheTypeV: model.config.cacheTypeV, maxOutputTokens: model.config.maxOutputTokens, reasoning: model.config.reasoning, jinja: true })).digest("hex"); }
+  private compatibilityKey(model: LocalModelRecord): string { const backend = this.resolvedBackend(model); const runtime = LLAMA_RUNTIME_ASSETS[localModelRuntimeAssetKey(process.platform, process.arch, backend)]; return createHash("sha256").update(JSON.stringify({ files: model.files.map((file) => file.sha256), build: LLAMA_CPP_BUILD, runtime: runtime ? runtimeAssetChain(runtime).map((asset) => asset.sha256) : [], backend, contextSize: model.config.contextSize, gpuLayers: this.resolvedGpuLayers(model, backend), threads: model.config.threads, cacheTypeK: model.config.cacheTypeK, cacheTypeV: model.config.cacheTypeV, maxOutputTokens: model.config.maxOutputTokens, reasoning: model.config.reasoning, jinja: true })).digest("hex"); }
   private async runtimeIsProvisioned(model: LocalModelRecord): Promise<boolean> {
     if (this.options.runtimeOverride) return existsSync(this.options.runtimeOverride.executable);
     const backend = this.resolvedBackend(model);
-    const asset = LLAMA_RUNTIME_ASSETS[`${process.platform}-${backend}`];
+    const asset = LLAMA_RUNTIME_ASSETS[localModelRuntimeAssetKey(process.platform, process.arch, backend)];
     if (!asset) return false;
     const destination = join(this.runtimeDirectory, LLAMA_CPP_BUILD, backend);
     const executable = await findExecutable(destination);
@@ -855,7 +878,7 @@ export class LocalModelManager {
   }
 
   private async provisionRuntime(backend: Exclude<LocalModelBackend, "auto">, modelId: string, signal: AbortSignal): Promise<string> {
-    const key = `${process.platform}-${backend}`; const asset = LLAMA_RUNTIME_ASSETS[key]; if (!asset) throw new Error(`llama.cpp ${backend} runtime is not published for ${process.platform} x64`);
+    const key = localModelRuntimeAssetKey(process.platform, process.arch, backend); const asset = LLAMA_RUNTIME_ASSETS[key]; if (!asset) throw new Error(`llama.cpp ${backend} runtime is not published for ${process.platform} ${process.arch}`);
     const assets = runtimeAssetChain(asset);
     const destination = join(this.runtimeDirectory, LLAMA_CPP_BUILD, backend); const manifestPath = join(destination, ".agent-k-runtime.json"); const expectedManifest = { build: LLAMA_CPP_BUILD, backend, assets: assets.map(({ name, sha256 }) => ({ name, sha256 })) }; const executable = await findExecutable(destination); const manifest = await readJson(manifestPath, {}); if (executable && JSON.stringify(manifest) === JSON.stringify(expectedManifest)) return executable;
     await rm(destination, { recursive: true, force: true }); await mkdir(destination, { recursive: true });

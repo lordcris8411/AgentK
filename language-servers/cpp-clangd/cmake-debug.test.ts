@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -36,7 +36,7 @@ test("finds CMake projects below a container workspace", async (context) => {
   await writeFile(join(app, "nested", "CMakeLists.txt"), "project(nested)");
   await writeFile(join(workspace, "build", "ignored", "CMakeLists.txt"), "project(ignored)");
 
-  assert.deepEqual(await cmakeProjectRoots(workspace), [app]);
+  assert.deepEqual(await cmakeProjectRoots(workspace), [await realpath(app)]);
 });
 
 test("reads and orders executable targets from the CMake File API", async (context) => {

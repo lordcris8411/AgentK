@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   app,
@@ -207,6 +207,20 @@ let splashTheme: ThemeDefinition | undefined;
 
 function projectPath(...parts: string[]): string {
   return join(app.getAppPath(), ...parts);
+}
+
+function bundledPiNodeExecutable(): string {
+  if (!app.isPackaged || process.platform !== "darwin") return process.execPath;
+  const executable = basename(process.execPath);
+  return join(
+    process.resourcesPath,
+    "..",
+    "Frameworks",
+    `${executable} Helper.app`,
+    "Contents",
+    "MacOS",
+    `${executable} Helper`,
+  );
 }
 
 function firstPartyEditorExtensionsPath(): string {
@@ -942,6 +956,7 @@ async function start(): Promise<void> {
     bundledPiCli: app.isPackaged
       ? join(process.resourcesPath, "pi-runtime", "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js")
       : projectPath("node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js"),
+    bundledPiNode: bundledPiNodeExecutable(),
     cachePath,
     localModelRoot: startupSettings.localModelDirectory || undefined,
     permissionExtensionSource: projectPath("agent-k-permissions.ts"),
