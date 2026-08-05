@@ -115,6 +115,11 @@ test("native preparation treats a missing macOS spawn helper as incomplete", asy
   assert.match(source, /await makeSpawnHelpersExecutable\(\)/);
 });
 
+test("packaged runtime requires the node-pty spawn helper only on macOS", async () => {
+  const source = await readFile(join(root, "script", "verify-packaged-runtime.mjs"), "utf8");
+  assert.match(source, /if \(context\.electronPlatformName !== "darwin"\) return/);
+});
+
 test("bundled language workers do not depend on host node_modules", async () => {
   const packages = join(root, "language-servers");
   for (const entry of await readdir(packages, { withFileTypes: true })) {

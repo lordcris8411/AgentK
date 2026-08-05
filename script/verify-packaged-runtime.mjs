@@ -26,7 +26,7 @@ export default async function verifyPackagedRuntime(context) {
     throw new Error(`Packaged Pi runtime is unavailable at ${cli}`, { cause });
   }
 
-  if (context.electronPlatformName === "win32") return;
+  if (context.electronPlatformName !== "darwin") return;
   const prebuilds = join(
     resources,
     "app.asar.unpacked",
