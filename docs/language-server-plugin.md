@@ -194,7 +194,7 @@ directory outside the source tree with `CMAKE_EXPORT_COMPILE_COMMANDS=ON`, then 
 background indexing and disk-backed PCH storage. Project unload/restart and preparation cancellation are available
 from the file tree and project manager.
 
-Its Pi-facing `agent_k_cpp_language_server` tool names a CMake workspace rather than passing an arbitrary path. `status`,
+Its Pi-facing Skill calls the unified `agent_k` bridge with the `cpp-language-server` capability and names a CMake workspace rather than passing an arbitrary path. `status`,
 `load`, and `unload` provide an idempotent lifecycle; every semantic action rejects a workspace that is not loaded and ready.
 Semantic actions include exact-symbol references, definitions, declarations, type declarations, implementations, hover,
 workspace/document symbols, diagnostics, call hierarchy, and type hierarchy. The Skill explicitly keeps useful workspaces
@@ -202,7 +202,7 @@ loaded instead of repeatedly paying CMake configuration and clangd indexing cost
 operations take priority over shell text searches; shell remains the direct path for builds, tests, execution, Git, and
 explicitly textual or regular-expression searches.
 
-The same package exposes `agent_k_native_debugger` to Pi. The tool routes structured requests through Agent K's public Pi
+The same Skill calls the `native-debugger` capability through the unified `agent_k` bridge. The bridge routes structured requests through Agent K's public Pi
 extension UI protocol to `debugSkill(request)` in the trusted worker; Pi never receives DAP transport access or a debugger
 process handle. Every request names a unique CMake workspace, and session-specific requests are rejected when the returned
 `sessionId` belongs to another workspace. The tool supports target discovery, launch, attach, dump analysis, source/function/

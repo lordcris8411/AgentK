@@ -5,9 +5,12 @@ description: Control video currently open in Agent K. Use when Agent K supplies 
 
 # Agent K Video Player
 
-To play or display a video in Agent K, first use `agent_k_file_editor` with
-`action: "open"` and its workspace path; do not launch an external player. Then
+Use the `agent_k` bridge with `capability: "file-editor"`. Put `action` at the
+top level and all action-specific values in `arguments`. To play or display a
+video file, first call it with `action: "open"` and
+`arguments: { "path": "<workspace path>" }`; do not launch an external player. Then
 read the active path and allowed actions from the current `<agent_k_file_format>`
-context. Call only an advertised `play`, `pause`, or `seek` action and keep the
-same active path. For `seek`, pass `seconds`; positive values move forward and
-negative values move backward. Playback state and volume remain local UI state.
+context. Call only an advertised `play`, `pause`, or `seek` action. Put the same
+active `path` in `arguments`; for `seek`, also pass `seconds`, where positive
+values move forward and negative values move backward. Playback state and volume
+remain local UI state.

@@ -28,6 +28,7 @@ import {
 } from "./contextUsage";
 import { mergePersistedItems } from "./historyMerge";
 import { displayUserContent } from "./messageContent";
+import { attachProviderRequestDump, type ProviderRequestDump } from "./providerPayload";
 import { toolActivityContent } from "./toolActivity";
 import { useSettings } from "../settings/SettingsContext";
 import {
@@ -62,7 +63,7 @@ ${cpp.map((project) => project.status === "ready"
     ? `- C++ CMake workspace ${JSON.stringify(project.name)} is loaded and clangd is ready.`
     : `- C++ CMake workspace ${JSON.stringify(project.name)} is loaded and clangd is indexing${project.indexProgress ? ` (${project.indexProgress})` : ""}; Language Skill results are partial until ready.`).join("\n")}
 
-For a semantic C++ question about a symbol's references, definition, declaration, type, implementation, hover information, diagnostics, call hierarchy, type hierarchy, or indexed symbols, you MUST use agent_k_cpp_language_server before any bash, grep, rg, findstr, compiler-output scraping, or custom Clang command. First call action "status" with the workspace name, then call the appropriate semantic action. The Skill is usable while indexing, but if a response has partial=true or indexReady=false, explicitly report that indexing is incomplete, do not treat an empty result as "not found", and do not claim the result set is complete. Do not replace a clangd query with text search. Shell remains appropriate for builds, tests, execution, Git operations, and explicitly textual or regular-expression searches.
+For a semantic C++ question about a symbol's references, definition, declaration, type, implementation, hover information, diagnostics, call hierarchy, type hierarchy, or indexed symbols, you MUST load the cpp-project-tools Skill and call agent_k with capability "cpp-language-server" before any bash, grep, rg, findstr, compiler-output scraping, or custom Clang command. First call action "status" with the workspace name in arguments, then call the appropriate semantic action. The Skill is usable while indexing, but if a response has partial=true or indexReady=false, explicitly report that indexing is incomplete, do not treat an empty result as "not found", and do not claim the result set is complete. Do not replace a clangd query with text search. Shell remains appropriate for builds, tests, execution, Git operations, and explicitly textual or regular-expression searches.
 </agent_k_language_services>`;
 }
 
@@ -190,6 +191,11 @@ type MessageContextMenu = {
   x: number;
   y: number;
 };
+type ProviderPromptDialog = {
+  copied: boolean;
+  requestIndex: number;
+  requests: ProviderRequestDump[];
+};
 type ImageContent = {
   type: "image";
   data: string;
@@ -213,6 +219,7 @@ type Item = {
   customType?: string;
   content: string;
   rawContent?: string;
+  providerRequests?: ProviderRequestDump[];
   occurredAt?: number;
   modelId?: string;
   modelName?: string;
@@ -578,6 +585,11 @@ function toItems(messages: Array<Record<string, unknown>>, offset = 0): Item[] {
     itemOf(message, String(message.id ?? `${offset + index}`)),
   );
 }
+function toolArguments(call: ToolCall): Record<string, unknown> {
+  return call.name === "agent_k" && call.args.arguments && typeof call.args.arguments === "object"
+    ? call.args.arguments as Record<string, unknown>
+    : call.args;
+}
 function toolPath(args: Record<string, unknown>) {
   return [args.path, args.filePath, args.file_path, args.to].find(
     (value): value is string => typeof value === "string",
@@ -588,15 +600,16 @@ function previewTools(turn: Item[]): ToolCall[] {
   return turn
     .flatMap((item) => item.toolCalls ?? [])
     .filter((call) => {
-      const key = `${call.name}:${toolPath(call.args) ?? JSON.stringify(call.args)}`;
+      const key = `${call.name}:${toolPath(toolArguments(call)) ?? JSON.stringify(call.args)}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
 }
 function toolLabel(call: ToolCall) {
-  const path = toolPath(call.args);
-  if (call.name === "agent_k_file_editor") {
+  const arguments_ = toolArguments(call);
+  const path = toolPath(arguments_);
+  if (call.name === "agent_k" && call.args.capability === "file-editor") {
     const action = typeof call.args.action === "string" ? call.args.action : "";
     const name = path?.split(/[\\/]/).pop() ?? "文件";
     if (action === "open") return `预览：${name}`;
@@ -604,6 +617,10 @@ function toolLabel(call: ToolCall) {
     if (action === "capture-preview") return "抓取预览图像";
     if (action === "get-preview-console") return "读取网站控制台";
   }
+  if (call.name === "agent_k" && call.args.capability === "cpp-language-server")
+    return `C++ 语义：${String(call.args.action ?? "查询")}`;
+  if (call.name === "agent_k" && call.args.capability === "native-debugger")
+    return `原生调试：${String(call.args.action ?? "操作")}`;
   if (path && call.name === "read") return `读取 ${path}`;
   if (path && ["write", "edit"].includes(call.name)) return `修改 ${path}`;
   if (path && ["copy", "move", "delete"].includes(call.name))
@@ -1680,6 +1697,7 @@ export function ConversationWorkspace({
   const [commandRevision, setCommandRevision] = useState(0);
   const [commandPicker, setCommandPicker] = useState<CommandPicker>();
   const [messageContextMenu, setMessageContextMenu] = useState<MessageContextMenu>();
+  const [providerPromptDialog, setProviderPromptDialog] = useState<ProviderPromptDialog>();
   const [pendingMessageDelete, setPendingMessageDelete] = useState<Item>();
   const [deletingMessage, setDeletingMessage] = useState(false);
   const [slashSelection, setSlashSelection] = useState(0);
@@ -1800,6 +1818,25 @@ export function ConversationWorkspace({
   const openMessageContextMenu = useCallback((event: React.MouseEvent, item: Item) => {
     event.preventDefault();
     setMessageContextMenu({ item, x: event.clientX, y: event.clientY });
+  }, []);
+  useEffect(() => {
+    const receiveProviderRequest = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        capturedAt?: unknown;
+        payload?: unknown;
+        runtimeId?: unknown;
+      }>).detail;
+      if (!detail || detail.runtimeId !== activeRuntimeIdRef.current || !("payload" in detail)) return;
+      const capturedAt = typeof detail.capturedAt === "number" && Number.isFinite(detail.capturedAt)
+        ? detail.capturedAt
+        : Date.now();
+      setItems((current) => attachProviderRequestDump(current, {
+        capturedAt,
+        payload: detail.payload,
+      }));
+    };
+    window.addEventListener("agent-k-provider-request", receiveProviderRequest);
+    return () => window.removeEventListener("agent-k-provider-request", receiveProviderRequest);
   }, []);
   const queueDraftCommit = useCallback((value: string) => {
     draftValueRef.current = value;
@@ -1945,6 +1982,7 @@ export function ConversationWorkspace({
     setCompaction(undefined);
     setAttachments([]);
     setPendingSteer(undefined);
+    setProviderPromptDialog(undefined);
     if (!session || session.path === "__new__") {
       setItems([]);
       setReportedContextTokens(undefined);
@@ -3266,16 +3304,13 @@ export function ConversationWorkspace({
       .map((attachment) => attachment.path);
     const withFileReferences = (message: string, languageProjects: LanguageServerProject[]) => {
       const additions = [
-        `<agent_k_file_editor>
-To open, show, display, or preview a workspace file in Agent K's editor, you MUST call agent_k_file_editor with action "open" and the requested workspace path before replying. Do not substitute the read tool for an explicit request to open or display a file. Use read only when the user asks for the file's contents or when reading is necessary after opening it. The open action is available even when no editor tab is currently active.
-</agent_k_file_editor>`,
         filePaths.length
           ? `<attached_files>\n${filePaths
               .map((path) => `- ${JSON.stringify(path)}`)
               .join("\n")}\n</attached_files>\nUse the available file tools to inspect these local files when needed.`
           : "",
         fileFormatContext
-          ? `<agent_k_file_format>\nThe active Agent K ${fileFormatContext.name} editor is showing ${JSON.stringify(fileFormatContext.path)}. The agent_k_file_editor tool always supports open for a workspace file path, run-web-project for a project directory with an npm dev script, capture-preview for the currently visible HTML or web-project preview, and get-preview-console for the current web-project preview. For the active editor,${fileFormatContext.capabilities.length ? ` use only one of these additional capabilities:\n${fileFormatContext.capabilities.map((capability) => `- ${capability.id}: ${capability.description}${capability.parameters ? `; parameters ${JSON.stringify(capability.parameters)}` : ""}`).join("\n")}` : " no additional editor actions are available."}\n</agent_k_file_format>`
+          ? `<agent_k_file_format>\nThe active Agent K ${fileFormatContext.name} editor is showing ${JSON.stringify(fileFormatContext.path)}. Load the matching Agent K Editor Skill and call agent_k with capability "file-editor". Put the selected action at the top level and its values in arguments. The bridge supports open for a workspace file path, run-web-project for a project directory with an npm dev script, capture-preview for the currently visible HTML or web-project preview, and get-preview-console for the current web-project preview. For the active editor,${fileFormatContext.capabilities.length ? ` use only one of these additional capabilities:\n${fileFormatContext.capabilities.map((capability) => `- ${capability.id}: ${capability.description}${capability.parameters ? `; arguments ${JSON.stringify(capability.parameters)}` : ""}`).join("\n")}` : " no additional editor actions are available."}\n</agent_k_file_format>`
           : "",
         languageServiceContext(languageProjects, session.cwd),
       ].filter(Boolean);
@@ -3704,6 +3739,12 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
     if (await desktopWindow.isMaximized()) await desktopWindow.unmaximize();
     else await desktopWindow.maximize();
   };
+  const selectedProviderRequest = providerPromptDialog
+    ? providerPromptDialog.requests[providerPromptDialog.requestIndex]
+    : undefined;
+  const providerPromptText = selectedProviderRequest
+    ? JSON.stringify(selectedProviderRequest.payload, undefined, 2)
+    : "";
   return (
     <div
       className={
@@ -4014,7 +4055,7 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
             className="file-context-menu message-context-menu"
             style={{
               left: Math.max(8, Math.min(messageContextMenu.x, window.innerWidth - 196)),
-              top: Math.max(8, Math.min(messageContextMenu.y, window.innerHeight - 92)),
+              top: Math.max(8, Math.min(messageContextMenu.y, window.innerHeight - 132)),
             }}
           >
             <button
@@ -4028,6 +4069,26 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
             >
               <i aria-hidden="true" className="fa-regular fa-copy" />
               {en ? "Copy question" : "复制问题"}
+            </button>
+            <button
+              disabled={!messageContextMenu.item.providerRequests?.length}
+              onClick={() => {
+                const requests = messageContextMenu.item.providerRequests;
+                if (!requests?.length) return;
+                setProviderPromptDialog({
+                  copied: false,
+                  requestIndex: 0,
+                  requests,
+                });
+                setMessageContextMenu(undefined);
+              }}
+              title={messageContextMenu.item.providerRequests?.length
+                ? (en ? "Inspect the exact Provider request generated by Pi" : "查看 Pi 生成的完整 Provider 请求")
+                : (en ? "No captured request is available for this historical message" : "这条历史消息没有捕获到请求")}
+              type="button"
+            >
+              <i aria-hidden="true" className="fa-solid fa-code" />
+              {en ? "View Pi prompt" : "查看 Pi 提示词"}
             </button>
             <div className="file-context-separator" />
             <button
@@ -4043,6 +4104,58 @@ To open, show, display, or preview a workspace file in Agent K's editor, you MUS
               {en ? "Rewind to here" : "回退到这里"}
             </button>
           </div>
+        </div>
+      )}
+      {providerPromptDialog && selectedProviderRequest && (
+        <div
+          className="session-dialog-backdrop provider-prompt-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setProviderPromptDialog(undefined);
+          }}
+        >
+          <section aria-modal="true" className="session-dialog-card provider-prompt-dialog" role="dialog">
+            <header>
+              <div>
+                <h2>{en ? "Pi provider request" : "Pi 发送的提示词"}</h2>
+                <p>{en
+                  ? "Exact serialized payload captured immediately before the Provider request."
+                  : "这是 Provider 请求发出前捕获的最终序列化内容。"}</p>
+              </div>
+              <button aria-label={en ? "Close" : "关闭"} onClick={() => setProviderPromptDialog(undefined)} type="button">
+                <i aria-hidden="true" className="fa-solid fa-xmark" />
+              </button>
+            </header>
+            <div className="provider-prompt-toolbar">
+              <label>
+                <span>{en ? "Request" : "请求"}</span>
+                <select
+                  onChange={(event) => setProviderPromptDialog((current) => current ? {
+                    ...current,
+                    copied: false,
+                    requestIndex: Number(event.target.value),
+                  } : current)}
+                  value={providerPromptDialog.requestIndex}
+                >
+                  {providerPromptDialog.requests.map((request, index) => (
+                    <option key={`${request.capturedAt}:${index}`} value={index}>
+                      {en ? `Request ${index + 1}` : `请求 ${index + 1}`} · {new Date(request.capturedAt).toLocaleTimeString()}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className={providerPromptDialog.copied ? "provider-prompt-copy is-copied" : "provider-prompt-copy"}
+                onClick={() => void platform.copyText(providerPromptText)
+                  .then(() => setProviderPromptDialog((current) => current ? { ...current, copied: true } : current))
+                  .catch((cause) => onError(String(cause)))}
+                type="button"
+              >
+                <i aria-hidden="true" className={providerPromptDialog.copied ? "fa-solid fa-check" : "fa-regular fa-copy"} />
+                {providerPromptDialog.copied ? (en ? "Copied" : "已复制") : (en ? "Copy" : "复制")}
+              </button>
+            </div>
+            <textarea aria-label={en ? "Provider request payload" : "Provider 请求内容"} readOnly spellCheck={false} value={providerPromptText} />
+          </section>
         </div>
       )}
       {pendingMessageDelete && (
