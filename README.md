@@ -22,16 +22,12 @@
 
 ### Pi, with a complete desktop workspace
 
-Agent K is the graphical desktop frontend for Pi. It does not replace Pi or create a separate agent ecosystem. Your Pi models,
-providers, conversations, commands, Skills, Extensions, and project settings remain available, while Agent K gives them a
-focused visual workspace.
+Agent K is a desktop client for Pi. It keeps Pi's models, providers, conversations, commands, Skills, and Extensions, then adds
+the pieces that are useful during project work: a file tree, terminal, editors, previews, and a clear view of what the agent is
+doing.
 
-You can keep the conversation in the center, browse project files on the side, open a terminal when needed, and preview or edit
-files without leaving the application. Long-running work remains visible through live reasoning, tool activity, progress, and
-change-review cards.
-
-Agent K is also self-extensible: **users can create Editor Extensions and Language Service Extensions from inside Agent K by
-working with Pi.** This authoring workflow is available now; it is not only a roadmap direction.
+The extension system is available from the app itself. You can ask Pi to build an Editor or a language-service package, review
+the generated files, and install it when you are satisfied with the result.
 
 ### Product tour
 
@@ -70,121 +66,40 @@ working with Pi.** This authoring workflow is available now; it is not only a ro
   </tr>
 </table>
 
-### Core feature: Editors Pi can understand and use
+### Editors that share context with Pi
 
-Most AI tools treat a file as plain text or an attachment. Agent K treats a file as the entrance to a purpose-built workspace.
-An Editor can decide what the file should look like and how a person should interact with it; its paired Editor Skill teaches Pi
-what that workspace means and how it should be used.
+Agent K does not force every file into a text box. An Editor can provide the interface that suits the format—a rendered document,
+media player, image canvas, or live web preview. Its optional Editor Skill tells Pi which file is open, how the format works, and
+which actions the Editor allows.
 
-~~~text
-your file → its purpose-built Editor → format knowledge and safe actions → you and Pi share one workspace
-~~~
+The boundary is explicit: the Editor lists its available actions, and Pi can only request those actions. This gives Pi useful
+visual context without handing it unrestricted access to the desktop.
 
-The design has three parts:
+### What is included
 
-- **The right experience for the file:** a format is not forced into a generic text box. It can have a canvas, timeline, graph,
-  form, table, player, live preview, or any other interface that makes sense for the work.
-- **The right knowledge for Pi:** the paired Editor Skill explains the format, the active file, the workflow, and the meaning of
-  the available controls. You can say “this file,” “the current scene,” or “the visible result” without rebuilding that context
-  by hand.
-- **A deliberate action boundary:** the Editor declares exactly what Pi may ask it to do. Pi can participate in the same visual
-  workflow without guessing hidden operations or receiving unrestricted desktop access.
+- Multiple workspaces and conversations, with pinned projects and remembered layouts.
+- Live reasoning, tool activity, permission requests, file changes, elapsed time, and context usage.
+- Editors for code, Markdown, HTML, images, audio, video, and PDF files.
+- A native project terminal whose output can be copied or sent back to the conversation.
+- Visual management for providers, models, Skills, Extensions, Editors, and language services.
+- Managed local llama.cpp models, including Metal acceleration on macOS.
+- Automatic context cleanup, configurable caches, and complete application/Editor/terminal themes.
 
-This is more than an extensible file viewer. It is a way to build AI-native tools in which the visual interface, domain knowledge,
-and agent workflow are shipped together.
+Local OpenAI-compatible providers accept either a service root or `/v1` URL. Agent K discovers their models and context windows,
+and keeps custom provider names consistent in the model picker and conversation history.
 
-### What you can do
+### Extending Agent K
 
-- **Turn specialized files into shared AI workspaces:** install an Editor with its Editor Skill, then work with Pi through the
-  view and controls designed for that domain instead of translating everything into chat messages.
-- **Create extensions inside Agent K—available today:** describe the Editor or language support you need in the conversation,
-  let Pi author and validate it with Agent K's built-in extension guidance, then review and install it as a separately managed
-  package.
-- **Work with multiple projects and conversations:** pin active workspaces, switch between recent sessions, create branches, and
-  return to previous work without rebuilding your desktop layout.
-- **Follow the agent while it works:** see live progress, reasoning, tool calls, permission requests, file changes, elapsed time,
-  context usage, and completion status in one conversation view.
-- **Work on files together with Pi:** open code, documents, websites, images, audio, video, and PDFs beside the conversation. With
-  an Editor Skill enabled, Pi knows which file is active, understands the experience it belongs to, and can use the actions that
-  experience makes available.
-- **Use a real project terminal:** run normal shell commands, copy terminal content, or send selected output back into the chat.
-  On Linux, Agent K keeps your Bash configuration while mapping standard ANSI colors—and Starship when installed—to the
-  active theme.
-- **Manage the Pi ecosystem visually:** inspect, install, enable, or disable Skills and Extensions without manually editing
-  configuration files. File editors and language features have their own controls.
-- **Choose models and permissions:** manage providers, switch models, select reasoning levels, and control whether a session may
-  run actions. Local OpenAI-compatible services accept either a service root or `/v1` URL (with or without a trailing slash),
-  discover their models and context window, and can enable reasoning per model. Custom Provider names stay consistent in the
-  model picker and conversation history.
-- **Keep long conversations useful:** optional automatic context cleanup preserves the important recent state before the context
-  becomes full.
-- **Match your desktop:** choose light, HDR-friendly soft light, dark, system, or an imported custom theme. A complete theme can
-  coordinate the application, Monaco syntax, terminal palette, and UI/code fonts. Window size, panel widths, terminal height,
-  and panel visibility are remembered for the next launch.
-- **Put large caches where they belong:** choose the cache location used by language tools, indexes, and temporary data without
-  moving the project or application installation.
-- **Stay responsive on larger work:** session reuse, file-editor caching, and interaction optimizations reduce pauses when
-  switching conversations, opening files, scrolling, or resizing panels.
+The bundled `create-agent-k-extensions` Skill can help Pi create two kinds of package:
 
-### What the Editor Skill model makes possible
+- An **Editor Extension** supplies a file-specific interface and, optionally, an Editor Skill with format guidance and safe actions.
+- A **Language Service Extension** supplies project detection, diagnostics, navigation, project actions, and other semantic services.
 
-The bundled Editors demonstrate the model with code, documents, websites, images, media, and PDFs. The important idea is not
-that list—it is that an installed Editor and its paired Skill can turn another format into a new collaborative product experience.
+For example, you can ask for an Editor for `.scene` files, or language support for a project identified by `acme.project`. Pi
+creates the package and runs its checks; you review the files before installing it. Generated code is never installed silently,
+and trusted language-service workers always require explicit review.
 
-| A purpose-built Editor could provide | You could work with Pi like this |
-| --- | --- |
-| A spreadsheet with formulas, filters, and charts | “Explain these outliers, correct the formula, and update the chart while I keep the table open.” |
-| A 3D scene or game-level viewport | “Focus the broken object, inspect its source definition, fix the material, and reload the scene.” |
-| A log, trace, or performance timeline | “Jump to the first failure, group related events, and explain what happened immediately before it.” |
-| A diagram or node-based configuration | “Add the missing service, connect it to the queue, validate the relationships, and show me the result.” |
-| A binary, firmware, or save-file inspector | “Decode this region, highlight the invalid field, patch it, and recalculate the checksum.” |
-| An API request collection | “Open the login request, compare the latest response with the expected schema, and prepare the corrected request.” |
-| A media-review timeline | “Go to the reported moment, mark the section that needs work, and keep that segment as our current context.” |
-| A proprietary business or scientific format | “Use our organization’s own viewer, rules, and approved actions to review and update this record.” |
-
-These examples describe the possibility of the Editor Skill model, not a claim that every specialized Editor is bundled today.
-The model lets each future package define all three parts together: what the user sees, what Pi needs to understand, and what Pi
-is allowed to do. Adding a new domain does not require turning Agent K itself into a spreadsheet, 3D tool, diagram editor, or
-firmware suite.
-
-### Create the Editor or language support you need
-
-> **Available today:** the extension system is not reserved for Agent K maintainers. A user can ask Pi to create or update an
-> Editor Extension or Language Service Extension without leaving Agent K.
-
-Agent K includes the `create-agent-k-extensions` authoring Skill. It gives Pi the current package rules, the separation between
-visual file experiences and trusted language services, and the required creation and verification workflow.
-
-| When you need | Ask Pi to create |
-| --- | --- |
-| A better way to view or manipulate a file | An **Editor Extension** that defines the complete visual experience, file matching, controls, styles, safe actions, and the Editor Skill that teaches Pi how to use it |
-| Deeper understanding of a language or project | A **Language Service Extension** that can recognize projects, manage its language tools, provide diagnostics and navigation, contribute project actions, and connect semantic results to an existing Editor |
-
-The two extension types solve different problems. An Editor Extension owns what the user sees and how the file is manipulated;
-its paired Editor Skill gives Pi the format-specific knowledge and permitted actions. A Language Service Extension owns
-project-level analysis and semantic services. It can enhance an existing Editor and does not need to create another file UI.
-
-For example, you could say:
-
-- “Create an Editor for `.scene` files with a scene tree, property panel, viewport, and actions for focusing or reloading an object.”
-- “Create an Editor Skill that teaches Pi our scene rules and only exposes the approved scene operations.”
-- “Add language support for our internal configuration language, recognize projects by `acme.project`, and show validation errors in the text Editor.”
-- “Connect the new language service to the existing Editor instead of building another code editor.”
-
-The complete authoring loop happens through Agent K:
-
-1. Describe the file experience or language support you want in the conversation.
-2. Pi selects the right extension type and reads Agent K's official extension rules.
-3. Pi creates the independent package, visual experience or language service, matching rules, companion Skill, and ready-to-use output.
-4. Pi runs the required build, tests, and validation.
-5. Review the generated files, then install and enable the package from Agent K.
-
-Agent K does not silently trust or install generated code. Editor Extensions run in an isolated environment after validation.
-Language Service Extensions have deeper access to local language tools, so they must receive explicit review before installation.
-Both remain independent packages that can be inspected, enabled, disabled, installed, or shared without adding
-format- or language-specific branches to Agent K itself.
-
-Today, the first-party packages provide these starting points:
+The bundled packages currently cover:
 
 | Category | Built-in experience |
 | --- | --- |
@@ -195,9 +110,8 @@ Today, the first-party packages provide these starting points:
 | Audio and video | Playback, seeking, and media information |
 | PDF | In-app document reading |
 
-Every Editor and Editor Skill can be managed independently. You may keep the visual experience while withholding its specialized
-guidance and actions from Pi; disabling an Editor also disables its paired Skill. Context sent to Pi stays hidden from the visible
-question and remains inspectable under **Raw information**.
+Editors and their Skills have separate controls. You can keep an Editor enabled without sharing its specialized guidance with Pi;
+disabling an Editor also disables the corresponding Skill. Injected context remains available under **Raw information**.
 
 ### A typical workflow
 
@@ -522,14 +436,10 @@ Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) be
 
 ### 为 Pi 打造的完整桌面工作区
 
-Agent K 是 Pi 的图形化桌面前端。它不会替代 Pi，也不会创造另一套不兼容的 Agent 生态。你在 Pi 中使用的模型、
-Provider、会话、命令、Skills、Extensions 和项目配置都可以继续使用，同时获得一个更完整、更集中的桌面界面。
+Agent K 是 Pi 的桌面客户端。它保留 Pi 的模型、Provider、会话、命令、Skills 和 Extensions，同时加入项目开发常用的
+文件树、终端、编辑器和预览，并集中展示 Agent 当前的工作状态。
 
-对话位于界面中央，项目文件、终端和预览编辑器分布在两侧。你无需频繁切换应用，就能看到 Agent 当前正在做什么、
-使用了哪些工具、修改了哪些文件，以及任务是否已经完成。
-
-Agent K 还具备自扩展能力：**用户可以直接在 Agent K 中与 Pi 协作，创建 Editor Extension 和 Language Service Extension。**
-这是当前已经提供的编写流程，不只是 Roadmap 中的未来方向。
+扩展也可以直接在应用里完成：让 Pi 编写 Editor 或语言服务包，检查生成的文件，确认无误后再安装。
 
 ### 产品界面
 
@@ -542,105 +452,37 @@ Agent K 还具备自扩展能力：**用户可以直接在 Agent K 中与 Pi 协
 模型与 Provider、项目操作、完整主题、Editor 管理器和 Skill Hub 的更多界面见前面的
 [Product tour](#product-tour)。
 
-### 核心特性：Pi 能理解和使用的 Editor
+### 与 Pi 共享上下文的 Editor
 
-大多数 AI 工具只把文件当作纯文本或附件。Agent K 把文件看成一个专用工作台的入口。Editor 决定这种文件应该以什么形态
-呈现、用户应该如何操作；与它配套的 Editor Skill 则让 Pi 理解这个工作台代表什么、应该如何参与。
+Agent K 不会把所有文件都塞进文本框。Editor 可以根据格式提供合适的界面，例如渲染后的文档、媒体播放器、图片画布或 Web
+预览。可选的 Editor Skill 会告诉 Pi 当前打开了什么文件、格式如何工作，以及 Editor 允许哪些操作。
 
-~~~text
-你的文件 → 为它设计的专用 Editor → 格式知识与安全动作 → 你和 Pi 共享同一个工作台
-~~~
+动作边界是明确的：Editor 列出可用动作，Pi 只能请求这些动作。这样既能提供有用的可视化上下文，也不会把整个桌面权限交给 Pi。
 
-这套设计由三部分组成：
+### 当前功能
 
-- **适合这种文件的界面：** 文件不必被塞进通用文本框，它可以拥有画布、时间轴、关系图、表单、表格、播放器、实时预览，
-  或任何真正适合这项工作的界面。
-- **Pi 所需的领域知识：** 配套 Editor Skill 会说明文件格式、当前对象、工作流程和控件含义。你可以直接说“这个文件”、
-  “当前场景”或“现在看到的结果”，无需每次手动重建上下文。
-- **明确的动作边界：** Editor 会清楚声明 Pi 可以请求哪些操作。Pi 能参与同一个可视化流程，但不能猜测隐藏动作，也不会因此
-  获得不受限制的桌面权限。
+- 管理多个工作区和会话，支持固定项目并记住界面布局。
+- 查看思考过程、工具活动、权限请求、文件变更、耗时和上下文用量。
+- 打开代码、Markdown、HTML、图片、音频、视频和 PDF。
+- 使用原生项目终端，并复制输出或发送回对话。
+- 可视化管理 Provider、模型、Skills、Extensions、Editors 和语言服务。
+- 管理本地 llama.cpp 模型，包括 macOS Metal 加速。
+- 自动整理上下文、自定义缓存位置，以及统一应用、Editor 和终端的完整主题。
 
-因此，它不只是一个可以扩展的文件查看器，而是一种构建 AI 原生工具的方式：可视化界面、领域知识和 Agent 工作流程可以作为
-一个整体一起交付。
+本地 OpenAI 兼容 Provider 可以填写服务根地址或 `/v1` 地址。Agent K 会发现模型及其上下文窗口，并让自定义 Provider 名称在
+模型选择器和会话历史中保持一致。
 
-### 你可以用它做什么
+### 扩展 Agent K
 
-- **把专业文件变成共享 AI 工作台：** 安装 Editor 及其 Editor Skill 后，你可以通过这个领域真正需要的视图和控件与 Pi 协作，
-  而不必先把所有内容翻译成聊天文字。
-- **现在就能在 Agent K 中创建扩展：** 在对话中描述你需要的 Editor 或语言支持，让 Pi 根据 Agent K 内置扩展规范完成编写和
-  校验，审阅结果后再把它作为独立包安装和管理。
-- **同时管理多个项目和会话：** 固定常用工作区，按活跃度查看最近会话，创建对话分支，并在切换后保留原来的界面布局。
-- **实时跟进 Agent 工作：** 在同一个对话界面查看进度、思考过程、工具调用、执行确认、文件变更、耗时、上下文用量和完成状态。
-- **和 Pi 一起处理文件：** 在对话旁打开代码、文档、网站、图片、音频、视频和 PDF。启用 Editor Skill 后，Pi 会知道当前
-  正在查看哪个文件、它属于哪种文件体验，以及此刻可以安全使用哪些编辑器动作。
-- **使用真正的项目终端：** 运行日常命令、复制终端内容，或把选中的输出直接加入聊天框。在 Linux 上，Agent K 会保留用户
-  的 Bash 配置，同时让标准 ANSI 颜色及已安装的 Starship 跟随当前主题。
-- **可视化管理 Pi 生态：** 查看、安装、启用或关闭 Skills 和 Extensions，无需手动编辑配置文件；文件编辑器和语言功能也有独立开关。
-- **选择模型和权限：** 管理 Provider、切换模型、选择思考级别，并决定某个会话是否允许执行操作。本地 OpenAI 兼容服务可填写
-  服务根地址或 `/v1` 地址（末尾带或不带 `/` 均可），可发现模型与上下文窗口，并能按模型启用思考；自定义 Provider 名称会在
-  模型选择器和聊天历史中保持一致。
-- **保持长对话可用：** 可选的自动上下文整理会在容量耗尽前保留近期的重要信息。
-- **适应你的桌面习惯：** 支持浅色、适合 HDR 显示器的柔和亮色、深色、跟随系统及导入的自定义主题。完整主题可以统一应用
-  界面、Monaco 语法、终端调色板和 UI/代码字体，并记住窗口大小、边栏宽度、终端高度及面板开关状态。
-- **自行安排大型缓存：** 可以选择语言工具、索引和临时数据的缓存位置，无需移动项目或 Agent K 安装目录。
-- **在大型任务中保持流畅：** 会话复用、文件编辑器缓存和交互优化可以减少切换会话、打开文件、滚动及调整面板时的等待。
+内置的 `create-agent-k-extensions` Skill 可以协助 Pi 创建两类包：
 
-### Editor Skill 模型带来的可能性
+- **Editor Extension** 提供面向特定文件的界面，并可附带包含格式说明和安全动作的 Editor Skill。
+- **Language Service Extension** 提供项目识别、诊断、跳转、项目操作及其他语义服务。
 
-当前内置 Editor 使用代码、文档、网站、图片、媒体和 PDF 展示了这套模型。真正重要的不是这张格式清单，而是任何新安装的
-Editor 及其配套 Skill 都可以把另一种文件变成新的协作产品体验。
+例如，你可以要求创建 `.scene` 文件的 Editor，或为通过 `acme.project` 识别的项目增加语言支持。Pi 会创建包并执行检查；安装前
+由你审阅文件。生成的代码不会被静默安装，受信任的语言服务 worker 始终需要明确审阅。
 
-| 一个专用 Editor 可以提供 | 你可以这样与 Pi 协作 |
-| --- | --- |
-| 带公式、筛选和图表的电子表格 | “解释这些异常值，修正公式，并在我继续看表格时更新图表。” |
-| 3D 场景或游戏关卡视口 | “定位这个损坏对象，检查它的源定义，修复材质，然后重新载入场景。” |
-| 日志、Trace 或性能时间轴 | “跳到第一次失败，归类相关事件，并解释在它之前发生了什么。” |
-| 关系图或节点式配置 | “补上缺失的服务，把它连接到队列，校验关系，然后显示最终结果。” |
-| 二进制、固件或存档检查器 | “解析这个区域，高亮错误字段，完成修补并重新计算校验和。” |
-| API 请求集合 | “打开登录请求，对比最近响应和预期结构，然后准备修正后的请求。” |
-| 媒体审阅时间轴 | “跳到报告中的时间点，标记需要修改的片段，并让这段内容成为当前上下文。” |
-| 企业或科研专有格式 | “使用我们自己的查看器、业务规则和已批准动作来审阅并更新这条记录。” |
-
-这些例子展示的是 Editor Skill 模型的可能性，并不表示所有专用 Editor 现在都已经内置。这个模型允许未来的每个包同时定义三件事：
-用户看到什么、Pi 需要理解什么、Pi 被允许做什么。增加一个新领域，不需要先把 Agent K 本身改造成电子表格、3D 工具、关系图
-编辑器或固件套件。
-
-### 创建你需要的 Editor 或语言支持
-
-> **当前已经支持：** 扩展系统不是 Agent K 维护者的专属能力。普通用户无需离开 Agent K，就可以让 Pi 创建或更新
-> Editor Extension 和 Language Service Extension。
-
-Agent K 内置 `create-agent-k-extensions` 编写 Skill。它会向 Pi 提供最新的包规范、可视化文件体验与受信任语言服务之间的边界，
-以及必须执行的创建和校验流程。
-
-| 当你需要 | 可以让 Pi 创建 |
-| --- | --- |
-| 更合适的文件查看或操作方式 | **Editor Extension**：完整定义可视化体验、文件匹配、控件、样式和安全动作，同时提供教 Pi 使用它的 Editor Skill |
-| 更深入的语言或项目理解 | **Language Service Extension**：识别工程、管理语言工具、提供诊断与导航、贡献项目动作，并把语义结果接入现有 Editor |
-
-两类扩展解决的是不同问题。Editor Extension 决定用户看到什么、如何操作文件；配套 Editor Skill 向 Pi 提供格式知识和允许调用的
-动作。Language Service Extension 负责工程级分析和语义服务，它可以增强现有 Editor，不需要再创建一套文件界面。
-
-例如，你可以直接说：
-
-- “为 `.scene` 文件创建一个 Editor，包含场景树、属性面板、视口，以及聚焦和重新载入对象的动作。”
-- “创建配套 Editor Skill，让 Pi 理解我们的场景规则，并且只暴露经过批准的场景操作。”
-- “为内部配置语言增加语言支持，通过 `acme.project` 识别工程，并把校验错误显示在文本 Editor 中。”
-- “把新语言服务连接到现有 Editor，不要再做一个代码编辑器。”
-
-完整编写闭环都可以通过 Agent K 完成：
-
-1. 在对话中描述你想要的文件体验或语言支持。
-2. Pi 选择合适的扩展类型，并读取 Agent K 的官方扩展规则。
-3. Pi 创建独立包、可视化体验或语言服务、匹配规则、配套 Skill 和可直接使用的产物。
-4. Pi 运行必要的构建、测试和校验。
-5. 用户检查生成文件，然后在 Agent K 中安装并启用该扩展。
-
-Agent K 不会静默信任或安装生成的代码。Editor Extension 通过校验后在隔离环境中运行；Language Service Extension
-对本地语言工具拥有更深层访问，因此安装前必须经过明确审阅。两者都保持为独立包，可以检查、启用、关闭、安装或分享，
-不需要向 Agent K 本身加入特定格式或语言的分支。
-
-当前第一方包提供以下起点：
+当前内置包包括：
 
 | 类型 | 内置体验 |
 | --- | --- |
@@ -651,8 +493,8 @@ Agent K 不会静默信任或安装生成的代码。Editor Extension 通过校�
 | 音频和视频 | 播放、定位和媒体信息 |
 | PDF | 应用内文档阅读 |
 
-每个 Editor 和 Editor Skill 都可以独立管理。你可以保留可视化体验，但不向 Pi 提供该格式的专用说明与动作；关闭 Editor 时，
-对应 Skill 也会关闭。发送给 Pi 的上下文不会混入可见问题，并可在“原始信息”中检查。
+Editor 与其 Skill 有独立开关。你可以保留 Editor，但不向 Pi 提供该格式的专用说明；关闭 Editor 时，对应 Skill 也会关闭。
+注入的上下文可以在“原始信息”中检查。
 
 ### 一次典型的使用过程
 
