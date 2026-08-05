@@ -32,3 +32,12 @@ test("theme Skill maps every template element to a visible Agent K role", async 
   assert.match(reference, /main chat composer is a raised surface/u);
   assert.match(reference, /terminal palette is independent/u);
 });
+
+test("Editor Skill previews use the active theme scrollbar palette", async () => {
+  const theme = await readFile(join(root, "src/styles/theme.css"), "utf8");
+
+  assert.match(theme, /\.skill-hub-preview textarea \{[^}]*scrollbar-color: var\(--scrollbar-thumb\) var\(--surface-panel\)/su);
+  assert.match(theme, /\.skill-hub-preview textarea::-webkit-scrollbar-thumb \{[^}]*background: var\(--scrollbar-thumb\)/su);
+  assert.match(theme, /\.skill-hub-preview textarea::-webkit-scrollbar-thumb:hover \{[^}]*background: var\(--scrollbar-thumb-hover\)/su);
+  assert.match(theme, /\.skill-hub-preview textarea::-webkit-scrollbar-track \{ background: var\(--surface-panel\); \}/u);
+});

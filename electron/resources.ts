@@ -71,6 +71,24 @@ function resourceName(
   return entryName || kind;
 }
 
+export function reconcilePiResourceRegistry(
+  registry: PiResource[],
+  presentKeys: ReadonlySet<string>,
+): PiResource[] {
+  return registry.flatMap((resource) => {
+    const key = `${resource.kind}\0${resource.path}`;
+    if (!presentKeys.has(key) && !existsSync(resource.path)) return [];
+    if (
+      resource.kind !== "extension" ||
+      !["index", "main"].includes(resource.name.toLocaleLowerCase("en-US"))
+    ) return [resource];
+    return [{
+      ...resource,
+      name: resourceName(resource.path, resource.kind, resource.source),
+    }];
+  });
+}
+
 function resourcesFromCommands(value: unknown): PiResource[] {
   const resources: PiResource[] = [];
   for (const raw of asArray(asObject(value).commands)) {
@@ -327,6 +345,11 @@ export async function getPiResources(
       };
     } else registry.push(resource);
   }
+  const reconciledRegistry = reconcilePiResourceRegistry(
+    registry,
+    new Set(active.map((resource) => `${resource.kind}\0${resource.path}`)),
+  );
+  registry.splice(0, registry.length, ...reconciledRegistry);
   registry.sort(
     (left, right) =>
       left.kind.localeCompare(right.kind) ||

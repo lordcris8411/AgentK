@@ -43,3 +43,11 @@ test("all resizable inspector layout is backed by client settings", async () => 
   assert.match(settings, /fileExplorerWidth: 190/);
   assert.match(settings, /developmentDockHeight: 280/);
 });
+
+test("file selection creates a visible pending tab before storage finishes", async () => {
+  const inspector = await source("src/components/layout/InspectorPanel.tsx");
+  assert.match(inspector, /loading\?: boolean/);
+  assert.match(inspector, /tabsRef\.current = pendingTabs;\s*setTabs\(pendingTabs\);\s*activateTab\(path\)/);
+  assert.match(inspector, /current\?\.loading[\s\S]*Opening file…/);
+  assert.match(inspector, /const liveTabs = tabsRef\.current/);
+});

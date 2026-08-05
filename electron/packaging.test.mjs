@@ -112,6 +112,13 @@ test("bundled language workers do not depend on host node_modules", async () => 
   }
 });
 
+test("language worker rebuilds keep the previous worker discoverable", async () => {
+  const source = await readFile(join(root, "script", "build-language-server-plugins.mjs"), "utf8");
+  assert.match(source, /const stagingDirectory = join\(directory, "\.agent-k-language-server-build"\)/);
+  assert.match(source, /await copyFile\(stagingOutput, output\)/);
+  assert.doesNotMatch(source, /await rm\(dirname\(output\)/);
+});
+
 test("bundled language workers initialize outside the development tree", async () => {
   const packages = join(root, "language-servers");
   for (const entry of await readdir(packages, { withFileTypes: true })) {

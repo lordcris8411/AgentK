@@ -47,6 +47,8 @@ type Tab = {
   previewMode?: boolean;
   runtimeDirty?: boolean;
   externalChanged?: boolean;
+  loading?: boolean;
+  loadError?: string;
   webPreviewUrl?: string;
   webPreviewReloadToken?: number;
 };
@@ -1198,7 +1200,8 @@ export function InspectorPanel({
   }, [paintTreeSelection, query, tree]);
   const activateTab = (path: string) => {
     const pathKey = path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
-    const targetPath = tabs.find((tab) => tab.path.replaceAll("\\", "/").toLocaleLowerCase("en-US") === pathKey)?.path ?? path;
+    const liveTabs = tabsRef.current;
+    const targetPath = liveTabs.find((tab) => tab.path.replaceAll("\\", "/").toLocaleLowerCase("en-US") === pathKey)?.path ?? path;
     const previousPath = activePathRef.current;
     const request = ++activationRequest.current;
     const finish = () => {
@@ -1206,7 +1209,7 @@ export function InspectorPanel({
       activePathRef.current = targetPath;
       setActive(targetPath);
     };
-    const previousTab = tabs.find((tab) => tab.path === previousPath);
+    const previousTab = liveTabs.find((tab) => tab.path === previousPath);
     if (
       previousPath !== targetPath &&
       previousTab?.format?.editor === "plugin" &&
@@ -1271,13 +1274,32 @@ export function InspectorPanel({
     }));
   }, [active, fileFormatPlugins, root, settings.disabledFileEditors, settings.disabledFileEditorSkills]);
   const open = async (path: string, reportError = true): Promise<{ error?: string; ok: boolean }> => {
-    const failed = (message: string) => {
-      if (reportError) onError(message);
-      return { error: message, ok: false };
-    };
     const pathKey = path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
     const alreadyOpen = (tab: Tab) => tab.path.replaceAll("\\", "/").toLocaleLowerCase("en-US") === pathKey;
-    const appendTab = (tab: Tab) => {
+    if (!root) {
+      const message = "无法在没有工作区时打开文件";
+      if (reportError) onError(message);
+      return { error: message, ok: false };
+    }
+    const openingRoot = root;
+    const existingTab = tabsRef.current.find(alreadyOpen);
+    if (existingTab && !existingTab.loadError) {
+      activateTab(existingTab.path);
+      return { ok: true };
+    }
+
+    const pendingTab: Tab = existingTab
+      ? { ...existingTab, loading: true, loadError: undefined }
+      : { path, content: "", saved: "", loading: true };
+    const pendingTabs = existingTab
+      ? tabsRef.current.map((tab) => alreadyOpen(tab) ? pendingTab : tab)
+      : [...tabsRef.current, pendingTab];
+    tabsRef.current = pendingTabs;
+    setTabs(pendingTabs);
+    activateTab(path);
+
+    const replacePendingTab = (tab: Tab): boolean => {
+      if (currentRoot.current !== openingRoot || !tabsRef.current.some(alreadyOpen)) return false;
       const projectPath = [...detectedLanguageProjects.keys()]
         .filter((candidate) => {
           const filePath = normalizedTreePath(tab.path);
@@ -1288,12 +1310,16 @@ export function InspectorPanel({
       const tabWithProject = project && projectPath !== undefined
         ? { ...tab, project: { languageServerId: project.id, path: projectPath } }
         : tab;
-      setTabs((current) => current.some(alreadyOpen) ? current : [...current, tabWithProject]);
+      const nextTabs = tabsRef.current.map((candidate) => alreadyOpen(candidate) ? tabWithProject : candidate);
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
+      return true;
     };
-    if (!root || tabs.some(alreadyOpen)) {
-      activateTab(path);
-      return root ? { ok: true } : failed("无法在没有工作区时打开文件");
-    }
+    const failed = (message: string) => {
+      replacePendingTab({ path, content: "", saved: "", loadError: message });
+      if (reportError) onError(message);
+      return { error: message, ok: false };
+    };
     const match = fileMatchContext(path, absoluteWorkspacePath(root, path));
     // An agent can request an open action before the asynchronous plugin
     // discovery effect has completed. Do not turn that temporary empty list
@@ -1310,30 +1336,26 @@ export function InspectorPanel({
     }
     const format = resolveFileFormat(match, plugins, settings.disabledFileEditors);
     if (!format) {
-      appendTab({ path, content: "", saved: "", unsupported: true });
-      activateTab(path);
+      replacePendingTab({ path, content: "", saved: "", unsupported: true });
       return { ok: true };
     }
     const previewKind = format.mediaKind;
     if (format.editor === "plugin" && previewKind) {
       try {
         const data = await desktop.readBinary(root, path);
-        appendTab({ binary: data, content: "", path, previewBytes: data.byteLength, previewCodec: previewKind === "video" ? detectVideoCodec(data) : undefined, mimeType: match.mimeType, saved: "", format });
-        activateTab(path);
+        replacePendingTab({ binary: data, content: "", path, previewBytes: data.byteLength, previewCodec: previewKind === "video" ? detectVideoCodec(data) : undefined, mimeType: match.mimeType, saved: "", format });
         return { ok: true };
       } catch (cause) {
         return failed(`无法预览文件：${String(cause)}`);
       }
     }
     if (!(format.editable === true || path.toLowerCase().endsWith(".lock"))) {
-      appendTab({ path, content: "", saved: "", unsupported: true, format, mimeType: match.mimeType });
-      activateTab(path);
+      replacePendingTab({ path, content: "", saved: "", unsupported: true, format, mimeType: match.mimeType });
       return { ok: true };
     }
     try {
       const content = await desktop.read(root, path);
-      appendTab({ path, content, saved: content, format, mimeType: match.mimeType });
-      activateTab(path);
+      replacePendingTab({ path, content, saved: content, format, mimeType: match.mimeType });
       return { ok: true };
     } catch (cause) {
       return failed(`无法打开文件：${String(cause)}`);
@@ -2401,6 +2423,7 @@ export function InspectorPanel({
                 title={tab.externalChanged ? (en ? "Changed on disk; local edits were preserved" : "磁盘文件已变更；已保留本地未保存修改") : undefined}
                 type="button"
               >
+                {tab.loading ? <i aria-hidden="true" className="fa-solid fa-circle-notch fa-spin" /> : null}
                 {tab.projectOverview?.name ?? tab.path.split(/[\\/]/).pop()}
                 {!tab.projectOverview && (tab.content !== tab.saved || tab.runtimeDirty) ? " •" : ""}
                 {tab.externalChanged ? " ↻" : ""}
@@ -2601,7 +2624,17 @@ export function InspectorPanel({
               </>
             </div>
           ) : null}
-          {showCreateProjectReadme && selectedCppProject ? (
+          {current?.loading ? (
+            <div className="file-editor-status" role="status">
+              <span className="html-preview-loader" />
+              <span>{en ? "Opening file…" : "正在打开文件…"}</span>
+            </div>
+          ) : current?.loadError ? (
+            <div className="file-editor-status is-error" role="alert">
+              <i aria-hidden="true" className="fa-solid fa-triangle-exclamation" />
+              <span>{current.loadError}</span>
+            </div>
+          ) : showCreateProjectReadme && selectedCppProject ? (
             <div className="cpp-project-readme-empty">
               <i aria-hidden="true" className="fa-regular fa-file-lines" />
               <strong>{en ? "This C++ project has no README.md" : "这个 C++ 工程还没有 README.md"}</strong>
