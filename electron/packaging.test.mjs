@@ -77,6 +77,16 @@ test("desktop distribution targets include Windows, Linux, and macOS", async () 
   assert.deepEqual(manifest.build?.win?.target, ["portable"]);
 });
 
+test("release workflow publishes native Intel and Apple Silicon macOS packages", async () => {
+  const source = await readFile(join(root, ".github", "workflows", "release.yml"), "utf8");
+  assert.match(source, /workflow_dispatch:/);
+  assert.match(source, /os: macos-15-intel[\s\S]*?--x64/);
+  assert.match(source, /os: macos-15[\s\S]*?--arm64/);
+  assert.match(source, /release\/\*\.dmg/);
+  assert.match(source, /release\/\*\.zip/);
+  assert.match(source, /gh release upload "\$RELEASE_TAG" artifacts\/\* .* --clobber/);
+});
+
 test("native preparation makes the macOS node-pty spawn helper executable", async (context) => {
   if (process.platform !== "darwin") {
     context.skip("node-pty uses spawn-helper only on macOS");

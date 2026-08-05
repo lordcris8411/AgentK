@@ -4,12 +4,21 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and update
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -17,13 +26,15 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
       - name: Verify tag matches package version
-        run: node -e "const v=require('./package.json').version;if(process.env.GITHUB_REF_NAME!=='v'+v)throw new Error('Tag must be v'+v)"
+        run: node -e "const v=require('./package.json').version;if(process.env.RELEASE_TAG!=='v'+v)throw new Error('Tag must be v'+v)"
       - run: npm run check
       - run: npm test
 
@@ -41,9 +52,23 @@ jobs:
             command: npm run dist:linux -- --publish never
             artifact: agent-k-linux-x64
             path: release/*.AppImage
+          - os: macos-15-intel
+            command: npm run dist:mac -- --x64 --publish never
+            artifact: agent-k-macos-x64
+            path: |
+              release/*.dmg
+              release/*.zip
+          - os: macos-15
+            command: npm run dist:mac -- --arm64 --publish never
+            artifact: agent-k-macos-arm64
+            path: |
+              release/*.dmg
+              release/*.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -72,10 +97,14 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" artifacts/*
-          --repo "$GITHUB_REPOSITORY"
-          --title "Agent K $GITHUB_REF_NAME"
-          --generate-notes
-          --verify-tag
-          --latest
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$RELEASE_TAG" artifacts/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Agent K $RELEASE_TAG" \
+              --generate-notes \
+              --verify-tag \
+              --latest
+          fi
