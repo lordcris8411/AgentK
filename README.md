@@ -392,6 +392,7 @@ include:
 | `gdb-debug` Skill | GDB launch, backtrace, threads, and core-dump workflows |
 | `create-agent-k-extensions` Skill | Authoring and validation guidance for Agent K packages |
 | `create-agent-k-theme` Skill | Creation and management of complete Agent K theme packages |
+| `agent-k-file-editor` Skill | Open workspace files in Agent K, preview Markdown or web projects, capture previews, and inspect preview-console output |
 | K's Plan Extension | Strict file-backed task planning and review through `/plan` |
 
 Skill Hub accepts `skills add` commands, skills.sh URLs, GitHub repository URLs, and direct GitHub Skill-directory URLs. Preview
@@ -833,6 +834,7 @@ Agent K 通过 Pi 公开的启动参数提供 Skills 和 Extensions，不修改 
 | `gdb-debug` Skill | GDB 启动、回溯、线程和 core dump 工作流 |
 | `create-agent-k-extensions` Skill | Agent K 扩展包的编写和校验说明 |
 | `create-agent-k-theme` Skill | 创建和管理完整的 Agent K 主题包 |
+| `agent-k-file-editor` Skill | 在 Agent K 中打开工作区文件、预览 Markdown 或 Web 项目、截取预览图，并读取预览控制台输出 |
 | K's Plan Extension | 通过 `/plan` 使用严格、文件化的任务规划与审阅流程 |
 
 Skill Hub 接受 `skills add` 命令、skills.sh URL、GitHub 仓库 URL 和直接的 GitHub Skill 目录 URL。预览限制为 80 个文件 / 2 MiB，
