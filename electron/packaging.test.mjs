@@ -93,6 +93,14 @@ test("native preparation makes the node-pty spawn helper executable", async (con
   );
 });
 
+test("native preparation treats a missing Unix spawn helper as incomplete", async () => {
+  const source = await readFile(join(root, "script", "prepare-native.mjs"), "utf8");
+  assert.match(source, /function nativeArtifactsReady\(\)/);
+  assert.match(source, /return canLoadNodePty\(\) && \(!helper \|\| existsSync\(helper\)\)/);
+  assert.match(source, /if \(!nativeArtifactsReady\(\)\) \{/);
+  assert.match(source, /await makeSpawnHelpersExecutable\(\)/);
+});
+
 test("bundled language workers do not depend on host node_modules", async () => {
   const packages = join(root, "language-servers");
   for (const entry of await readdir(packages, { withFileTypes: true })) {

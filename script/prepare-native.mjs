@@ -8,6 +8,19 @@ const root = join(import.meta.dirname, "..");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const npmCli = process.env.npm_execpath;
 
+function currentSpawnHelper() {
+  return process.platform === "win32"
+    ? undefined
+    : join(
+        root,
+        "node_modules",
+        "node-pty",
+        "prebuilds",
+        `${process.platform}-${process.arch}`,
+        "spawn-helper",
+      );
+}
+
 async function makeSpawnHelpersExecutable() {
   if (process.platform === "win32") return;
   const prebuilds = join(root, "node_modules", "node-pty", "prebuilds");
@@ -19,8 +32,6 @@ async function makeSpawnHelpersExecutable() {
   }
 }
 
-await makeSpawnHelpersExecutable();
-
 function canLoadNodePty() {
   return spawnSync(process.execPath, ["-e", "require('node-pty')"], {
     cwd: root,
@@ -29,7 +40,12 @@ function canLoadNodePty() {
   }).status === 0;
 }
 
-if (!canLoadNodePty()) {
+function nativeArtifactsReady() {
+  const helper = currentSpawnHelper();
+  return canLoadNodePty() && (!helper || existsSync(helper));
+}
+
+if (!nativeArtifactsReady()) {
   console.log("Preparing the reviewed node-pty native module...");
   const rebuilt = spawnSync(
     npmCli ? process.execPath : npm,
@@ -40,10 +56,12 @@ if (!canLoadNodePty()) {
     windowsHide: true,
     },
   );
-  if (rebuilt.status !== 0 || !canLoadNodePty()) {
+  if (rebuilt.status !== 0 || !nativeArtifactsReady()) {
     console.error(
       "Unable to prepare node-pty. Install the platform C/C++ build tools, then run npm run prepare:native again.",
     );
     process.exit(rebuilt.status || 1);
   }
 }
+
+await makeSpawnHelpersExecutable();
