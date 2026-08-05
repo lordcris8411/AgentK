@@ -86,17 +86,29 @@ test("native preparation makes the node-pty spawn helper executable", async (con
     cwd: root,
     encoding: "utf8",
   });
-  assert.equal(prepared.status, 0, prepared.stderr);
-  await access(
-    join(root, "node_modules", "node-pty", "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper"),
-    constants.X_OK,
+  assert.equal(prepared.status, 0, `${prepared.stdout}\n${prepared.stderr}`);
+  const resolved = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      [
+        "const path = require('node:path');",
+        "const utils = require.resolve('node-pty/lib/utils');",
+        "const loaded = require(utils).loadNativeModule('pty');",
+        "process.stdout.write(path.resolve(path.dirname(utils), loaded.dir, 'spawn-helper'));",
+      ].join(""),
+    ],
+    { cwd: root, encoding: "utf8" },
   );
+  assert.equal(resolved.status, 0, resolved.stderr);
+  await access(resolved.stdout.trim(), constants.X_OK);
 });
 
 test("native preparation treats a missing Unix spawn helper as incomplete", async () => {
   const source = await readFile(join(root, "script", "prepare-native.mjs"), "utf8");
   assert.match(source, /function nativeArtifactsReady\(\)/);
-  assert.match(source, /return canLoadNodePty\(\) && \(!helper \|\| existsSync\(helper\)\)/);
+  assert.match(source, /const directory = loadedNativeDirectory\(\)/);
+  assert.match(source, /existsSync\(join\(directory, "spawn-helper"\)\)/);
   assert.match(source, /if \(!nativeArtifactsReady\(\)\) \{/);
   assert.match(source, /await makeSpawnHelpersExecutable\(\)/);
 });

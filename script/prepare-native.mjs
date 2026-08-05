@@ -8,26 +8,40 @@ const root = join(import.meta.dirname, "..");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const npmCli = process.env.npm_execpath;
 
-function currentSpawnHelper() {
-  return process.platform === "win32"
-    ? undefined
-    : join(
-        root,
-        "node_modules",
-        "node-pty",
-        "prebuilds",
-        `${process.platform}-${process.arch}`,
-        "spawn-helper",
-      );
+function loadedNativeDirectory() {
+  if (process.platform === "win32") return undefined;
+  const resolved = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      [
+        "const path = require('node:path');",
+        "const utils = require.resolve('node-pty/lib/utils');",
+        "const loaded = require(utils).loadNativeModule('pty');",
+        "process.stdout.write(path.resolve(path.dirname(utils), loaded.dir));",
+      ].join(""),
+    ],
+    {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+    },
+  );
+  return resolved.status === 0 ? resolved.stdout.trim() : undefined;
 }
 
 async function makeSpawnHelpersExecutable() {
   if (process.platform === "win32") return;
-  const prebuilds = join(root, "node_modules", "node-pty", "prebuilds");
-  if (!existsSync(prebuilds)) return;
-  for (const entry of await readdir(prebuilds, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const helper = join(prebuilds, entry.name, "spawn-helper");
+  const nativeRoot = join(root, "node_modules", "node-pty");
+  const directories = [join(nativeRoot, "build", "Release"), join(nativeRoot, "build", "Debug")];
+  const prebuilds = join(nativeRoot, "prebuilds");
+  if (existsSync(prebuilds)) {
+    for (const entry of await readdir(prebuilds, { withFileTypes: true })) {
+      if (entry.isDirectory()) directories.push(join(prebuilds, entry.name));
+    }
+  }
+  for (const directory of directories) {
+    const helper = join(directory, "spawn-helper");
     if (existsSync(helper)) await chmod(helper, 0o755);
   }
 }
@@ -41,8 +55,9 @@ function canLoadNodePty() {
 }
 
 function nativeArtifactsReady() {
-  const helper = currentSpawnHelper();
-  return canLoadNodePty() && (!helper || existsSync(helper));
+  if (process.platform === "win32") return canLoadNodePty();
+  const directory = loadedNativeDirectory();
+  return Boolean(directory && existsSync(join(directory, "spawn-helper")));
 }
 
 if (!nativeArtifactsReady()) {
@@ -51,9 +66,9 @@ if (!nativeArtifactsReady()) {
     npmCli ? process.execPath : npm,
     npmCli ? [npmCli, "rebuild", "node-pty"] : ["rebuild", "node-pty"],
     {
-    cwd: root,
-    stdio: "inherit",
-    windowsHide: true,
+      cwd: root,
+      stdio: "inherit",
+      windowsHide: true,
     },
   );
   if (rebuilt.status !== 0 || !nativeArtifactsReady()) {
