@@ -1505,7 +1505,7 @@ export function InspectorPanel({
   // The floating toolbar belongs to the active editor tab. Tree selection is
   // used only when no tab is open, so actions cannot remain from another project.
   const projectDirectoryEntry = current
-    ? current.project ? findTreeEntry(tree, current.project.path) : undefined
+    ? current.projectOverview && current.project ? findTreeEntry(tree, current.project.path) : undefined
     : selectedDirectoryEntry;
   const selectedLanguageProject = root && projectDirectoryEntry
     ? languageProjects.find((project) =>

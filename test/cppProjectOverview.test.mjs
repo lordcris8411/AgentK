@@ -24,7 +24,8 @@ test("C++ project folder selection owns Debug and README presentation", () => {
   assert.match(inspectorSource, /tab\.projectOverview\?\.name \?\? tab\.path/);
   assert.doesNotMatch(inspectorSource, /open\(selectedProjectReadmePath\)/);
   assert.match(inspectorSource, /const projectDirectoryEntry = current/);
-  assert.match(inspectorSource, /current\.project \? findTreeEntry\(tree, current\.project\.path\) : undefined/);
+  assert.match(inspectorSource, /current\.projectOverview && current\.project \? findTreeEntry\(tree, current\.project\.path\) : undefined/);
+  assert.match(inspectorSource, /current && !current\.unsupported && current\.format\?\.editable/);
   assert.match(inspectorSource, /if \(selectedLanguageProject\) void unloadLanguageProject/);
   assert.match(inspectorSource, /loadLanguageProject\(selectedLanguagePlugin, selectedCppProject\.root\)/);
   assert.doesNotMatch(inspectorSource, /currentIsWorkspaceFile\s*\?\s*\(\s*<button[\s\S]*?openDebug/);
