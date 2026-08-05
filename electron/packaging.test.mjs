@@ -109,6 +109,7 @@ test("native preparation treats a missing Unix spawn helper as incomplete", asyn
   assert.match(source, /function nativeArtifactsReady\(\)/);
   assert.match(source, /const directory = loadedNativeDirectory\(\)/);
   assert.match(source, /existsSync\(join\(directory, "spawn-helper"\)\)/);
+  assert.match(source, /"--ignore-scripts=false", "--foreground-scripts"/);
   assert.match(source, /if \(!nativeArtifactsReady\(\)\) \{/);
   assert.match(source, /await makeSpawnHelpersExecutable\(\)/);
 });

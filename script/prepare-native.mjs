@@ -62,9 +62,10 @@ function nativeArtifactsReady() {
 
 if (!nativeArtifactsReady()) {
   console.log("Preparing the reviewed node-pty native module...");
+  const rebuildArgs = ["rebuild", "node-pty", "--ignore-scripts=false", "--foreground-scripts"];
   const rebuilt = spawnSync(
     npmCli ? process.execPath : npm,
-    npmCli ? [npmCli, "rebuild", "node-pty"] : ["rebuild", "node-pty"],
+    npmCli ? [npmCli, ...rebuildArgs] : rebuildArgs,
     {
       cwd: root,
       stdio: "inherit",
