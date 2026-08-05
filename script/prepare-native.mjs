@@ -9,7 +9,7 @@ const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const npmCli = process.env.npm_execpath;
 
 function loadedNativeDirectory() {
-  if (process.platform === "win32") return undefined;
+  if (process.platform !== "darwin") return undefined;
   const resolved = spawnSync(
     process.execPath,
     [
@@ -55,7 +55,7 @@ function canLoadNodePty() {
 }
 
 function nativeArtifactsReady() {
-  if (process.platform === "win32") return canLoadNodePty();
+  if (process.platform !== "darwin") return canLoadNodePty();
   const directory = loadedNativeDirectory();
   return Boolean(directory && existsSync(join(directory, "spawn-helper")));
 }

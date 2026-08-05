@@ -77,9 +77,9 @@ test("desktop distribution targets include Windows, Linux, and macOS", async () 
   assert.deepEqual(manifest.build?.win?.target, ["portable"]);
 });
 
-test("native preparation makes the node-pty spawn helper executable", async (context) => {
-  if (process.platform === "win32") {
-    context.skip("node-pty uses a different launcher on Windows");
+test("native preparation makes the macOS node-pty spawn helper executable", async (context) => {
+  if (process.platform !== "darwin") {
+    context.skip("node-pty uses spawn-helper only on macOS");
     return;
   }
   const prepared = spawnSync(process.execPath, [join(root, "script", "prepare-native.mjs")], {
@@ -104,9 +104,10 @@ test("native preparation makes the node-pty spawn helper executable", async (con
   await access(resolved.stdout.trim(), constants.X_OK);
 });
 
-test("native preparation treats a missing Unix spawn helper as incomplete", async () => {
+test("native preparation treats a missing macOS spawn helper as incomplete", async () => {
   const source = await readFile(join(root, "script", "prepare-native.mjs"), "utf8");
   assert.match(source, /function nativeArtifactsReady\(\)/);
+  assert.match(source, /if \(process\.platform !== "darwin"\) return canLoadNodePty\(\)/);
   assert.match(source, /const directory = loadedNativeDirectory\(\)/);
   assert.match(source, /existsSync\(join\(directory, "spawn-helper"\)\)/);
   assert.match(source, /"--ignore-scripts=false", "--foreground-scripts"/);
