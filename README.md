@@ -310,8 +310,9 @@ Theme changes propagate live to the React interface, cached Editor frames, Monac
 terminal; imported themes are previewed before selection and can be removed independently.
 
 Custom theme files can be imported from **Settings → Appearance and language** or created with Pi through the bundled
-`create-agent-k-theme` Skill. Agent K watches the user theme directory and applies valid external updates without requiring a
-rebuild. The bundled [Retro Terminal theme](themes/retro-terminal.json) is a complete theme definition.
+`create-agent-k-theme` Skill. Agent K stores them in the isolated `%USERPROFILE%\\.pi\\agent\\k_themes` directory, watches that
+directory, and applies valid external updates without requiring a rebuild. The bundled [Retro Terminal theme](themes/retro-terminal.json)
+is a complete theme definition.
 
 ### Programmable file Editor SDK
 
@@ -745,8 +746,8 @@ Agent K 主题是经过校验的 JSON 包，而不只是一个浅色/深色开�
 完整 ANSI 终端调色板，以及独立的 UI/代码字体栈。切换主题时，React 界面、已缓存的 Editor frame、Monaco 实例、审阅界面和项目
 终端都会即时更新；导入的主题可以先预览，再独立选择或删除。
 
-用户可以从**设置 → 外观与语言**导入主题文件，也可以通过内置 `create-agent-k-theme` Skill 让 Pi 创建主题。Agent K 会监控用户
-主题目录，并在有效文件发生变化时直接应用，无需重新构建。完整定义可参考
+用户可以从**设置 → 外观与语言**导入主题文件，也可以通过内置 `create-agent-k-theme` Skill 让 Pi 创建主题。Agent K 将自定义主题
+隔离存放在 `%USERPROFILE%\\.pi\\agent\\k_themes`，监控该目录，并在有效文件发生变化时直接应用，无需重新构建。完整定义可参考
 [内置 Retro Terminal 主题](themes/retro-terminal.json)提供完整的主题定义。
 
 ### 可编程文件 Editor SDK

@@ -5,7 +5,7 @@ description: Create and manage validated Agent K custom theme JSON files from a 
 
 # Manage Agent K themes
 
-Create one JSON file based on `assets/theme.template.json`. Ask only for a missing theme name or whether the theme should be light or dark when it cannot be inferred.
+Before creating or modifying a theme, read `references/theme-elements.md` completely. Use its screen-region map to translate the user's visual language into theme keys; do not guess a key from its name alone. Create one JSON file based on `assets/theme.template.json`. Ask only for a missing theme name, whether the theme should be light or dark, or which UI region the user means when a description such as "background" remains materially ambiguous after consulting the map.
 
 - Use a lowercase kebab-case `id` that is not `light`, `soft-light`, `dark`, or `system`.
 - Keep every required key. Values must be hex colors (`#RRGGBB` or `#RRGGBBAA`); use a hex alpha value for `modal-overlay`.
@@ -15,12 +15,13 @@ Create one JSON file based on `assets/theme.template.json`. Ask only for a missi
 - Use the optional `fonts` object for a theme-specific type system. Set both `ui` (all interface text) and `code` (Monaco, terminal, and code blocks) to installed font-family lists; omitted `fonts` uses Agent K defaults.
 - Preserve contrast: `text-primary` must be clearly legible on `surface-panel`, and selection text must be legible on its selection background.
 - Set `base` to the closest contrast mode (`light`, `soft-light`, or `dark`).
-- Write the result to `%USERPROFILE%\\.pi\\agent\\themes\\<id>.json`. Create the directory if needed. Do not overwrite an existing theme without confirmation.
+- Treat the element map as authoritative for placement. In particular, do not confuse the center conversation canvas (`surface-app`), side panels (`surface-panel`), floating/card surfaces including the composer (`surface-raised`), dialog text inputs (`components.input`), and the terminal's independent `terminal.background`.
+- Write the result to `%USERPROFILE%\\.pi\\agent\\k_themes\\<id>.json`. This is Agent K's isolated custom-theme directory; never write Agent K themes to Pi's sibling `themes` directory. Create the directory if needed. Do not overwrite an existing theme without confirmation.
 - After creating a theme, report the chosen `icon-primary` and `icon-secondary` colors with a short explanation of how they relate to the theme surfaces, then offer to set it as the active theme.
 
 ## List and set
 
-- List themes by reading `%USERPROFILE%\\.pi\\agent\\themes` recursively; include the built-ins `light`, `soft-light`, `dark`, and `system` in the result.
+- List themes by reading `%USERPROFILE%\\.pi\\agent\\k_themes` recursively; include the built-ins `light`, `soft-light`, `dark`, and `system` in the result.
 - To set a theme, first confirm that its ID exists, then atomically update the `theme` property in Agent K's `client-settings.json` while preserving every other setting. Use `%APPDATA%\\com.lordcris8411.agentk\\client-settings.json` on Windows. The running app notices this change and applies it.
 - Do not set an unknown ID. Use `system` to return to the system theme.
 
@@ -28,4 +29,4 @@ Create one JSON file based on `assets/theme.template.json`. Ask only for a missi
 
 - Remove only a custom theme after explicit confirmation. Never remove `light`, `soft-light`, `dark`, or `system`.
 - If the theme is active, set the theme to `system` before deleting its JSON file.
-- Delete the matching `<id>.json` file from `%USERPROFILE%\\.pi\\agent\\themes` (including a matching file in a subdirectory), then report the removed theme name and path.
+- Delete the matching `<id>.json` file from `%USERPROFILE%\\.pi\\agent\\k_themes` (including a matching file in a subdirectory), then report the removed theme name and path.

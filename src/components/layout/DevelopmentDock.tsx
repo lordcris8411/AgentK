@@ -213,6 +213,7 @@ export function DevelopmentDock({ root, onError }: { root?: string; onError(mess
     {!collapsed ? <div className="development-dock-resizer" onPointerDown={(event) => { if (event.button !== 0) return; resize.current = { height, pointerId: event.pointerId, y: event.clientY }; document.body.classList.add("is-resizing-console"); }} /> : null}
     <header>
       <button aria-pressed={terminalVisible} className={terminalVisible ? "is-active" : undefined} onClick={toggleTerminal} type="button"><i className="fa-solid fa-terminal" /> {en ? "Terminal" : "终端"}</button>
+      <small title={root}>{root ?? (en ? "No project selected" : "未选择项目")}</small>
       <button className="development-dock-collapse" onClick={toggleCollapsed} title={collapsed ? (en ? "Show tools" : "显示工具窗口") : (en ? "Hide tools" : "隐藏工具窗口")} type="button"><i className={`fa-solid fa-chevron-${collapsed ? "up" : "down"}`} /></button>
     </header>
     <div className="development-dock-content">

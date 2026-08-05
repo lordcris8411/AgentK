@@ -5,13 +5,15 @@ description: Work with HTML currently open in Agent K, including source and sand
 
 # Agent K HTML Editor
 
-For a request to preview an HTML file in Agent K, use `agent_k_file_editor` with
-`action: "open"`, the workspace file path, and `preview: true`. This opens the
+Use the `agent_k` bridge with `capability: "file-editor"`. Put `action` at the
+top level and all action-specific values in `arguments`. For a request to preview
+an HTML file, call it with `action: "open"` and
+`arguments: { "path": "<workspace path>", "preview": true }`. This opens the
 file in Agent K's right-side sandboxed preview; do not launch the default browser
 or an external browser for that request. Agent K may also add an
 `<agent_k_file_format>` block containing the active HTML path. To save the
-currently visible preview as an image, use `agent_k_file_editor` with
-`action: "capture-preview"`; Agent K saves a PNG in the project's `screenshot`
+currently visible preview as an image, call `agent_k` with
+`capability: "file-editor"` and `action: "capture-preview"`; Agent K saves a PNG in the project's `screenshot`
 directory and returns its path. Use Pi's normal read, edit, and write tools for
 source changes, then keep the same Agent K tab open. Static HTML preview console
 messages are UI-only; `get-preview-console` is for a running web-project preview.

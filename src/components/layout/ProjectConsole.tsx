@@ -402,6 +402,7 @@ export function ProjectConsole({ root, onError, docked = false }: { root?: strin
         <small title={root}>{root ?? (en ? "No project selected" : "未选择项目")}</small>
         <button
           aria-label={en ? "Copy terminal selection" : "复制终端选区"}
+          className="project-console-copy"
           disabled={!hasSelection}
           onClick={copySelection}
           title={en ? "Copy terminal selection" : "复制终端选区"}

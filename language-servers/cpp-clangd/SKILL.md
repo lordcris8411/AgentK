@@ -1,6 +1,6 @@
 ---
 name: cpp-project-tools
-description: Use Agent K's managed C/C++ project services for semantic clangd queries and native CodeLLDB debugging. Use for CMake workspace symbols, diagnostics, definitions, references, launch or attach debugging, breakpoints, stepping, variables, registers, memory, disassembly, console output, and core or minidump analysis through agent_k_cpp_language_server and agent_k_native_debugger.
+description: Use Agent K's managed C/C++ project services for semantic clangd queries and native CodeLLDB debugging. Use for CMake workspace symbols, diagnostics, definitions, references, launch or attach debugging, breakpoints, stepping, variables, registers, memory, disassembly, console output, and core or minidump analysis through the Agent K Skill bridge.
 ---
 
 # Agent K C++ project tools
@@ -10,8 +10,10 @@ because it contains `CMakeLists.txt`. Its `workspace` argument is the folder
 name, not a path. It must uniquely identify the current Agent K workspace or a
 nested folder below it.
 
-Use `agent_k_cpp_language_server` for semantic C/C++ questions. At the start of
-a C++ language-service workflow, call `status` with the workspace name. All
+Use the `agent_k` bridge with `capability: "cpp-language-server"` for semantic
+C/C++ questions. Put `action` at the top level and all action-specific values in
+`arguments`. At the start of a C++ language-service workflow, call `status` with
+`arguments: { "workspace": "<workspace name>" }`. All
 semantic actions require the named workspace to be loaded with clangd in either
 `indexing` or `ready` state. Never imply that merely opening a C/C++ file loaded
 its workspace.
@@ -84,8 +86,9 @@ not file mutation or compilation.
 
 ## Native debugging
 
-Use `agent_k_native_debugger` instead of shelling out to GDB, LLDB, WinDbg, or a
-DAP adapter. Agent K owns the adapter, validates workspace/session boundaries,
+Use the `agent_k` bridge with `capability: "native-debugger"` instead of shelling
+out to GDB, LLDB, WinDbg, or a DAP adapter. Put `action` at the top level and all
+debugger values in `arguments`. Agent K owns the adapter, validates workspace/session boundaries,
 and keeps managed debugger files outside the source tree. The `workspace`
 argument is the same unique CMake folder name used by the language tool.
 
@@ -127,3 +130,30 @@ ASLR can invalidate them after restart.
 breakpoints are project configuration and persist in Agent K. Instruction
 breakpoints are session-only. Debug sessions themselves are not persisted and
 are removed when the target terminates, is stopped, or is detached.
+
+## Native debugger arguments
+
+Every debugger call requires `arguments.workspace`. Session-specific calls use
+`arguments.sessionId`. Supply only values needed by the selected action:
+
+- `mode`: `launch`, `attach`, or `dump` for `start`.
+- `targetId`, `buildConfiguration`, `program`, `args`, `workingDirectory`,
+  `stopOnEntry`, and `sessionName`: launch configuration.
+- `processId`: positive process ID for attach.
+- `dumpPath`, `program`, `symbolPaths`, and `sourceMap`: dump analysis and symbol
+  resolution.
+- `refresh` and optional `file`: configuration discovery.
+- `file`, `line`, `lines`, `enabled`, `condition`, `hitCondition`, and
+  `logMessage`: source breakpoints. `lines` is the complete list for the file.
+- `functionBreakpoints`: complete list of objects containing `name` and optional
+  `condition` or `hitCondition`.
+- `exceptionFilters`: complete supported exception-filter ID list.
+- `threadId` and `frameId`: frame selection and inspection.
+- `variablesReference`: expand variables or select a variable container.
+- `expression`, `context`, `name`, and `value`: evaluation and explicit variable
+  mutation; `context` is `watch` or `repl`.
+- `memoryReference`, `offset`, `count`, and `bytes`: memory reads or explicit
+  writes. `bytes` contains integer byte values from 0 through 255.
+- `memoryReference`, `instructionOffset`, and `instructionCount`: disassembly.
+- `addresses`: complete session-local instruction-breakpoint address list.
+- `count`: bounded recent-line count for `output`.

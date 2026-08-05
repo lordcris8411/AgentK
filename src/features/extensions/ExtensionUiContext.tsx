@@ -71,6 +71,7 @@ const ExtensionUiContext = createContext<ExtensionUiContextValue | undefined>(
 const ansiSequencePattern =
   /[\u001b\u009b](?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[0-?]*[ -/]*[@-~])/g;
 const fileFormatActionPrefix = "agent-k-file-format-action:";
+const providerRequestDumpPrefix = "agent-k-provider-request:";
 const fileFormatOpenRequestPrefix = "agent-k-file-open:";
 const previewConsoleRequestPrefix = "agent-k-preview-console:";
 const cppLanguageServerRequestPrefix = "agent-k-cpp-language-server:";
@@ -483,6 +484,17 @@ export function ExtensionUiProvider({ children }: { children: ReactNode }) {
         }
         if (method === "notify") {
           const message = String(event.message ?? "");
+          if (message.startsWith(providerRequestDumpPrefix)) {
+            try {
+              const detail = JSON.parse(message.slice(providerRequestDumpPrefix.length)) as Record<string, unknown>;
+              window.dispatchEvent(new CustomEvent("agent-k-provider-request", {
+                detail: { ...detail, runtimeId },
+              }));
+            } catch {
+              // Ignore malformed debug payloads instead of exposing them as notifications.
+            }
+            return;
+          }
           if (message.startsWith(fileFormatActionPrefix)) {
             try {
               const detail = JSON.parse(message.slice(fileFormatActionPrefix.length)) as Record<string, unknown>;

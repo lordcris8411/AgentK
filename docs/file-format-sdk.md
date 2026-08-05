@@ -203,7 +203,7 @@ npm run check
 
 `SKILL.md` 是必需的标准 Pi Skill，也是 Agent K 在 Pi 生态目录中发现 Editor 包的锚点。Editor 开启时 Skill 可以独立开关；Editor 关闭时 Skill 必须关闭；开启 Skill 会同时开启 Editor。Agent K 在设置窗口关闭后一次性刷新 worker pool，并通过 Pi 的公开 `--skill <插件目录>` 参数加载启用的 Skill。
 
-当当前文件匹配且 Editor Skill 已启用时，Agent K 会把格式、路径和 manifest 声明的能力加入下一条用户消息的 Pi 上下文。界面只显示用户原始问题，完整出站内容收纳在该消息的“原始信息”折叠区。`agent_k_file_editor` 始终提供 `open`、`run-web-project`、`capture-preview` 和 `get-preview-console` 等宿主动作；HTML 和 Markdown 的 `open` 可传入 `preview: true`。Pi 还可调用当前插件 manifest 声明且当前上下文明确公布的能力。
+当当前文件匹配且 Editor Skill 已启用时，Agent K 会把格式、路径和 manifest 声明的能力加入下一条用户消息的 Pi 上下文。界面只显示用户原始问题，完整出站内容收纳在该消息的“原始信息”折叠区。模型按需加载 Editor Skill，再调用统一的 `agent_k` 桥接器并使用 `file-editor` capability。该 capability 提供 `open`、`run-web-project`、`capture-preview` 和 `get-preview-console` 等宿主动作；HTML 和 Markdown 的 `open` 可在 `arguments` 中传入 `preview: true`。Pi 还可调用当前插件 manifest 声明且当前上下文明确公布的能力。
 
 ## 不兼容旧注释格式
 
