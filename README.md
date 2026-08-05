@@ -7,7 +7,7 @@
 
   Bring conversations, projects, files, tools, models, and Pi extensions together on Windows, macOS, and Linux.
 
-  [Product overview](#part-i-product-overview) · [Product tour](#product-tour) · [Technical guide](#part-ii-technical-guide) · [中文](#第一部分产品介绍)
+  [Overview](#overview) · [Product tour](#product-tour) · [Technical reference](#technical-reference) · [中文](#产品介绍)
 
   [![CI](https://github.com/lordcris8411/AgentK/actions/workflows/ci.yml/badge.svg)](https://github.com/lordcris8411/AgentK/actions/workflows/ci.yml)
   [![Electron 43](https://img.shields.io/badge/Electron-43-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
@@ -18,7 +18,7 @@
   [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 </div>
 
-## Part I: Product overview
+## Overview
 
 ### Pi, with a complete desktop workspace
 
@@ -158,7 +158,7 @@ Release builds include a compatible, unmodified Pi distribution, so a separate g
 - Integrated debugging workflows for C/C++, Python, and JavaScript/TypeScript.
 - Signed and notarized macOS release packages.
 
-## Part II: Technical guide
+## Technical reference
 
 ### Architecture and Pi boundary
 
@@ -432,7 +432,7 @@ Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) be
 
 ---
 
-## 第一部分：产品介绍
+## 产品介绍
 
 ### 为 Pi 打造的完整桌面工作区
 
@@ -541,7 +541,7 @@ llama.cpp 官方运行时，支持 Metal 加速和 CPU 回退。
 - 集成 C/C++、Python、JavaScript/TypeScript 调试流程。
 - 提供已签名并完成 notarization 的 macOS 发行包。
 
-## 第二部分：技术说明
+## 技术说明
 
 ### 架构与 Pi 边界
 
