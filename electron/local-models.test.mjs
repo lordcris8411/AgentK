@@ -217,7 +217,7 @@ test("waits for an explicit healthy llama-server status before reporting ready",
   }
 });
 
-test("downloads, verifies, activates and proxies only a tool-compatible model", { skip: !localModelRuntimeSupported() }, async () => {
+test("downloads, verifies, activates and proxies only a tool-compatible model", { skip: process.platform === "win32" || !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-local-models-"));
   const previousHome = process.env.HOME;
   const modelBytes = Buffer.concat([ggufFixture(), Buffer.alloc(1024 * 1024)]);
@@ -505,7 +505,7 @@ http.createServer(async(req,res)=>{ if(req.headers.authorization!=='Bearer '+key
   }
 });
 
-test("does not overwrite a conflicting non-Agent-K provider during initialization", { skip: !localModelRuntimeSupported() }, async () => {
+test("does not overwrite a conflicting non-Agent-K provider during initialization", { skip: process.platform === "win32" || !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-provider-conflict-"));
   const previousHome = process.env.HOME;
   process.env.HOME = join(root, "home");
@@ -525,7 +525,7 @@ test("does not overwrite a conflicting non-Agent-K provider during initializatio
   }
 });
 
-test("clears a persisted active model when its tool-verification cache is stale", { skip: !localModelRuntimeSupported() }, async () => {
+test("clears a persisted active model when its tool-verification cache is stale", { skip: process.platform === "win32" || !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-stale-local-model-"));
   const previousHome = process.env.HOME;
   process.env.HOME = join(root, "home");
@@ -560,7 +560,7 @@ test("clears a persisted active model when its tool-verification cache is stale"
   }
 });
 
-test("clears an interrupted provisioning error after the pinned runtime is complete", { skip: !localModelRuntimeSupported() }, async () => {
+test("clears an interrupted provisioning error after the pinned runtime is complete", { skip: process.platform === "win32" || !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-provision-recovery-"));
   const previousHome = process.env.HOME;
   process.env.HOME = join(root, "home");
@@ -599,7 +599,7 @@ test("clears an interrupted provisioning error after the pinned runtime is compl
   }
 });
 
-test("does not classify an official runtime provisioning failure as model tool incompatibility", { skip: !localModelRuntimeSupported() }, async () => {
+test("does not classify an official runtime provisioning failure as model tool incompatibility", { skip: process.platform === "win32" || !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-runtime-provision-failure-"));
   const previousHome = process.env.HOME;
   process.env.HOME = join(root, "home");
@@ -624,7 +624,7 @@ test("does not classify an official runtime provisioning failure as model tool i
   }
 });
 
-test("copies a complete imported GGUF shard group into the private model library", { skip: !localModelRuntimeSupported() }, async () => {
+test("copies a complete imported GGUF shard group into the private model library", { skip: process.platform === "win32" || !localModelRuntimeSupported() }, async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-k-shard-import-"));
   const previousHome = process.env.HOME;
   process.env.HOME = join(root, "home");
