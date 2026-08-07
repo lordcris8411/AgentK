@@ -14,7 +14,7 @@ import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import type { CodexQuotaWindow, LanguageServerProject, SessionSummary } from "../../lib/desktop";
+import type { CodexQuota, CodexQuotaWindow, LanguageServerProject, SessionSummary } from "../../lib/desktop";
 import { desktop } from "../../lib/desktop";
 import { stopDampedScrolling } from "../../lib/dampedScrolling";
 import { desktopWindow, platform } from "../../lib/platform";
@@ -1678,7 +1678,7 @@ export function ConversationWorkspace({
   const [currentModelKey, setCurrentModelKey] = useState("");
   const [providerBalance, setProviderBalance] = useState<string>();
   const [providerBalanceError, setProviderBalanceError] = useState<string>();
-  const [codexQuota, setCodexQuota] = useState<Awaited<ReturnType<typeof desktop.codexQuota>>>();
+  const [codexQuota, setCodexQuota] = useState<CodexQuota>();
   const [codexQuotaError, setCodexQuotaError] = useState<string>();
   const [codexQuotaLoading, setCodexQuotaLoading] = useState(false);
   const [billingHidden, setBillingHidden] = useState(false);
@@ -3371,6 +3371,19 @@ export function ConversationWorkspace({
     }
   };
   useEffect(() => {
+    if (
+      !pendingSteer ||
+      running ||
+      submitting ||
+      compaction ||
+      !session ||
+      !connected
+    ) return;
+    const pending = pendingSteer;
+    setPendingSteer(undefined);
+    void submit("queue", pending.value, pending.attachments);
+  }, [compaction, connected, pendingSteer, running, session, submitting]);
+  useEffect(() => {
     const submitExternalPrompt = (event: Event) => {
       const message = (event as CustomEvent<{ message?: unknown }>).detail?.message;
       if (typeof message !== "string" || !message.trim()) return;
@@ -3685,6 +3698,7 @@ export function ConversationWorkspace({
     setBillingHidden(false);
     setCodexQuotaLoading(true);
     let cancelled = false;
+    let refreshPending = false;
     let retryDelay = 2_000;
     let retryTimer: number | undefined;
     const scheduleRetry = () => {
@@ -3695,22 +3709,29 @@ export function ConversationWorkspace({
         refresh();
       }, retryDelay);
     };
-    const refresh = () => void desktop.codexQuota().then((result) => {
-      if (cancelled) return;
-      if (retryTimer !== undefined) {
-        window.clearTimeout(retryTimer);
-        retryTimer = undefined;
-      }
-      setCodexQuota(result);
-      setCodexQuotaError(undefined);
-      setCodexQuotaLoading(false);
-      retryDelay = 2_000;
-    }).catch((cause) => {
-      if (cancelled) return;
-      setCodexQuotaError(String(cause));
-      setCodexQuotaLoading(false);
-      scheduleRetry();
-    });
+    const refresh = () => {
+      if (refreshPending) return;
+      refreshPending = true;
+      void desktop.codexQuota().then((result) => {
+        if (cancelled) return;
+        if ("quota" in result && retryTimer !== undefined) {
+          window.clearTimeout(retryTimer);
+          retryTimer = undefined;
+        }
+        setCodexQuota("quota" in result ? result.quota : undefined);
+        setCodexQuotaError("error" in result ? result.error : undefined);
+        setCodexQuotaLoading(false);
+        if ("quota" in result) retryDelay = 2_000;
+        else if (result.retryable) scheduleRetry();
+      }).catch((cause) => {
+        if (cancelled) return;
+        setCodexQuotaError(String(cause));
+        setCodexQuotaLoading(false);
+        scheduleRetry();
+      }).finally(() => {
+        refreshPending = false;
+      });
+    };
     refresh();
     const timer = window.setInterval(refresh, 60_000);
     return () => {

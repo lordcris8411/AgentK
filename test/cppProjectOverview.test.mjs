@@ -54,3 +54,10 @@ test("missing README action is delivered through the normal Pi prompt path", () 
   assert.match(inspectorSource, /new CustomEvent\("agent-k-submit-prompt"/);
   assert.match(conversationSource, /submit\("queue", message, \[\]\)/);
 });
+
+test("a staged steering message is submitted after the agent becomes idle", () => {
+  assert.match(
+    conversationSource,
+    /if \(\s*!pendingSteer \|\|\s*running \|\|\s*submitting \|\|\s*compaction \|\|\s*!session \|\|\s*!connected\s*\) return;[\s\S]*?setPendingSteer\(undefined\);[\s\S]*?submit\("queue", pending\.value, pending\.attachments\)/,
+  );
+});

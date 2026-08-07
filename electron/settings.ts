@@ -467,6 +467,10 @@ export type CodexQuota = {
   rateLimitReachedType?: string;
 };
 
+export type CodexQuotaResult =
+  | { quota: CodexQuota; retryable: false }
+  | { error: string; retryable: boolean };
+
 function configuredApiKey(providerAuth: JsonObject): string | undefined {
   return asString(providerAuth.key) ?? asString(providerAuth.apiKey);
 }
@@ -553,24 +557,39 @@ function parseCodexQuota(value: unknown): CodexQuota {
   };
 }
 
-export async function codexQuota(): Promise<CodexQuota> {
+export async function codexQuota(): Promise<CodexQuotaResult> {
   const auth = await jsonObject(join(piAgentDirectory(), "auth.json"));
   const credential = asObject(auth["openai-codex"]);
   const accessToken = asString(credential.access);
   const accountId = asString(credential.accountId);
   if (credential.type !== "oauth" || !accessToken || !accountId)
-    throw new Error("OpenAI Codex OAuth is not configured");
-  const response = await fetch("https://chatgpt.com/backend-api/wham/usage", {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "chatgpt-account-id": accountId,
-      "User-Agent": "AgentK",
-    },
-    signal: AbortSignal.timeout(8_000),
-  });
-  if (!response.ok) throw new Error(`Codex usage request failed: ${response.status}`);
-  return parseCodexQuota(await response.json());
+    return { error: "OpenAI Codex OAuth is not configured", retryable: false };
+  try {
+    const response = await fetch("https://chatgpt.com/backend-api/wham/usage", {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "chatgpt-account-id": accountId,
+        "User-Agent": "AgentK",
+      },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (response.status === 401 || response.status === 403)
+      return { error: "OpenAI Codex session expired", retryable: false };
+    if (!response.ok)
+      return {
+        error: `Codex usage request failed: ${response.status}`,
+        retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+      };
+    return { quota: parseCodexQuota(await response.json()), retryable: false };
+  } catch (cause) {
+    return {
+      error: cause instanceof DOMException && cause.name === "TimeoutError"
+        ? "Codex usage request timed out"
+        : `Codex usage request failed: ${errorMessage(cause)}`,
+      retryable: true,
+    };
+  }
 }
 
 export async function providerBalance(providerId: string): Promise<ProviderBalance> {

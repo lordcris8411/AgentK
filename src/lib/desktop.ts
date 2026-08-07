@@ -249,6 +249,9 @@ export type CodexQuota = {
   resetCredits?: number;
   rateLimitReachedType?: string;
 };
+export type CodexQuotaResult =
+  | { quota: CodexQuota; retryable: false }
+  | { error: string; retryable: boolean };
 
 export type LocalServiceInfo = {
   kind: "ollama" | "vllm" | "lm-studio" | "openai-compatible";
@@ -296,7 +299,7 @@ export const desktop = {
     invoke<ProviderCatalogItem[]>("get_provider_catalog", { runtimeId }),
   providerBalance: (providerId: "deepseek" | "openrouter") =>
     invoke<ProviderBalance>("get_provider_balance", { providerId }),
-  codexQuota: () => invoke<CodexQuota>("get_codex_quota"),
+  codexQuota: () => invoke<CodexQuotaResult>("get_codex_quota"),
   saveProviderApiKey: (providerId: string, apiKey: string) =>
     invoke<void>("save_provider_api_key", { providerId, apiKey }),
   logoutProvider: (providerId: string) =>
