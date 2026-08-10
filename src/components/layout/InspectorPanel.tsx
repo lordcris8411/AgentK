@@ -11,7 +11,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { desktop, type FileEntry, type LanguageServerPlugin, type LanguageServerProject } from "../../lib/desktop";
+import { desktop, type FileEntry, type LanguagePack, type LanguagePackProject } from "../../lib/desktop";
 import { desktopWindow, platform } from "../../lib/platform";
 import { DevelopmentDock } from "./DevelopmentDock";
 import { DirectoryPickerDialog } from "../DirectoryPickerDialog";
@@ -31,11 +31,12 @@ import {
   preloadEditorPluginDependencies,
   type PluginEditorHandle,
 } from "../../features/file-formats/PluginEditorFrame";
+import { matchesProjectMarker } from "../../features/extensions/projectMarkers";
 
 type Tab = {
   binary?: ArrayBuffer;
   path: string;
-  project?: { languageServerId: string; path: string };
+  project?: { packId: string; path: string };
   projectOverview?: { name: string; readmePath?: string };
   content: string;
   saved: string;
@@ -59,10 +60,10 @@ type WorkspaceEditorState = {
 type PluginEditorProps = ComponentPropsWithoutRef<typeof PluginEditorFrame>;
 const EDITOR_RUNTIME_CACHE_LIMIT = 40;
 type PluginMenuAction = { id: string; label: string; pluginId: string };
-type LanguageProjectAction = NonNullable<NonNullable<LanguageServerPlugin["projectMenu"]>["actions"]>[number];
+type LanguageProjectAction = NonNullable<NonNullable<LanguagePack["projectMenu"]>["actions"]>[number];
 type TreeLanguageProjectStatus = {
   indexProgress?: string;
-  status: LanguageServerProject["status"] | "unloaded";
+  status: LanguagePackProject["status"] | "unloaded";
   statusLabel?: string;
 };
 const ADVANCED_SEARCH_RESULT_HEIGHT = 48;
@@ -478,9 +479,9 @@ function normalizedTreePath(path: string): string {
  * second independently managed language project. */
 function detectedLanguageProjectPlugins(
   tree: FileEntry | undefined,
-  plugins: readonly LanguageServerPlugin[],
-): Map<string, LanguageServerPlugin> {
-  const projects = new Map<string, LanguageServerPlugin>();
+  plugins: readonly LanguagePack[],
+): Map<string, LanguagePack> {
+  const projects = new Map<string, LanguagePack>();
   const visit = (entry: FileEntry, owningPluginIds: ReadonlySet<string>) => {
     if (!entry.isDir) return;
     const childNames = new Set(entry.children.map((child) => child.name.toLocaleLowerCase("en-US")));
@@ -488,7 +489,7 @@ function detectedLanguageProjectPlugins(
       plugin.enabled !== false &&
       !owningPluginIds.has(plugin.id) &&
       plugin.projectMarkers.length > 0 &&
-      plugin.projectMarkers.some((marker) => childNames.has(marker.toLocaleLowerCase("en-US"))),
+      plugin.projectMarkers.some((marker) => matchesProjectMarker(marker, childNames)),
     );
     const nextOwners = new Set(owningPluginIds);
     for (const plugin of matches) {
@@ -706,11 +707,11 @@ export function InspectorPanel({
     y: number;
   }>();
   const [pluginMenuActions, setPluginMenuActions] = useState<PluginMenuAction[]>([]);
-  const [cppProgress, setCppProgress] = useState<{ languageServerId?: string; detail?: string; error?: string; log?: string; purpose?: "debug" | "language"; rate?: number; stage: string; bytes?: number; total?: number }>();
-  const [languageServerConfirmation, setLanguageServerConfirmation] = useState<{ languageServerId: string; message: string; requestId: string; title: string }>();
+  const [languageProgress, setLanguageProgress] = useState<{ packId?: string; detail?: string; error?: string; log?: string; purpose?: "debug" | "language"; rate?: number; stage: string; bytes?: number; total?: number }>();
+  const [languageServerConfirmation, setLanguageServerConfirmation] = useState<{ packId: string; message: string; requestId: string; title: string }>();
   const [cppDiagnostics, setCppDiagnostics] = useState<Record<string, Array<Record<string, unknown>>>>({});
-  const [languageProjects, setLanguageProjects] = useState<LanguageServerProject[]>([]);
-  const [languagePlugins, setLanguagePlugins] = useState<LanguageServerPlugin[]>([]);
+  const [languageProjects, setLanguageProjects] = useState<LanguagePackProject[]>([]);
+  const [languagePlugins, setLanguagePlugins] = useState<LanguagePack[]>([]);
   const [languageProjectMutation, setLanguageProjectMutation] = useState<string>();
   const debugOpenRequest = useRef(0);
   const [languageActionProfiles, setLanguageActionProfiles] = useState<Record<string, string>>({});
@@ -733,7 +734,7 @@ export function InspectorPanel({
       if (path === undefined) continue;
       const normalizedPath = normalizedTreePath(path);
       const nestedOwner = [...detectedLanguageProjects.entries()].some(([ownerPath, plugin]) =>
-        plugin.id === project.languageServerId && ownerPath !== normalizedPath &&
+        plugin.id === project.packId && ownerPath !== normalizedPath &&
           (ownerPath === "" || normalizedPath.startsWith(`${ownerPath}/`)),
       );
       if (!nestedOwner) projects.set(normalizedPath, project);
@@ -774,23 +775,23 @@ export function InspectorPanel({
   }, [settings.fileExplorerWidth, settingsReady]);
   useEffect(() => {
     const stop = desktop.onEvent((event) => {
-      if (event.type === "language_server_confirmation_request") {
-        if (typeof event.languageServerId !== "string" || typeof event.requestId !== "string") return;
+      if (event.type === "language_pack_confirmation_request") {
+        if (typeof event.packId !== "string" || typeof event.requestId !== "string") return;
         setLanguageServerConfirmation({
-          languageServerId: event.languageServerId,
+          packId: event.packId,
           requestId: event.requestId,
           title: typeof event.title === "string" ? event.title : (en ? "Confirm download" : "确认下载"),
           message: typeof event.message === "string" ? event.message : (en ? "The language extension needs to download additional tools." : "语言扩展需要下载额外工具。"),
         });
         return;
       }
-      if (event.type !== "language_server_progress") return;
-      const value = event as { bytes?: unknown; detail?: unknown; error?: unknown; languageServerId?: unknown; rate?: unknown; stage?: unknown; total?: unknown };
+      if (event.type !== "language_pack_progress") return;
+      const value = event as { bytes?: unknown; detail?: unknown; error?: unknown; packId?: unknown; rate?: unknown; stage?: unknown; total?: unknown };
       if (typeof value.stage !== "string") return;
       const stage = value.stage;
       const rawDetail = typeof value.detail === "string" ? value.detail : undefined;
-      setCppProgress((previous) => previous ? ({
-        stage, ...(typeof value.languageServerId === "string" ? { languageServerId: value.languageServerId } : {}),
+      setLanguageProgress((previous) => previous ? ({
+        stage, ...(typeof value.packId === "string" ? { packId: value.packId } : {}),
         ...(rawDetail ? { detail: stage === "configuring" ? (en ? "Configuring project…" : "正在配置工程…") : rawDetail } : {}),
         ...(typeof value.bytes === "number" ? { bytes: value.bytes } : {}),
         ...(typeof value.total === "number" ? { total: value.total } : {}),
@@ -803,7 +804,7 @@ export function InspectorPanel({
   }, [en]);
   useEffect(() => {
     const stop = desktop.onEvent((event) => {
-      if (event.type !== "language_server_diagnostics" || typeof event.file !== "string" || !Array.isArray(event.diagnostics)) return;
+      if (event.type !== "language_pack_diagnostics" || typeof event.file !== "string" || !Array.isArray(event.diagnostics)) return;
       const diagnostics = event.diagnostics as unknown[];
       const key = event.file.replaceAll("\\", "/").toLowerCase();
       setCppDiagnostics((current) => ({ ...current, [key]: diagnostics.filter((item): item is Record<string, unknown> => !!item && typeof item === "object") }));
@@ -825,11 +826,11 @@ export function InspectorPanel({
   }, []);
   useEffect(() => {
     let disposed = false;
-    const refresh = () => void desktop.listLanguageServerProjects().then((projects) => { if (!disposed) setLanguageProjects(projects); });
-    void desktop.listLanguageServerPlugins().then((plugins) => { if (!disposed) setLanguagePlugins(plugins); });
+    const refresh = () => void desktop.listLanguagePackProjects().then((projects) => { if (!disposed) setLanguageProjects(projects); });
+    void desktop.listLanguagePacks().then((plugins) => { if (!disposed) setLanguagePlugins(plugins); });
     refresh();
     const stop = desktop.onEvent((event) => {
-      if (event.type === "language_server_project" || event.type === "language_server_project_removed") refresh();
+      if (event.type === "language_pack_project" || event.type === "language_pack_project_removed") refresh();
     });
     return () => { disposed = true; stop(); };
   }, []);
@@ -1308,7 +1309,7 @@ export function InspectorPanel({
         .sort((left, right) => right.length - left.length)[0];
       const project = projectPath === undefined ? undefined : detectedLanguageProjects.get(projectPath);
       const tabWithProject = project && projectPath !== undefined
-        ? { ...tab, project: { languageServerId: project.id, path: projectPath } }
+        ? { ...tab, project: { packId: project.id, path: projectPath } }
         : tab;
       const nextTabs = tabsRef.current.map((candidate) => alreadyOpen(candidate) ? tabWithProject : candidate);
       tabsRef.current = nextTabs;
@@ -1461,7 +1462,8 @@ export function InspectorPanel({
       setActive(nextActive);
     }
   };
-  const current = tabsRoot.current === root
+  const inspectorStateMatchesRoot = tabsRoot.current === root;
+  const current = inspectorStateMatchesRoot
     ? tabs.find((tab) => tab.path === active)
     : undefined;
   useEffect(() => {
@@ -1477,9 +1479,9 @@ export function InspectorPanel({
           .sort((left, right) => right.length - left.length)[0];
         const plugin = projectPath === undefined ? undefined : detectedLanguageProjects.get(projectPath);
         const project = plugin && projectPath !== undefined
-          ? { languageServerId: plugin.id, path: projectPath }
+          ? { packId: plugin.id, path: projectPath }
           : undefined;
-        if (tab.project?.languageServerId === project?.languageServerId && tab.project?.path === project?.path)
+        if (tab.project?.packId === project?.packId && tab.project?.path === project?.path)
           return tab;
         changed = true;
         return { ...tab, ...(project ? { project } : { project: undefined }) };
@@ -1505,7 +1507,7 @@ export function InspectorPanel({
       const file = absoluteWorkspacePath(root, current.path).replaceAll("\\", "/").toLowerCase(); const projectRoot = project.root.replaceAll("\\", "/").toLowerCase(); return file.startsWith(`${projectRoot}/`) || file === projectRoot;
     }).sort((a, b) => b.root.length - a.root.length)[0]
     : undefined;
-  const selectedDirectoryEntry = selectedEntry?.isDir
+  const selectedDirectoryEntry = inspectorStateMatchesRoot && selectedEntry?.isDir
     ? findTreeEntry(tree, selectedEntry.path) ?? selectedEntry
     : undefined;
   const selectedTreeLanguagePlugin = selectedDirectoryEntry
@@ -1515,7 +1517,7 @@ export function InspectorPanel({
       selectedTreeLanguagePlugin?.languages.includes("cpp")
     ? {
         root: languageProjects.find((project) =>
-          project.languageServerId === selectedTreeLanguagePlugin.id &&
+          project.packId === selectedTreeLanguagePlugin.id &&
           project.root.replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase("en-US") ===
             absoluteWorkspacePath(root, selectedDirectoryEntry.path)
               .replaceAll("\\", "/")
@@ -1531,7 +1533,7 @@ export function InspectorPanel({
     : selectedDirectoryEntry;
   const selectedLanguageProject = root && projectDirectoryEntry
     ? languageProjects.find((project) =>
-        (!current?.project || project.languageServerId === current.project.languageServerId) &&
+        (!current?.project || project.packId === current.project.packId) &&
         project.root.replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase("en-US") ===
           absoluteWorkspacePath(root, projectDirectoryEntry.path)
             .replaceAll("\\", "/")
@@ -1540,35 +1542,35 @@ export function InspectorPanel({
       )
     : undefined;
   const selectedLanguagePlugin = current?.project
-    ? languagePlugins.find((plugin) => plugin.id === current.project?.languageServerId) ??
+    ? languagePlugins.find((plugin) => plugin.id === current.project?.packId) ??
       detectedLanguageProjects.get(current.project.path)
     : projectDirectoryEntry
       ? detectedLanguageProjects.get(normalizedTreePath(projectDirectoryEntry.path))
       : undefined;
-  const selectedCppLanguagePlugin = selectedLanguagePlugin?.languages.includes("cpp") &&
+  const selectedDebugLanguagePack = selectedLanguagePlugin &&
       Boolean(selectedLanguagePlugin.debugServer?.providers.length)
     ? selectedLanguagePlugin
     : undefined;
-  const selectedCppProject = root && projectDirectoryEntry && selectedCppLanguagePlugin
+  const selectedProjectOverview = root && projectDirectoryEntry && selectedDebugLanguagePack
     ? {
-        languageServerName: selectedLanguageProject?.languageServerName ?? selectedCppLanguagePlugin.displayName,
+        packName: selectedLanguageProject?.packName ?? selectedDebugLanguagePack.displayName,
         name: selectedLanguageProject?.name ?? projectDirectoryEntry.name,
         root: selectedLanguageProject?.root ?? absoluteWorkspacePath(root, projectDirectoryEntry.path),
         status: selectedLanguageProject?.status,
       }
     : undefined;
-  const selectedProfileAction = selectedCppLanguagePlugin?.projectMenu?.actions?.find((action) => action.profiles?.length);
-  const selectedProfileActionKey = selectedCppProject && selectedProfileAction && selectedCppLanguagePlugin
-    ? `${selectedCppLanguagePlugin.id}:${selectedCppProject.root}:${selectedProfileAction.id}`
+  const selectedProfileAction = selectedDebugLanguagePack?.projectMenu?.actions?.find((action) => action.profiles?.length);
+  const selectedProfileActionKey = selectedProjectOverview && selectedProfileAction && selectedDebugLanguagePack
+    ? `${selectedDebugLanguagePack.id}:${selectedProjectOverview.root}:${selectedProfileAction.id}`
     : undefined;
   const selectedActionProfile = selectedProfileAction && selectedProfileActionKey
     ? languageActionProfiles[selectedProfileActionKey] ?? selectedProfileAction.defaultProfile ?? selectedProfileAction.profiles?.[0]?.id
     : undefined;
   const runSelectedProjectAction = (action: LanguageProjectAction, profile?: string) => {
-    if (!selectedCppProject || !projectDirectoryEntry || !selectedCppLanguagePlugin) return;
+    if (!selectedProjectOverview || !projectDirectoryEntry || !selectedDebugLanguagePack) return;
     window.dispatchEvent(new CustomEvent("agent-k-file-format-action", {
       detail: {
-        action: `language-server:${selectedCppLanguagePlugin.id}:${action.method}`,
+        action: `language-pack:${selectedDebugLanguagePack.id}:${action.method}`,
         arguments: profile ? [profile] : [],
         path: projectDirectoryEntry.path,
       },
@@ -1603,7 +1605,7 @@ export function InspectorPanel({
         mimeType = match.mimeType;
       }
       if (disposed) return;
-      const project = { languageServerId: selectedTreeLanguagePlugin.id, path: selectedDirectoryEntry.path };
+      const project = { packId: selectedTreeLanguagePlugin.id, path: selectedDirectoryEntry.path };
       const projectOverview = {
         name: selectedDirectoryEntry.name,
         ...(selectedProjectReadmePath ? { readmePath: selectedProjectReadmePath } : {}),
@@ -1629,7 +1631,9 @@ export function InspectorPanel({
       setReadmeRequestedProject((requested) =>
         requested === selectedTreeCppProject.root ? undefined : requested,
       );
-    })().catch((cause) => onError(`无法预览工程：${String(cause)}`));
+    })().catch((cause) => {
+      if (!disposed) onError(`无法预览工程：${String(cause)}`);
+    });
     return () => { disposed = true; };
   }, [selectedProjectReadmePath, selectedTreeCppProject?.root, treeSelectionRevision]);
   const contextLanguagePlugin = contextMenu?.entry.isDir
@@ -1637,58 +1641,58 @@ export function InspectorPanel({
     : undefined;
   const contextLanguageProject = root && contextMenu?.entry.isDir && contextLanguagePlugin
     ? languageProjects.find((project) =>
-        project.languageServerId === contextLanguagePlugin.id &&
+        project.packId === contextLanguagePlugin.id &&
         project.root.replaceAll("\\", "/").toLowerCase() === absoluteWorkspacePath(root, contextMenu.entry.path).replaceAll("\\", "/").toLowerCase(),
       )
     : undefined;
-  const loadLanguageProject = (plugin: LanguageServerPlugin, projectRoot: string) => {
+  const loadLanguageProject = (plugin: LanguagePack, projectRoot: string) => {
     const mutationKey = `load:${plugin.id}:${projectRoot}`;
     setLanguageProjectMutation(mutationKey);
-    setCppProgress({
-      languageServerId: plugin.id,
+    setLanguageProgress({
+      packId: plugin.id,
       purpose: "language",
       stage: "preparing",
       detail: en ? `Preparing ${plugin.displayName}…` : `正在准备 ${plugin.displayName}…`,
     });
-    return desktop.languageServerCall(plugin.id, "load", projectRoot).then((result) => {
-      const project = result as LanguageServerProject;
+    return desktop.languagePackCall(plugin.id, "load", projectRoot).then((result) => {
+      const project = result as LanguagePackProject;
       if (project.status === "failed") {
-        setCppProgress((current) => ({
+        setLanguageProgress((current) => ({
           ...(current ?? { stage: "failed" }),
           stage: "failed",
           error: project.error,
         }));
       } else {
-        setCppProgress(undefined);
+        setLanguageProgress(undefined);
       }
     }).catch((cause) => {
-      setCppProgress({ languageServerId: plugin.id, purpose: "language", stage: "failed", error: String(cause) });
+      setLanguageProgress({ packId: plugin.id, purpose: "language", stage: "failed", error: String(cause) });
     }).finally(() => setLanguageProjectMutation((current) => current === mutationKey ? undefined : current));
   };
-  const unloadLanguageProject = (project: LanguageServerProject) => {
-    const mutationKey = `unload:${project.languageServerId}:${project.root}`;
+  const unloadLanguageProject = (project: LanguagePackProject) => {
+    const mutationKey = `unload:${project.packId}:${project.root}`;
     setLanguageProjectMutation(mutationKey);
-    return desktop.languageServerCall(project.languageServerId, "unload", project.root)
+    return desktop.languagePackCall(project.packId, "unload", project.root)
       .catch((cause) => onError(String(cause)))
       .finally(() => setLanguageProjectMutation((current) => current === mutationKey ? undefined : current));
   };
-  const prepareAndOpenDebug = async (plugin: LanguageServerPlugin, projectRoot: string) => {
+  const prepareAndOpenDebug = async (plugin: LanguagePack, projectRoot: string) => {
     const request = ++debugOpenRequest.current;
-    setCppProgress({
-      languageServerId: plugin.id,
+    setLanguageProgress({
+      packId: plugin.id,
       purpose: "debug",
       stage: "preparing",
       detail: en ? "Preparing Debug dependencies…" : "正在准备调试依赖…",
     });
     try {
       if (plugin.debugServer?.prepareMethod)
-        await desktop.languageServerCall(plugin.id, plugin.debugServer.prepareMethod);
+        await desktop.languagePackCall(plugin.id, plugin.debugServer.prepareMethod);
       if (debugOpenRequest.current !== request) return;
-      setCppProgress(undefined);
+      setLanguageProgress(undefined);
       await desktopWindow.openDebug(projectRoot);
     } catch (cause) {
       if (debugOpenRequest.current !== request) return;
-      setCppProgress({ languageServerId: plugin.id, purpose: "debug", stage: "failed", error: String(cause) });
+      setLanguageProgress({ packId: plugin.id, purpose: "debug", stage: "failed", error: String(cause) });
     }
   };
   const captureRenderedPreview = (requestedOutputPath?: string) => {
@@ -2234,8 +2238,8 @@ export function InspectorPanel({
               return desktop.read(root, relative);
             }
             return method.includes("/did")
-              ? desktop.languageServerNotify(language, file, method, parameters)
-              : desktop.languageServerRequest(language, file, method, parameters);
+              ? desktop.languagePackNotify(language, file, method, parameters)
+              : desktop.languagePackRequest(language, file, method, parameters);
           },
           onOpenFile(absolutePath, line, column) {
             const relative = relativeWorkspacePath(root, absolutePath.replace(/^file:\/\//, ""));
@@ -2438,17 +2442,17 @@ export function InspectorPanel({
               </button>
             ))}
           </div>
-          {selectedCppProject ? (
+          {selectedProjectOverview ? (
             <div className="editor-floating-actions is-project-overview">
-              <span className={`cpp-inline-status is-${selectedCppProject.status ?? "unloaded"}`}>
+              <span className={`cpp-inline-status is-${selectedProjectOverview.status ?? "unloaded"}`}>
                 <i aria-hidden="true" className="fa-solid fa-code" />
-                <span>{selectedCppProject.languageServerName} · {selectedCppProject.name} · {selectedCppProject.status ?? (en ? "Language service not loaded" : "未加载语言服务")}</span>
+                <span>{selectedProjectOverview.packName} · {selectedProjectOverview.name} · {selectedProjectOverview.status ?? (en ? "Language service not loaded" : "未加载语言服务")}</span>
               </span>
               <button
                 disabled={Boolean(languageProjectMutation)}
                 onClick={() => {
                   if (selectedLanguageProject) void unloadLanguageProject(selectedLanguageProject);
-                  else if (selectedLanguagePlugin) void loadLanguageProject(selectedLanguagePlugin, selectedCppProject.root);
+                  else if (selectedLanguagePlugin) void loadLanguageProject(selectedLanguagePlugin, selectedProjectOverview.root);
                 }}
                 title={selectedLanguageProject
                   ? (selectedLanguagePlugin?.projectMenu?.unloadLabel ?? (en ? "Unload language project" : "卸载语言工程"))
@@ -2489,8 +2493,8 @@ export function InspectorPanel({
                 </span>
               ) : null}
               <button
-                disabled={Boolean(cppProgress)}
-                onClick={() => { if (selectedCppLanguagePlugin) void prepareAndOpenDebug(selectedCppLanguagePlugin, selectedCppProject.root); }}
+                disabled={Boolean(languageProgress)}
+                onClick={() => { if (selectedDebugLanguagePack) void prepareAndOpenDebug(selectedDebugLanguagePack, selectedProjectOverview.root); }}
                 title={en ? "Open native Debug window" : "打开原生调试窗口"}
                 type="button"
               >
@@ -2501,8 +2505,8 @@ export function InspectorPanel({
           ) : current && !current.unsupported && current.format?.editable ? (
             <div className="editor-floating-actions">
               <>
-                  {currentLanguageProject ? <span className={`cpp-inline-status is-${currentLanguageProject.status}`} title={currentLanguageProject.error ?? `${currentLanguageProject.languageServerName} · ${currentLanguageProject.name} · ${currentLanguageProject.status}`}>
-                    <i aria-hidden="true" className="fa-solid fa-code" /><span>{currentLanguageProject.languageServerName} · {currentLanguageProject.name} · {currentLanguageProject.status}{currentLanguageProject.status === "indexing" && currentLanguageProject.indexProgress ? ` ${currentLanguageProject.indexProgress}` : ""}</span>
+                  {currentLanguageProject ? <span className={`cpp-inline-status is-${currentLanguageProject.status}`} title={currentLanguageProject.error ?? `${currentLanguageProject.packName} · ${currentLanguageProject.name} · ${currentLanguageProject.status}`}>
+                    <i aria-hidden="true" className="fa-solid fa-code" /><span>{currentLanguageProject.packName} · {currentLanguageProject.name} · {currentLanguageProject.status}{currentLanguageProject.status === "indexing" && currentLanguageProject.indexProgress ? ` ${currentLanguageProject.indexProgress}` : ""}</span>
                     {currentLanguageProject.status === "indexing" ? <span aria-hidden="true" className="cpp-inline-status-spinner" /> : null}
                   </span> : null}
                   {["agent-k.html", "agent-k.markdown"].includes(current.format.id) ? (
@@ -2634,25 +2638,25 @@ export function InspectorPanel({
               <i aria-hidden="true" className="fa-solid fa-triangle-exclamation" />
               <span>{current.loadError}</span>
             </div>
-          ) : showCreateProjectReadme && selectedCppProject ? (
+          ) : showCreateProjectReadme && selectedProjectOverview ? (
             <div className="cpp-project-readme-empty">
               <i aria-hidden="true" className="fa-regular fa-file-lines" />
               <strong>{en ? "This C++ project has no README.md" : "这个 C++ 工程还没有 README.md"}</strong>
               <p>{en ? "Ask Pi to inspect the project and create an introductory README." : "可以让 Pi 分析工程结构并创建项目说明。"}</p>
               <button
-                disabled={readmeRequestedProject === selectedCppProject.root}
+                disabled={readmeRequestedProject === selectedProjectOverview.root}
                 onClick={() => {
-                  setReadmeRequestedProject(selectedCppProject.root);
+                  setReadmeRequestedProject(selectedProjectOverview.root);
                   window.dispatchEvent(new CustomEvent("agent-k-submit-prompt", {
                     detail: {
-                      message: `请分析 C++ 工程 ${JSON.stringify(selectedCppProject.root)}，并在该工程根目录创建 README.md。README 应准确说明项目用途、主要目录结构、依赖、构建和运行方法。请使用可用的文件工具实际创建文件，不要只在回复中给出内容。`,
+                      message: `请分析语言工程 ${JSON.stringify(selectedProjectOverview.root)}，并在该工程根目录创建 README.md。README 应准确说明项目用途、主要目录结构、依赖、构建和运行方法。请使用可用的文件工具实际创建文件，不要只在回复中给出内容。`,
                     },
                   }));
                 }}
                 type="button"
               >
-                <i aria-hidden="true" className={readmeRequestedProject === selectedCppProject.root ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-wand-magic-sparkles"} />
-                {readmeRequestedProject === selectedCppProject.root
+                <i aria-hidden="true" className={readmeRequestedProject === selectedProjectOverview.root ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-wand-magic-sparkles"} />
+                {readmeRequestedProject === selectedProjectOverview.root
                   ? en ? "Pi is creating README.md…" : "Pi 正在创建 README.md…"
                   : en ? "Create README.md with Pi" : "使用 Pi 创建 README.md"}
               </button>
@@ -2825,7 +2829,7 @@ export function InspectorPanel({
               type="button"
             >
               <i className="fa-solid fa-code" />
-              {contextLanguageProject ? (languagePlugins.find((plugin) => plugin.id === contextLanguageProject.languageServerId)?.projectMenu?.unloadLabel ?? (en ? "Unload language project" : "卸载语言工程")) : null}
+              {contextLanguageProject ? (languagePlugins.find((plugin) => plugin.id === contextLanguageProject.packId)?.projectMenu?.unloadLabel ?? (en ? "Unload language project" : "卸载语言工程")) : null}
             </button>
           ) : contextLanguagePlugin ? (
             <button
@@ -2847,7 +2851,7 @@ export function InspectorPanel({
               key={`${contextLanguagePlugin.id}:${action.id}`}
               onClick={() => {
                 window.dispatchEvent(new CustomEvent("agent-k-file-format-action", {
-                  detail: { action: `language-server:${contextLanguagePlugin.id}:${action.method}`, path: contextMenu.entry.path },
+                  detail: { action: `language-pack:${contextLanguagePlugin.id}:${action.method}`, path: contextMenu.entry.path },
                 }));
                 setContextMenu(undefined);
               }}
@@ -3105,8 +3109,8 @@ export function InspectorPanel({
               debugOpenRequest.current += 1;
               const request = languageServerConfirmation;
               setLanguageServerConfirmation(undefined);
-              setCppProgress(undefined);
-              void desktop.languageServerCall(request.languageServerId, "respondConfirmation", request.requestId, false).catch((cause) => onError(String(cause)));
+              setLanguageProgress(undefined);
+              void desktop.languagePackCall(request.packId, "respondConfirmation", request.requestId, false).catch((cause) => onError(String(cause)));
             }}
             role="dialog"
           >
@@ -3120,8 +3124,8 @@ export function InspectorPanel({
                   debugOpenRequest.current += 1;
                   const request = languageServerConfirmation;
                   setLanguageServerConfirmation(undefined);
-                  setCppProgress(undefined);
-                  void desktop.languageServerCall(request.languageServerId, "respondConfirmation", request.requestId, false).catch((cause) => onError(String(cause)));
+                  setLanguageProgress(undefined);
+                  void desktop.languagePackCall(request.packId, "respondConfirmation", request.requestId, false).catch((cause) => onError(String(cause)));
                 }}
                 type="button"
               ><i aria-hidden="true" className="fa-solid fa-xmark" /></button>
@@ -3132,15 +3136,15 @@ export function InspectorPanel({
                 debugOpenRequest.current += 1;
                 const request = languageServerConfirmation;
                 setLanguageServerConfirmation(undefined);
-                setCppProgress(undefined);
-                void desktop.languageServerCall(request.languageServerId, "respondConfirmation", request.requestId, false).catch((cause) => onError(String(cause)));
+                setLanguageProgress(undefined);
+                void desktop.languagePackCall(request.packId, "respondConfirmation", request.requestId, false).catch((cause) => onError(String(cause)));
               }} type="button">{en ? "Cancel" : "取消"}</button>
                   <button autoFocus className="primary" onClick={() => {
                     const request = languageServerConfirmation;
-                    const purpose = cppProgress?.purpose;
+                    const purpose = languageProgress?.purpose;
                     setLanguageServerConfirmation(undefined);
-                    void desktop.languageServerCall(request.languageServerId, "respondConfirmation", request.requestId, true).catch((cause) => {
-                      setCppProgress({ purpose, stage: "failed", error: String(cause) });
+                    void desktop.languagePackCall(request.packId, "respondConfirmation", request.requestId, true).catch((cause) => {
+                      setLanguageProgress({ purpose, stage: "failed", error: String(cause) });
                     });
               }} type="button">{en ? "Download" : "下载"}</button>
             </footer>
@@ -3148,14 +3152,14 @@ export function InspectorPanel({
         </div>,
         document.body,
       ) : null}
-      {cppProgress && !languageServerConfirmation ? createPortal(
+      {languageProgress && !languageServerConfirmation ? createPortal(
         <div className="inspector-dialog-backdrop is-viewport">
           <section aria-modal="true" className="inspector-dialog cpp-progress-dialog" role="dialog">
-            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{cppProgress.purpose === "debug" ? (cppProgress.stage === "failed" ? (en ? "Dependency preparation failed" : "调试依赖准备失败") : (en ? "Preparing Debug dependencies" : "正在准备调试依赖")) : (cppProgress.stage === "failed" ? (en ? "Language project load failed" : "语言工程加载失败") : (en ? "Preparing language project" : "正在准备语言工程"))}</h2><p>{cppProgress.detail ?? cppProgress.stage}</p></div><button aria-label={cppProgress.stage === "failed" ? (en ? "Close" : "关闭") : (en ? "Cancel current operation" : "取消当前操作")} className="cpp-progress-close" disabled={cppProgress.stage === "cancelling"} onClick={() => { if (cppProgress.stage === "failed") { setCppProgress(undefined); return; } debugOpenRequest.current += 1; setCppProgress((current) => current ? { ...current, stage: "cancelling", detail: en ? "Cancelling…" : "正在取消…" } : current); if (cppProgress.languageServerId) void desktop.languageServerCall(cppProgress.languageServerId, "cancel").then(() => setCppProgress(undefined)).catch((cause) => setCppProgress({ purpose: cppProgress.purpose, stage: "failed", error: String(cause) })); else setCppProgress(undefined); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
-            {cppProgress.total ? <progress className="cpp-toolchain-progress" max={cppProgress.total} value={Math.min(cppProgress.bytes ?? 0, cppProgress.total)} /> : <progress aria-label={en ? "Working" : "处理中"} className="cpp-toolchain-progress" />}
-            {cppProgress.bytes !== undefined ? <small>{formatMegabytes(cppProgress.bytes)}{cppProgress.total ? ` / ${formatMegabytes(cppProgress.total)} · ${(Math.min(cppProgress.bytes, cppProgress.total) / cppProgress.total * 100).toFixed(2)}%` : ""}{cppProgress.rate !== undefined ? ` · ${formatMegabytes(cppProgress.rate)}/s` : ""}</small> : null}
-            {cppProgress.error ? <p>{cppProgress.error}</p> : null}
-            {cppProgress.log ? <details><summary>{en ? "Configuration output" : "工程配置输出"}</summary><pre className="cpp-progress-log">{cppProgress.log}</pre></details> : null}
+            <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{languageProgress.purpose === "debug" ? (languageProgress.stage === "failed" ? (en ? "Dependency preparation failed" : "调试依赖准备失败") : (en ? "Preparing Debug dependencies" : "正在准备调试依赖")) : (languageProgress.stage === "failed" ? (en ? "Language project load failed" : "语言工程加载失败") : (en ? "Preparing language project" : "正在准备语言工程"))}</h2><p>{languageProgress.detail ?? languageProgress.stage}</p></div><button aria-label={languageProgress.stage === "failed" ? (en ? "Close" : "关闭") : (en ? "Cancel current operation" : "取消当前操作")} className="cpp-progress-close" disabled={languageProgress.stage === "cancelling"} onClick={() => { if (languageProgress.stage === "failed") { setLanguageProgress(undefined); return; } debugOpenRequest.current += 1; setLanguageProgress((current) => current ? { ...current, stage: "cancelling", detail: en ? "Cancelling…" : "正在取消…" } : current); if (languageProgress.packId) void desktop.languagePackCall(languageProgress.packId, "cancel").then(() => setLanguageProgress(undefined)).catch((cause) => setLanguageProgress({ purpose: languageProgress.purpose, stage: "failed", error: String(cause) })); else setLanguageProgress(undefined); }} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
+            {languageProgress.total ? <progress className="cpp-toolchain-progress" max={languageProgress.total} value={Math.min(languageProgress.bytes ?? 0, languageProgress.total)} /> : <progress aria-label={en ? "Working" : "处理中"} className="cpp-toolchain-progress" />}
+            {languageProgress.bytes !== undefined ? <small>{formatMegabytes(languageProgress.bytes)}{languageProgress.total ? ` / ${formatMegabytes(languageProgress.total)} · ${(Math.min(languageProgress.bytes, languageProgress.total) / languageProgress.total * 100).toFixed(2)}%` : ""}{languageProgress.rate !== undefined ? ` · ${formatMegabytes(languageProgress.rate)}/s` : ""}</small> : null}
+            {languageProgress.error ? <p>{languageProgress.error}</p> : null}
+            {languageProgress.log ? <details><summary>{en ? "Configuration output" : "工程配置输出"}</summary><pre className="cpp-progress-log">{languageProgress.log}</pre></details> : null}
           </section>
         </div>,
         document.body,
@@ -3164,7 +3168,7 @@ export function InspectorPanel({
         <div className="inspector-dialog-backdrop is-viewport" onMouseDown={(event) => { if (event.target === event.currentTarget) setCppProjectsDialogOpen(false); }}>
           <section aria-modal="true" className="inspector-dialog" role="dialog">
             <header><span aria-hidden="true" className="inspector-dialog-icon"><i className="fa-solid fa-code" /></span><div><h2>{en ? "Active language projects" : "已加载的语言工程"}</h2><p>{languageProjects.length ? (en ? `${languageProjects.length} projects` : `${languageProjects.length} 个工程`) : (en ? "No projects loaded" : "当前没有已加载工程")}</p></div><button aria-label={en ? "Close" : "关闭"} className="inspector-dialog-close" onClick={() => setCppProjectsDialogOpen(false)} type="button"><i aria-hidden="true" className="fa-solid fa-xmark" /></button></header>
-            {languageProjects.map((project) => <div className="cpp-project-row" key={`${project.languageServerId}:${project.root}`}><div className="cpp-project-row-heading"><strong>{project.name}</strong><div className="cpp-project-row-actions"><button aria-label={en ? "Restart language project" : "重启语言工程"} onClick={() => void desktop.languageServerCall(project.languageServerId, "restart", project.root)} title={en ? "Restart" : "重启"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-rotate-right" /></button><button aria-label={en ? "Unload language project" : "卸载语言工程"} onClick={() => void desktop.languageServerCall(project.languageServerId, "unload", project.root)} title={en ? "Unload" : "卸载"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-right-from-bracket" /></button></div></div><small>{project.languageServerName} · {project.root}</small><span className={`is-${project.status}`}>{project.status}{project.error ? ` · ${project.error}` : ""}</span></div>)}
+            {languageProjects.map((project) => <div className="cpp-project-row" key={`${project.packId}:${project.root}`}><div className="cpp-project-row-heading"><strong>{project.name}</strong><div className="cpp-project-row-actions"><button aria-label={en ? "Restart language project" : "重启语言工程"} onClick={() => void desktop.languagePackCall(project.packId, "restart", project.root)} title={en ? "Restart" : "重启"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-rotate-right" /></button><button aria-label={en ? "Unload language project" : "卸载语言工程"} onClick={() => void desktop.languagePackCall(project.packId, "unload", project.root)} title={en ? "Unload" : "卸载"} type="button"><i aria-hidden="true" className="fa-solid fa-arrow-right-from-bracket" /></button></div></div><small>{project.packName} · {project.root}</small><span className={`is-${project.status}`}>{project.status}{project.error ? ` · ${project.error}` : ""}</span></div>)}
           </section>
         </div>,
         document.body,

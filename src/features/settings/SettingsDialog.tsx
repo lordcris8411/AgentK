@@ -3,7 +3,7 @@ import {
   desktop,
   type BrowserOption,
   type FileFormatPluginResource,
-  type LanguageServerPlugin,
+  type LanguagePack,
   type ProviderCatalogItem,
   type ProviderDraft,
   type PiResource,
@@ -20,7 +20,7 @@ import { DirectoryPickerDialog } from "../../components/DirectoryPickerDialog";
 import { AgentKLogo } from "../../components/AgentKLogo";
 import { LocalModelsSettings } from "./LocalModelsSettings";
 
-export type SettingsPage = "models" | "appearance" | "agentSettings" | "skills" | "extensions" | "editors" | "permissions" | "about";
+export type SettingsPage = "models" | "appearance" | "agentSettings" | "skills" | "extensions" | "editors" | "languagePacks" | "permissions" | "about";
 
 let aboutDataPromise: Promise<[string, RuntimeInfo]> | undefined;
 let browserDataPromise: Promise<BrowserOption[]> | undefined;
@@ -137,7 +137,7 @@ export function SettingsDialog({
   const [firstPartyEditors, setFirstPartyEditors] = useState<
     FileFormatPluginResource[]
   >([]);
-  const [languageServerPlugins, setLanguageServerPlugins] = useState<LanguageServerPlugin[]>([]);
+  const [languagePacks, setLanguagePacks] = useState<LanguagePack[]>([]);
   const [providers, setProviders] = useState<ProviderCatalogItem[]>([]);
   const [models, setModels] = useState<Array<{ provider: string; id: string; name?: string }>>([]);
   const [busy, setBusy] = useState(false);
@@ -329,9 +329,19 @@ export function SettingsDialog({
       setBusy(false);
     }
   };
-  const installLanguageServerPlugin = async (sourceDirectory: string) => {
+  const installLanguagePack = async (sourceDirectory: string) => {
     setBusy(true); setError(undefined);
-    try { const installed = await desktop.installLanguageServerPlugin(sourceDirectory); setLanguageServerPlugins(await desktop.listLanguageServerPlugins()); setNotice(`已安装 ${installed.displayName}`); }
+    try {
+      const preview = await desktop.previewLanguagePack(sourceDirectory);
+      const permissionSummary = [
+        preview.permissions.network ? "网络" : undefined,
+        preview.permissions.processes ? "启动进程" : undefined,
+        preview.permissions.workspaceWrite ? "写入工作区" : undefined,
+        preview.permissions.externalTools.length ? `外部工具：${preview.permissions.externalTools.join(", ")}` : undefined,
+      ].filter(Boolean).join("；") || "无额外权限";
+      if (!window.confirm(`安装 ${preview.displayName} v${preview.version}？\n权限：${permissionSummary}`)) return;
+      const installed = await desktop.installLanguagePack(sourceDirectory, preview.approvalToken); setLanguagePacks(await desktop.listLanguagePacks()); setNotice(`已安装 ${installed.displayName}`);
+    }
     catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
   };
@@ -342,13 +352,11 @@ export function SettingsDialog({
     catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
   };
-  const toggleLanguagePlugin = async (id: string, skillOnly = false) => {
-    const key = skillOnly ? "disabledLanguageServerSkills" : "disabledLanguageServers";
-    const current = settings[key]; const disabled = !current.includes(id);
+  const toggleLanguagePlugin = async (id: string) => {
+    const current = settings.disabledLanguagePacks; const disabled = !current.includes(id);
     const next = disabled ? [...current, id] : current.filter((value) => value !== id);
-    const updateValue = skillOnly ? { disabledLanguageServerSkills: next } : { disabledLanguageServers: next, disabledLanguageServerSkills: disabled ? [...new Set([...settings.disabledLanguageServerSkills, id])] : settings.disabledLanguageServerSkills };
     setBusy(true); setError(undefined);
-    try { await update(updateValue); setLanguageServerPlugins(await desktop.listLanguageServerPlugins()); }
+    try { await update({ disabledLanguagePacks: next }); setLanguagePacks(await desktop.listLanguagePacks()); }
     catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
   };
@@ -371,7 +379,7 @@ export function SettingsDialog({
     if (!cwd) setSkillHubScope("user");
   }, [cwd]);
   useEffect(() => {
-    if (!open || !["skills", "extensions", "editors"].includes(page) || !runtimeId || !cwd) return;
+    if (!open || !["skills", "extensions", "editors", "languagePacks"].includes(page) || !runtimeId || !cwd) return;
     setBusy(true);
     setError(undefined);
     void desktop.piResources(cwd, runtimeId)
@@ -392,7 +400,7 @@ export function SettingsDialog({
       .finally(() => setBusy(false));
   }, [cwd, open, page, runtimeId]);
   useEffect(() => {
-    if (!open || page !== "editors") return;
+    if (!open || !["editors", "languagePacks"].includes(page)) return;
     let cancelled = false;
     void desktop.firstPartyFileFormatPlugins()
       .then((plugins) => {
@@ -410,10 +418,10 @@ export function SettingsDialog({
   }, [open, page]);
   useEffect(() => {
     if (!open || page !== "editors") return;
-    void desktop.listLanguageServerPlugins().then(setLanguageServerPlugins).catch((cause) => setError(String(cause)));
+    void desktop.listLanguagePacks().then(setLanguagePacks).catch((cause) => setError(String(cause)));
   }, [open, page]);
   useEffect(() => {
-    if (!open || !["skills", "extensions", "editors"].includes(page)) return;
+    if (!open || !["skills", "extensions", "editors", "languagePacks"].includes(page)) return;
     let cancelled = false;
     setResourcesLocked(true);
     const refreshStatus = () => {
@@ -870,9 +878,9 @@ export function SettingsDialog({
         </header>
         <div className="settings-body">
           <nav className="settings-nav">
-            {(["models", "appearance", "agentSettings", "skills", "extensions", "editors", "permissions", "about"] as SettingsPage[]).map((item) => (
+            {(["models", "appearance", "agentSettings", "skills", "extensions", "editors", "languagePacks", "permissions", "about"] as SettingsPage[]).map((item) => (
               <button className={page === item ? "is-active" : ""} key={item} onClick={() => { setPage(item); onPageChange?.(item); }} type="button">
-                <i className={`fa-solid ${item === "models" ? "fa-microchip" : item === "appearance" ? "fa-circle-half-stroke" : item === "agentSettings" ? "fa-sliders" : item === "skills" ? "fa-wand-magic-sparkles" : item === "extensions" ? "fa-puzzle-piece" : item === "editors" ? "fa-pen-ruler" : item === "permissions" ? "fa-shield-halved" : "fa-circle-info"}`} />
+                <i className={`fa-solid ${item === "models" ? "fa-microchip" : item === "appearance" ? "fa-circle-half-stroke" : item === "agentSettings" ? "fa-sliders" : item === "skills" ? "fa-wand-magic-sparkles" : item === "extensions" ? "fa-puzzle-piece" : item === "editors" ? "fa-pen-ruler" : item === "languagePacks" ? "fa-code" : item === "permissions" ? "fa-shield-halved" : "fa-circle-info"}`} />
                 {t(item)}
               </button>
             ))}
@@ -1179,7 +1187,7 @@ export function SettingsDialog({
                   <h2>{t("editors")}</h2>
                   <div className="settings-title-actions"><button disabled={busy || resourcesLocked} onClick={() => setExtensionPicker("editor")} type="button">
                     <i className="fa-solid fa-box-open" /> 安装扩展
-                  </button><button disabled={busy || resourcesLocked} onClick={() => setExtensionPicker("language")} type="button"><i className="fa-solid fa-code" /> 安装语言扩展</button><button
+                  </button><button
                     disabled={busy || !runtimeId || resourcesLocked}
                     onClick={() => {
                       if (!runtimeId || !cwd) return;
@@ -1262,15 +1270,6 @@ export function SettingsDialog({
                     );
                   })}
                 </div>
-                {languageServerPlugins.some((plugin) => plugin.editorContribution) && <><div className="editor-manager-heading">
-                  <h3>语言项目扩展</h3>
-                  <p>由语言服务插件提供工程能力，并复用对应的文件编辑器。</p>
-                </div><div className="resource-list editor-language-list">
-                  {languageServerPlugins.flatMap((plugin) => plugin.editorContribution ? [{ plugin, contribution: plugin.editorContribution }] : []).map(({ plugin, contribution }) => <article className="resource-card" key={`${plugin.id}:${contribution.id}`}>
-                    <div><strong>{contribution.name}</strong><span>{contribution.description}</span><small>{contribution.id} · v{contribution.version} · {plugin.displayName} · {contribution.editorPluginId}</small></div>
-                    <div className="resource-card-actions">{plugin.skill && <button aria-label={`${plugin.skill.name} Skill`} className="editor-skill-button" disabled={busy} onClick={() => setEditorSkillViewer({ name: plugin.skill!.name, source: plugin.skill!.markdown })} title="查看 Language Skill" type="button"><i aria-hidden="true" className="fa-regular fa-file-lines" /></button>}<div className="resource-switch"><span>语言扩展</span><button aria-checked={plugin.enabled !== false} className={plugin.enabled !== false ? "resource-toggle is-active" : "resource-toggle"} disabled={busy} onClick={() => void toggleLanguagePlugin(plugin.id)} role="switch" type="button"><span /></button></div><div className="resource-switch"><span>Language Skill</span><button aria-checked={!settings.disabledLanguageServerSkills.includes(plugin.id)} className={!settings.disabledLanguageServerSkills.includes(plugin.id) ? "resource-toggle is-active" : "resource-toggle"} disabled={busy || plugin.enabled === false} onClick={() => void toggleLanguagePlugin(plugin.id, true)} role="switch" type="button"><span /></button></div></div>
-                  </article>)}
-                </div></>}
                 <div className="editor-manager-heading">
                   <h3>{t("installedEditors")}</h3>
                   <p>{t("filePluginDependency")}</p>
@@ -1321,6 +1320,19 @@ export function SettingsDialog({
                   {!busy && resources.every((resource) => !resource.fileFormat) && (
                     <p className="empty-settings">{t("noEditorExtensions")}</p>
                   )}
+                </div>
+              </>
+            )}
+            {page === "languagePacks" && (
+              <>
+                <div className="settings-title-row"><h2>{t("languagePacks")}</h2><div className="settings-title-actions"><button disabled={busy || resourcesLocked} onClick={() => setExtensionPicker("language")} type="button"><i className="fa-solid fa-box-open" /> 安装 Language Pack</button></div></div>
+                <p className="settings-description">每个包原子提供 Editor、Skill、语义、工具链、编译、运行、测试和调试能力；启停无需重启 Agent K。</p>
+                <div className="resource-list editor-language-list">
+                  {languagePacks.map((plugin) => <article className="resource-card" key={plugin.id}>
+                    <div><strong>{plugin.displayName}</strong><small>{plugin.id} · v{plugin.version} · {plugin.platforms.join(" / ")}</small><span>{plugin.languages.join(", ")} · {plugin.actions.length} actions</span><small>工具：{plugin.toolchainSources.map((tool) => `${tool.id} ${tool.version} (${tool.source})`).join(" · ")}</small><small>权限：{plugin.permissions.externalTools.join(", ")}{plugin.permissions.network ? " · network" : ""}{plugin.permissions.workspaceWrite ? " · workspace write" : ""}</small></div>
+                    <div className="resource-card-actions">{plugin.skills.map((skill) => <button aria-label={`${skill.name} Skill`} className="editor-skill-button" disabled={busy} key={skill.name} onClick={() => setEditorSkillViewer({ name: skill.name, source: skill.markdown })} title="查看包内 Skill" type="button"><i aria-hidden="true" className="fa-regular fa-file-lines" /></button>)}<div className="resource-switch"><span>整包启用</span><button aria-checked={plugin.enabled !== false} className={plugin.enabled !== false ? "resource-toggle is-active" : "resource-toggle"} disabled={busy} onClick={() => void toggleLanguagePlugin(plugin.id)} role="switch" type="button"><span /></button></div></div>
+                  </article>)}
+                  {!busy && !languagePacks.length && <p className="empty-settings">没有可用的 Language Pack</p>}
                 </div>
               </>
             )}
@@ -1421,7 +1433,7 @@ export function SettingsDialog({
           onSelect={(path) => {
             const target = extensionPicker;
             setExtensionPicker(undefined);
-            void (target === "editor" ? installEditorPlugin(path) : target === "language" ? installLanguageServerPlugin(path) : importTheme(path));
+            void (target === "editor" ? installEditorPlugin(path) : target === "language" ? installLanguagePack(path) : importTheme(path));
           }}
           selectFiles
           title={extensionPicker === "editor" ? "选择编辑器扩展文件" : extensionPicker === "language" ? "选择语言扩展文件" : t("themeFileDialog")}

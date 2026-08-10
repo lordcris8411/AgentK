@@ -71,11 +71,11 @@ const ExtensionUiContext = createContext<ExtensionUiContextValue | undefined>(
 const ansiSequencePattern =
   /[\u001b\u009b](?:\][^\u0007]*(?:\u0007|\u001b\\)|\[[0-?]*[ -/]*[@-~]|[0-?]*[ -/]*[@-~])/g;
 const fileFormatActionPrefix = "agent-k-file-format-action:";
+const fileFormatActionRequestPrefix = "agent-k-file-action-request:";
 const providerRequestDumpPrefix = "agent-k-provider-request:";
 const fileFormatOpenRequestPrefix = "agent-k-file-open:";
 const previewConsoleRequestPrefix = "agent-k-preview-console:";
-const cppLanguageServerRequestPrefix = "agent-k-cpp-language-server:";
-const nativeDebuggerRequestPrefix = "agent-k-native-debugger:";
+const languageActionRequestPrefix = "agent-k-language-action:";
 
 // Extension UI strings are often authored for Pi's terminal renderer. Strip
 // ANSI CSI/OSC control sequences before displaying them in the WebView.
@@ -400,7 +400,7 @@ export function ExtensionUiProvider({ children }: { children: ReactNode }) {
             respond("No active Agent K web-project preview is available.");
           return;
         }
-        if (method === "input" && title.startsWith(fileFormatOpenRequestPrefix)) {
+        if (method === "input" && (title.startsWith(fileFormatOpenRequestPrefix) || title.startsWith(fileFormatActionRequestPrefix))) {
           const requestId = typeof event.id === "string" ? event.id : "";
           let responseSent = false;
           let responseTimer: number | undefined;
@@ -415,18 +415,19 @@ export function ExtensionUiProvider({ children }: { children: ReactNode }) {
             }, runtimeId).catch(() => undefined);
           };
           try {
-            const detail = JSON.parse(title.slice(fileFormatOpenRequestPrefix.length)) as Record<string, unknown>;
+            const prefix = title.startsWith(fileFormatOpenRequestPrefix) ? fileFormatOpenRequestPrefix : fileFormatActionRequestPrefix;
+            const detail = JSON.parse(title.slice(prefix.length)) as Record<string, unknown>;
             const bridgeEvent = new CustomEvent("agent-k-file-format-action", {
               cancelable: true,
               detail: { ...detail, respond },
             });
             if (window.dispatchEvent(bridgeEvent)) {
-              respond({ ok: false, error: "No Agent K editor accepted the file-open request." });
+              respond({ ok: false, error: "No Agent K editor accepted the request." });
               return;
             }
             if (!responseSent)
               responseTimer = window.setTimeout(() => {
-                respond({ ok: false, error: "Agent K file editor timed out while opening the file." });
+                respond({ ok: false, error: "Agent K file editor request timed out." });
               }, 30_000);
           } catch (cause) {
             respond({
@@ -436,7 +437,7 @@ export function ExtensionUiProvider({ children }: { children: ReactNode }) {
           }
           return;
         }
-        if (method === "input" && title.startsWith(cppLanguageServerRequestPrefix)) {
+        if (method === "input" && title.startsWith(languageActionRequestPrefix)) {
           const requestId = typeof event.id === "string" ? event.id : "";
           const respond = (value: string) => void desktop.extensionResponse({
             type: "extension_ui_response",
@@ -445,30 +446,10 @@ export function ExtensionUiProvider({ children }: { children: ReactNode }) {
           }, runtimeId);
           void (async () => {
             try {
-              const request = JSON.parse(title.slice(cppLanguageServerRequestPrefix.length)) as Record<string, unknown>;
-              if (typeof request.action !== "string" || typeof request.workspace !== "string" || typeof request.cwd !== "string")
-                throw new Error("Invalid C++ language service request");
-              const result = await desktop.languageServerCall("cpp-clangd", "skill", request);
-              respond(JSON.stringify(result, undefined, 2));
-            } catch (cause) {
-              respond(JSON.stringify({ ok: false, error: cause instanceof Error ? cause.message : String(cause) }, undefined, 2));
-            }
-          })();
-          return;
-        }
-        if (method === "input" && title.startsWith(nativeDebuggerRequestPrefix)) {
-          const requestId = typeof event.id === "string" ? event.id : "";
-          const respond = (value: string) => void desktop.extensionResponse({
-            type: "extension_ui_response",
-            id: requestId,
-            value,
-          }, runtimeId);
-          void (async () => {
-            try {
-              const request = JSON.parse(title.slice(nativeDebuggerRequestPrefix.length)) as Record<string, unknown>;
-              if (typeof request.action !== "string" || typeof request.workspace !== "string" || typeof request.cwd !== "string")
-                throw new Error("Invalid native debugger request");
-              const result = await desktop.languageServerCall("cpp-clangd", "debugSkill", request);
+              const request = JSON.parse(title.slice(languageActionRequestPrefix.length)) as Record<string, unknown>;
+              if (typeof request.packId !== "string" || typeof request.action !== "string" || typeof request.cwd !== "string" || !request.arguments || typeof request.arguments !== "object")
+                throw new Error("Invalid Language Pack action request");
+              const result = await desktop.languagePackInvoke(request.packId, request.action, request.arguments as Record<string, unknown>, request.cwd);
               respond(JSON.stringify(result, undefined, 2));
             } catch (cause) {
               respond(JSON.stringify({ ok: false, error: cause instanceof Error ? cause.message : String(cause) }, undefined, 2));

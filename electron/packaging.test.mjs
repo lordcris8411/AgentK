@@ -131,10 +131,10 @@ test("packaged runtime requires the node-pty spawn helper only on macOS", async 
 });
 
 test("bundled language workers do not depend on host node_modules", async () => {
-  const packages = join(root, "language-servers");
+  const packages = join(root, "language-packs");
   for (const entry of await readdir(packages, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const manifestPath = join(packages, entry.name, "agent-k.language-server.json");
+    const manifestPath = join(packages, entry.name, "agent-k.language-pack.json");
     let manifest;
     try { manifest = JSON.parse(await readFile(manifestPath, "utf8")); } catch { continue; }
     const workerPath = join(packages, entry.name, manifest.worker);
@@ -150,17 +150,17 @@ test("bundled language workers do not depend on host node_modules", async () => 
 });
 
 test("language worker rebuilds keep the previous worker discoverable", async () => {
-  const source = await readFile(join(root, "script", "build-language-server-plugins.mjs"), "utf8");
-  assert.match(source, /const stagingDirectory = join\(directory, "\.agent-k-language-server-build"\)/);
+  const source = await readFile(join(root, "script", "build-language-packs.mjs"), "utf8");
+  assert.match(source, /const stagingDirectory = join\(directory, "\.agent-k-language-pack-build"\)/);
   assert.match(source, /await copyFile\(stagingOutput, output\)/);
   assert.doesNotMatch(source, /await rm\(dirname\(output\)/);
 });
 
 test("bundled language workers initialize outside the development tree", async () => {
-  const packages = join(root, "language-servers");
+  const packages = join(root, "language-packs");
   for (const entry of await readdir(packages, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const manifestPath = join(packages, entry.name, "agent-k.language-server.json");
+    const manifestPath = join(packages, entry.name, "agent-k.language-pack.json");
     let manifest;
     try { manifest = JSON.parse(await readFile(manifestPath, "utf8")); } catch { continue; }
     const isolated = await mkdtemp(join(tmpdir(), "agent-k-language-worker-"));

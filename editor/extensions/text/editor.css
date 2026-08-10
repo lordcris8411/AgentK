@@ -56,6 +56,24 @@ body {
 .agent-k-cpp-language-status[hidden] { display: none; }
 .agent-k-cpp-language-spinner { animation: agent-k-cpp-language-spin .75s linear infinite; border: 2px solid var(--text-border); border-radius: 50%; border-top-color: var(--text-accent); box-sizing: border-box; height: 11px; width: 11px; }
 @keyframes agent-k-cpp-language-spin { to { transform: rotate(360deg); } }
+.agent-k-language-result {
+  background: color-mix(in srgb, var(--text-raised) 94%, transparent);
+  border: 1px solid var(--text-border);
+  border-radius: 4px;
+  bottom: 10px;
+  color: var(--text-secondary);
+  font: 11px/1.3 var(--text-ui-font);
+  max-width: min(440px, calc(100% - 24px));
+  overflow: hidden;
+  padding: 5px 8px;
+  pointer-events: none;
+  position: absolute;
+  right: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  z-index: 15;
+}
+.agent-k-language-result[hidden] { display: none; }
 /* Monaco's compatibility multi-cursor action is not supported by the
    host-backed editor, so keep it out of every context menu deterministically. */
 .agent-k-editor-context-menu { background: var(--text-raised); border: 1px solid var(--text-border); border-radius: 4px; box-shadow: 0 6px 18px color-mix(in srgb, var(--text-background) 62%, transparent); min-width: 190px; padding: 4px 0; position: absolute; z-index: 30; }

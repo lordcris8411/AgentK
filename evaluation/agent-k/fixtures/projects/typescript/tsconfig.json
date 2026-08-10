@@ -1,0 +1,4 @@
+{
+  "compilerOptions": { "allowJs": true, "checkJs": true, "module": "NodeNext", "moduleResolution": "NodeNext", "strict": true, "target": "ES2022" },
+  "include": ["src"]
+}

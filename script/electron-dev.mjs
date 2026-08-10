@@ -48,7 +48,7 @@ const editorBuild = run(process.execPath, [join(root, "script", "build-editor-ex
 const editorBuildCode = await new Promise((resolve) => editorBuild.once("exit", resolve));
 if (editorBuildCode !== 0) process.exit(Number(editorBuildCode) || 1);
 
-const languageServerBuild = run(process.execPath, [join(root, "script", "build-language-server-plugins.mjs")]);
+const languageServerBuild = run(process.execPath, [join(root, "script", "build-language-packs.mjs")]);
 const languageServerBuildCode = await new Promise((resolve) => languageServerBuild.once("exit", resolve));
 if (languageServerBuildCode !== 0) process.exit(Number(languageServerBuildCode) || 1);
 

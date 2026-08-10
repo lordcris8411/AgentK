@@ -1,0 +1,22 @@
+{
+  "apiVersion": 1,
+  "kind": "language-pack",
+  "id": "__ID__",
+  "version": "0.1.0",
+  "displayName": "__DISPLAY_NAME__",
+  "platforms": ["win32", "linux"],
+  "languages": [__LANGUAGES__],
+  "fileExtensions": [__EXTENSIONS__],
+  "projectMarkers": [__MARKERS__],
+  "actions": [
+    { "id": "project.list", "method": "agent", "description": "List loaded projects.", "parameters": { "type": "object" } },
+    { "id": "project.load", "method": "agent", "description": "Load a project.", "parameters": { "type": "object", "required": ["workspace"] } },
+    { "id": "project.status", "method": "agent", "description": "Get project status.", "parameters": { "type": "object", "required": ["workspace"] } },
+    { "id": "project.unload", "method": "agent", "description": "Unload a project.", "parameters": { "type": "object", "required": ["workspace"] } }
+  ],
+  "permissions": { "externalTools": ["replace-with-tool"], "network": false, "processes": true, "workspaceWrite": false },
+  "toolchains": [{ "id": "replace-with-tool", "system": { "commands": ["replace-with-tool"], "versionRange": ">=1 <2" } }],
+  "editorContribution": { "id": "__ID__-text", "name": "__DISPLAY_NAME__", "description": "Core text editing and language services.", "version": "0.1.0", "editorPluginId": "agent-k.text" },
+  "skills": [{ "name": "__SKILL_NAME__", "markdown": "---\nname: __SKILL_NAME__\ndescription: Use the __DISPLAY_NAME__ Language Pack.\n---\n\nCall agent_k with capability language, packId __ID__, and a declared action.\n" }],
+  "worker": "dist/worker.js"
+}

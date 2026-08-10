@@ -30,7 +30,7 @@ function variableDisplay(variable: Pick<DebugVariable, "memoryReference" | "type
 }
 
 function useVariableAddress(type: string | undefined, memoryReference: string | undefined, expression: string): string | undefined {
-  const languageServerId = useContext(DebugServerContext);
+  const packId = useContext(DebugServerContext);
   const sessionId = useContext(DebugSessionContext);
   const pointer = pointerType(type);
   const addressOfResult = pointer && /^\s*&/u.test(expression);
@@ -43,7 +43,7 @@ function useVariableAddress(type: string | undefined, memoryReference: string | 
     void (async () => {
       for (let attempt = 0; attempt < 3 && !disposed; attempt++) {
         try {
-          const value = await desktop.languageServerCall(languageServerId, "debugEvaluate", `&(${expression})`, "watch", sessionId);
+          const value = await desktop.languagePackCall(packId, "debugEvaluate", `&(${expression})`, "watch", sessionId);
           if (!disposed) setAddress((value as { memoryReference?: string }).memoryReference);
           return;
         } catch {
@@ -53,7 +53,7 @@ function useVariableAddress(type: string | undefined, memoryReference: string | 
       if (!disposed) setAddress(undefined);
     })();
     return () => { disposed = true; };
-  }, [addressOfResult, expression, languageServerId, memoryReference, pointer, sessionId]);
+  }, [addressOfResult, expression, packId, memoryReference, pointer, sessionId]);
   return address;
 }
 
@@ -97,7 +97,7 @@ function VariableRow({ canEdit, depth, en, onAddWatch, onError, onSnapshot, pare
   canEdit: boolean; depth: number; en: boolean; onAddWatch(expression: string): void; onError(message: string): void; onSnapshot(snapshot: DebugSnapshot): void;
   parentReference: number; variable: DebugVariable;
 }) {
-  const languageServerId = useContext(DebugServerContext);
+  const packId = useContext(DebugServerContext);
   const sessionId = useContext(DebugSessionContext);
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<DebugVariable[]>();
@@ -121,7 +121,7 @@ function VariableRow({ canEdit, depth, en, onAddWatch, onError, onSnapshot, pare
     if (children) return;
     setLoading(true);
     try {
-      const result = await desktop.languageServerCall(languageServerId, "debugVariables", variable.variablesReference, sessionId);
+      const result = await desktop.languagePackCall(packId, "debugVariables", variable.variablesReference, sessionId);
       setChildren(Array.isArray(result) ? result as DebugVariable[] : []);
     } catch (cause) { onError(String(cause)); }
     finally { setLoading(false); }
@@ -130,7 +130,7 @@ function VariableRow({ canEdit, depth, en, onAddWatch, onError, onSnapshot, pare
     setEditing(false);
     if (value === variable.value) return;
     try {
-      const result = await desktop.languageServerCall(languageServerId, "debugSetVariable", parentReference, variable.name, value, sessionId);
+      const result = await desktop.languagePackCall(packId, "debugSetVariable", parentReference, variable.name, value, sessionId);
       onSnapshot(result as DebugSnapshot);
     } catch (cause) { setValue(variable.value); onError(String(cause)); }
   };
@@ -148,7 +148,7 @@ function VariableRow({ canEdit, depth, en, onAddWatch, onError, onSnapshot, pare
         <button className={format === "hex" ? "is-active" : ""} onClick={() => { setFormat("hex"); setMenu(undefined); }} type="button">{en ? "Display as hexadecimal" : "以十六进制显示"}</button>
         <button className={format === "decimal" ? "is-active" : ""} onClick={() => { setFormat("decimal"); setMenu(undefined); }} type="button">{en ? "Display as decimal" : "以十进制显示"}</button>
         <button onClick={() => { onAddWatch(watchExpression); setMenu(undefined); }} type="button">{en ? "Add to Watch" : "添加到监视"}</button>
-        <button disabled={!variable.memoryReference} onClick={() => { if (variable.memoryReference) void desktopWindow.openDebugTool("memory", variable.memoryReference, languageServerId, sessionId); setMenu(undefined); }} type="button">{en ? "View Memory" : "查看内存"}</button>
+        <button disabled={!variable.memoryReference} onClick={() => { if (variable.memoryReference) void desktopWindow.openDebugTool("memory", variable.memoryReference, packId, sessionId); setMenu(undefined); }} type="button">{en ? "View Memory" : "查看内存"}</button>
       </div> : null}
     </div>
     {expanded ? children?.map((child, index) => <VariableRow canEdit={canEdit} depth={depth + 1} en={en} key={`${child.name}:${index}`} onAddWatch={onAddWatch} onError={onError} onSnapshot={onSnapshot} parentReference={variable.variablesReference} variable={pointerType(variable.type) && /^\*?\$/u.test(child.name) ? { ...child, name: `*${variable.name}` } : child} />) : null}
@@ -158,7 +158,7 @@ function VariableRow({ canEdit, depth, en, onAddWatch, onError, onSnapshot, pare
 function WatchRow({ canEdit, en, onAddWatch, onError, onRemove, onSnapshot, watch }: {
   canEdit: boolean; en: boolean; onAddWatch(expression: string): void; onError(message: string): void; onRemove(): void; onSnapshot(snapshot: DebugSnapshot): void; watch: DebugWatch;
 }) {
-  const languageServerId = useContext(DebugServerContext);
+  const packId = useContext(DebugServerContext);
   const sessionId = useContext(DebugSessionContext);
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<DebugVariable[]>();
@@ -170,7 +170,7 @@ function WatchRow({ canEdit, en, onAddWatch, onError, onRemove, onSnapshot, watc
     if (children) return;
     setLoading(true);
     try {
-      const value = await desktop.languageServerCall(languageServerId, "debugVariables", watch.variablesReference, sessionId);
+      const value = await desktop.languagePackCall(packId, "debugVariables", watch.variablesReference, sessionId);
       setChildren(Array.isArray(value) ? value as DebugVariable[] : []);
     } catch (cause) { onError(String(cause)); }
     finally { setLoading(false); }
@@ -191,7 +191,7 @@ function WatchRow({ canEdit, en, onAddWatch, onError, onRemove, onSnapshot, watc
 function BreakpointRow({ breakpoint, en, onError, onOpen, onRemove, onSnapshot }: {
   breakpoint: DebugBreakpoint; en: boolean; onError(message: string): void; onOpen(): void; onRemove(): void; onSnapshot(snapshot: DebugSnapshot): void;
 }) {
-  const languageServerId = useContext(DebugServerContext);
+  const packId = useContext(DebugServerContext);
   const [editing, setEditing] = useState(false);
   const [condition, setCondition] = useState(breakpoint.condition ?? "");
   const [hitCondition, setHitCondition] = useState(breakpoint.hitCondition ?? "");
@@ -203,7 +203,7 @@ function BreakpointRow({ breakpoint, en, onError, onOpen, onRemove, onSnapshot }
   }, [breakpoint.condition, breakpoint.hitCondition, breakpoint.logMessage]);
   const update = async (changes: Record<string, unknown>) => {
     try {
-      const result = await desktop.languageServerCall(languageServerId, "debugUpdateBreakpoint", breakpoint.file, breakpoint.line, changes);
+      const result = await desktop.languagePackCall(packId, "debugUpdateBreakpoint", breakpoint.file, breakpoint.line, changes);
       onSnapshot(result as DebugSnapshot);
     } catch (cause) { onError(String(cause)); }
   };
@@ -259,7 +259,7 @@ function parseSourceMap(value: string): Record<string, string> {
   }));
 }
 
-export function DebugPanel({ contextFile, languageServerId, modes, providerId, root, onError }: { contextFile?: string; languageServerId: string; modes: Array<"attach" | "dump" | "launch">; providerId: string; root?: string; onError(message: string): void }) {
+export function DebugPanel({ contextFile, packId, modes, providerId, root, onError }: { contextFile?: string; packId: string; modes: Array<"attach" | "dump" | "launch">; providerId: string; root?: string; onError(message: string): void }) {
   const { settings } = useSettings();
   const en = settings.locale === "en-US";
   const [snapshot, setSnapshot] = useState<DebugSnapshot>(emptyDebugSnapshot);
@@ -320,7 +320,7 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
     persistenceRoot.current = undefined;
     if (!root) return;
     const project = loadDebugProject(root);
-    const saved = loadDebugProviderConfiguration(root, `${languageServerId}:${providerId}`);
+    const saved = loadDebugProviderConfiguration(root, `${packId}:${providerId}`);
     setArgs(saved.args);
     setBuildConfiguration(saved.buildConfiguration);
     setConsoleHistory(project.consoleHistory);
@@ -339,11 +339,11 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
     setTargetId(saved.targetId);
     setSymbolPaths(saved.symbolPaths);
     persistenceRoot.current = root;
-  }, [languageServerId, modes, providerId, root]);
+  }, [packId, modes, providerId, root]);
 
   useEffect(() => {
     if (!root || persistenceRoot.current !== root) return;
-    saveDebugProviderConfiguration(root, `${languageServerId}:${providerId}`, {
+    saveDebugProviderConfiguration(root, `${packId}:${providerId}`, {
       args, buildConfiguration, dumpPath, mode, processId, program,
       sourceMap: parseSourceMap(sourceMapText), stopOnEntry, symbolPaths, targetId,
     });
@@ -359,13 +359,13 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
       mode,
       processId,
       program,
-      providerIdentity: `${languageServerId}:${providerId}`,
+      providerIdentity: `${packId}:${providerId}`,
       sourceMap: parseSourceMap(sourceMapText),
       stopOnEntry,
       targetId,
       symbolPaths,
     });
-  }, [args, buildConfiguration, columnPercent, consoleHistory, consolePercent, dumpPath, hiddenPanels, languageServerId, mode, processId, program, providerId, root, rowPercent, sourceMapText, stopOnEntry, symbolPaths, targetId]);
+  }, [args, buildConfiguration, columnPercent, consoleHistory, consolePercent, dumpPath, hiddenPanels, packId, mode, processId, program, providerId, root, rowPercent, sourceMapText, stopOnEntry, symbolPaths, targetId]);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -395,13 +395,13 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
     setSnapshot(emptyDebugSnapshot());
     setSessions([]);
     setSessionId(undefined);
-    void Promise.all([desktop.languageServerCall(languageServerId, "debugSessions"), desktop.languageServerCall(languageServerId, "debugStatus")])
+    void Promise.all([desktop.languagePackCall(packId, "debugSessions"), desktop.languagePackCall(packId, "debugStatus")])
       .then(([value, current]) => {
         if (disposed) return;
         const listed = Array.isArray(value) ? value as DebugSnapshot[] : [];
         const next = listed.filter((item) => item.state !== "terminated");
         for (const stale of listed.filter((item) => item.state === "terminated" && item.sessionId))
-          void desktop.languageServerCall(languageServerId, "debugCloseSession", stale.sessionId).catch(() => undefined);
+          void desktop.languagePackCall(packId, "debugCloseSession", stale.sessionId).catch(() => undefined);
         sessionStatesRef.current = new Map(next.flatMap((item) => item.sessionId ? [[item.sessionId, item.state] as const] : []));
         setSessions(next);
         const currentSnapshot = current as DebugSnapshot;
@@ -410,7 +410,7 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
       })
       .catch(() => undefined);
     const stop = desktop.onEvent((event) => {
-      if (event.type !== "debug_session" || event.languageServerId !== languageServerId) return;
+      if (event.type !== "debug_session" || event.packId !== packId) return;
       const value = event.snapshot;
       if (value && typeof value === "object") {
         const next = value as DebugSnapshot;
@@ -434,8 +434,8 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
             setSessionId(undefined);
             setSnapshot(emptyDebugSnapshot());
             void Promise.all([
-              desktop.languageServerCall(languageServerId, "debugSessions"),
-              desktop.languageServerCall(languageServerId, "debugStatus"),
+              desktop.languagePackCall(packId, "debugSessions"),
+              desktop.languagePackCall(packId, "debugStatus"),
             ]).then(([listed, current]) => {
               if (disposed) return;
               const remaining = (Array.isArray(listed) ? listed as DebugSnapshot[] : []).filter((item) => item.state !== "terminated");
@@ -467,10 +467,10 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
       }
     });
     return () => { disposed = true; stop(); };
-  }, [languageServerId, openSource]);
+  }, [packId, openSource]);
 
   useEffect(() => desktop.onEvent((event) => {
-    if (event.type !== "language_server_progress" || event.languageServerId !== languageServerId || event.tool !== "LLDB debugger") return;
+    if (event.type !== "language_pack_progress" || event.packId !== packId || event.tool !== "LLDB debugger") return;
     const progress = event as { bytes?: unknown; stage?: unknown; total?: unknown };
     if (typeof progress.stage !== "string") return;
     setDebuggerToolProgress({
@@ -479,7 +479,7 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
       ...(typeof progress.total === "number" ? { total: progress.total } : {}),
     });
     if (progress.stage === "ready") window.setTimeout(() => setDebuggerToolProgress(undefined), 1_200);
-  }), [languageServerId]);
+  }), [packId]);
 
   const loadTargets = useCallback((refresh = false) => {
     const version = ++targetRequestVersion.current;
@@ -488,7 +488,7 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
     if (!root) return () => undefined;
     let disposed = false;
     setTargetsLoading(true);
-    void desktop.languageServerCall(languageServerId, "debugConfigurations", root, contextFile, refresh, buildConfiguration)
+    void desktop.languagePackCall(packId, "debugConfigurations", root, contextFile, refresh, buildConfiguration)
       .then((value) => {
         if (disposed || version !== targetRequestVersion.current) return;
         const next = Array.isArray(value) ? value as DebugConfigurationCandidate[] : [];
@@ -501,7 +501,7 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
       .catch((cause) => { if (!disposed && version === targetRequestVersion.current) setTargetError(String(cause)); })
       .finally(() => { if (!disposed && version === targetRequestVersion.current) setTargetsLoading(false); });
     return () => { disposed = true; };
-  }, [buildConfiguration, contextFile, languageServerId, root]);
+  }, [buildConfiguration, contextFile, packId, root]);
 
   useEffect(() => {
     targetRefreshArmed.current = false;
@@ -513,7 +513,7 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
   useEffect(() => {
     const normalize = (value: string) => value.replaceAll("\\", "/").replace(/\/+$/u, "").toLowerCase();
     const stop = desktop.onEvent((event) => {
-      if (event.type !== "language_server_project" || event.languageServerId !== languageServerId) return;
+      if (event.type !== "language_pack_project" || event.packId !== packId) return;
       const project = event.project as { root?: unknown; status?: unknown } | undefined;
       if (!root || typeof project?.root !== "string" || normalize(project.root) !== normalize(root)) return;
       const usable = project.status === "indexing" || project.status === "ready";
@@ -526,22 +526,22 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
       loadTargets(true);
     });
     return stop;
-  }, [languageServerId, loadTargets, root]);
+  }, [packId, loadTargets, root]);
 
   const loadProcesses = useCallback(() => {
     setProcessesLoading(true);
-    void desktop.languageServerCall(languageServerId, "debugProcesses")
+    void desktop.languagePackCall(packId, "debugProcesses")
       .then((value) => setProcesses(Array.isArray(value) ? value as DebugProcess[] : []))
       .catch((cause) => onError(`${en ? "Process discovery failed" : "进程发现失败"}：${String(cause)}`))
       .finally(() => setProcessesLoading(false));
-  }, [en, languageServerId, onError]);
+  }, [en, packId, onError]);
   useEffect(() => { if (mode === "attach") loadProcesses(); }, [loadProcesses, mode]);
 
   const call = async (method: string, ...values: unknown[]) => {
     setBusy(true);
     try {
       const sessionMethods = new Set(["debugClearOutput", "debugCommand", "debugSelectFrame", "debugStop"]);
-      const value = await desktop.languageServerCall(languageServerId, method, ...values, ...(sessionMethods.has(method) && activeSessionId ? [activeSessionId] : [])) as DebugSnapshot;
+      const value = await desktop.languagePackCall(packId, method, ...values, ...(sessionMethods.has(method) && activeSessionId ? [activeSessionId] : [])) as DebugSnapshot;
       setSnapshot(value);
       if (value.sessionId) setSessions((current) => current.map((item) => item.sessionId === value.sessionId ? value : item));
     } catch (cause) {
@@ -565,7 +565,7 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
     if (!configuration) return;
     setBusy(true);
     try {
-      const next = await desktop.languageServerCall(languageServerId, "debugStart", configuration) as DebugSnapshot;
+      const next = await desktop.languagePackCall(packId, "debugStart", configuration) as DebugSnapshot;
       setSnapshot(next); setSessionId(next.sessionId); setCreatingSession(false);
       setSessions((current) => [...current.filter((item) => item.sessionId !== next.sessionId), next]);
     } catch (cause) { onError(`${en ? "Debug start failed" : "启动调试失败"}：${String(cause)}`); }
@@ -576,8 +576,8 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
     if (!configuration) return;
     setBusy(true);
     try {
-      if (activeSessionId) await desktop.languageServerCall(languageServerId, "debugCloseSession", activeSessionId);
-      const result = await desktop.languageServerCall(languageServerId, "debugStart", configuration);
+      if (activeSessionId) await desktop.languagePackCall(packId, "debugCloseSession", activeSessionId);
+      const result = await desktop.languagePackCall(packId, "debugStart", configuration);
       const next = result as DebugSnapshot;
       setSnapshot(next); setSessionId(next.sessionId);
       setSessions((current) => [...current.filter((item) => item.sessionId !== activeSessionId && item.sessionId !== next.sessionId), next]);
@@ -594,7 +594,7 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
       return next;
     });
     try {
-      await desktop.languageServerCall(languageServerId, "debugEvaluate", expression, "repl", activeSessionId);
+      await desktop.languagePackCall(packId, "debugEvaluate", expression, "repl", activeSessionId);
     } catch (cause) {
       onError(`${en ? "Expression evaluation failed" : "表达式计算失败"}：${String(cause)}`);
     }
@@ -627,7 +627,7 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
   const selectSession = async (nextId: string) => {
     setSessionId(nextId);
     try {
-      const next = await desktop.languageServerCall(languageServerId, "debugSelectSession", nextId) as DebugSnapshot;
+      const next = await desktop.languagePackCall(packId, "debugSelectSession", nextId) as DebugSnapshot;
       setSnapshot(next); setCreatingSession(false);
     } catch (cause) { onError(String(cause)); }
   };
@@ -635,8 +635,8 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
     if (!activeSessionId) return;
     setBusy(true);
     try {
-      await desktop.languageServerCall(languageServerId, detach ? "debugDetachSession" : "debugCloseSession", activeSessionId);
-      const value = await desktop.languageServerCall(languageServerId, "debugSessions");
+      await desktop.languagePackCall(packId, detach ? "debugDetachSession" : "debugCloseSession", activeSessionId);
+      const value = await desktop.languagePackCall(packId, "debugSessions");
       const next = (Array.isArray(value) ? value as DebugSnapshot[] : []).filter((item) => item.state !== "terminated");
       setSessions(next);
       const selected = next.at(-1);
@@ -647,7 +647,7 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
   };
   const showLaunch = creatingSession || !active;
 
-  return <DebugServerContext.Provider value={languageServerId}><DebugSessionContext.Provider value={activeSessionId}><section className="debug-panel">
+  return <DebugServerContext.Provider value={packId}><DebugSessionContext.Provider value={activeSessionId}><section className="debug-panel">
     {sessions.length ? <div className="debug-session-bar">
       <select aria-label={en ? "Debug session" : "调试会话"} onChange={(event) => void selectSession(event.target.value)} value={activeSessionId ?? ""}>{sessions.map((item) => <option key={item.sessionId} value={item.sessionId}>{item.sessionLabel ?? item.sessionId} · {item.state}</option>)}</select>
       <button onClick={() => setCreatingSession(true)} title={en ? "New debug session" : "新建调试会话"} type="button"><i className="fa-solid fa-plus" /></button>
@@ -661,9 +661,9 @@ export function DebugPanel({ contextFile, languageServerId, modes, providerId, r
       <button disabled={busy || !stopped || snapshot.sessionKind === "dump"} onClick={() => void call("debugCommand", "next")} title={en ? "Step over" : "逐过程"} type="button"><i className="fa-solid fa-arrow-right" /></button>
       <button disabled={busy || !stopped || snapshot.sessionKind === "dump"} onClick={() => void call("debugCommand", "stepIn")} title={en ? "Step into" : "逐语句"} type="button"><i className="fa-solid fa-arrow-down" /></button>
       <button disabled={busy || !stopped || snapshot.sessionKind === "dump"} onClick={() => void call("debugCommand", "stepOut")} title={en ? "Step out" : "跳出"} type="button"><i className="fa-solid fa-arrow-up" /></button>
-      <button disabled={!active} onClick={() => void desktopWindow.openDebugTool("memory", undefined, languageServerId, activeSessionId)} title={en ? "Memory" : "内存"} type="button"><i className="fa-solid fa-memory" /></button>
-      <button disabled={!active} onClick={() => void desktopWindow.openDebugTool("registers", undefined, languageServerId, activeSessionId)} title={en ? "Registers" : "寄存器"} type="button"><i className="fa-solid fa-microchip" /></button>
-      <button disabled={!active} onClick={() => void desktopWindow.openDebugTool("disassembly", undefined, languageServerId, activeSessionId)} title={en ? "Disassembly" : "反汇编"} type="button"><i className="fa-solid fa-code" /></button>
+      <button disabled={!active} onClick={() => void desktopWindow.openDebugTool("memory", undefined, packId, activeSessionId)} title={en ? "Memory" : "内存"} type="button"><i className="fa-solid fa-memory" /></button>
+      <button disabled={!active} onClick={() => void desktopWindow.openDebugTool("registers", undefined, packId, activeSessionId)} title={en ? "Registers" : "寄存器"} type="button"><i className="fa-solid fa-microchip" /></button>
+      <button disabled={!active} onClick={() => void desktopWindow.openDebugTool("disassembly", undefined, packId, activeSessionId)} title={en ? "Disassembly" : "反汇编"} type="button"><i className="fa-solid fa-code" /></button>
       <span className={`debug-state is-${snapshot.state}`}>{snapshot.adapter ? snapshot.adapter.toUpperCase() : en ? "Native debugger" : "原生调试器"} · {snapshot.state}{snapshot.stopReason ? ` · ${snapshot.stopReason}` : ""}</span>
       {active ? <div className="debug-layout-control"><button aria-expanded={layoutMenu} onClick={() => setLayoutMenu((value) => !value)} title={en ? "Tool windows" : "工具窗口"} type="button"><i className="fa-solid fa-table-cells-large" /></button>{layoutMenu ? <div className="debug-layout-menu">{(["locals", "watch", "stack", "breakpoints", "console"] as DebugPanelId[]).map((panel) => <label key={panel}><input checked={!hiddenPanels.includes(panel)} onChange={() => togglePanel(panel)} type="checkbox" />{{ locals: en ? "Locals" : "局部变量", watch: en ? "Watch" : "监视", stack: en ? "Call Stack" : "调用堆栈", breakpoints: en ? "Breakpoints" : "断点", console: en ? "Console" : "控制台" }[panel]}</label>)}<button onClick={resetLayout} type="button">{en ? "Reset layout" : "重置布局"}</button></div> : null}</div> : null}
     </div> : null}

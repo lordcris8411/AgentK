@@ -27,7 +27,7 @@ export interface RpcPoolOptions {
   bundledExtensionsDirectory: string;
   bundledSkillsDirectory: string;
   firstPartyEditorExtensions: Array<{ directory: string; id: string }>;
-  firstPartyLanguageServerSkills: Array<{ directory: string; id: string }>;
+  firstPartyLanguagePackSkills: Array<{ directory: string; id: string }>;
   launch: PiLaunch;
   minimum: number;
   permissionExtensionSource: string;
@@ -149,6 +149,10 @@ export class RpcPool {
       throw failure.reason;
     }
     this.autoCompactionEnabled = enabled;
+  }
+
+  setLanguagePackSkills(skills: Array<{ directory: string; id: string }>): void {
+    this.options.firstPartyLanguagePackSkills.splice(0, this.options.firstPartyLanguagePackSkills.length, ...skills);
   }
 
   async connect(

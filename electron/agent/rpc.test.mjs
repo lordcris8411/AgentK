@@ -23,7 +23,7 @@ function bridgeFixture() {
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     cwd: "/tmp/agent-k-rpc-test/workspace",
     launch: { executable: "pi", args: [] },
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -55,7 +55,7 @@ test("workspace-backed commands connect Pi when no runtime is active", async () 
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -124,7 +124,7 @@ test("configuration reload replaces an invalid Pi session instead of failing the
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -200,6 +200,14 @@ test("bundled Pi uses the macOS background helper as its Node executable", () =>
   }
 });
 
+test("bundled Pi is preferred over an ambient command wrapper", () => {
+  const bundledCli = resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
+  const launch = resolvePiLaunch("", bundledCli, process.execPath);
+  assert.equal(launch.executable, process.execPath);
+  assert.deepEqual(launch.args, [bundledCli]);
+  assert.equal(launch.environment?.ELECTRON_RUN_AS_NODE, "1");
+});
+
 function respondWithState(child, state) {
   child.stdin.once("data", (chunk) => {
     const request = JSON.parse(chunk.toString());
@@ -263,7 +271,7 @@ test("pool abort waits for Pi to acknowledge that the session is idle", async ()
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -297,7 +305,7 @@ test("pool synchronizes Pi native auto-compaction across existing runtimes", asy
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -337,7 +345,7 @@ test("new sessions preserve the model shown by their prepared runtime", async ()
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -381,7 +389,7 @@ test("new sessions do not restore Pi's unconfigured placeholder model", async ()
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",

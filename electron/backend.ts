@@ -46,8 +46,8 @@ import {
 } from "./file-formats.js";
 import { installSkillHub, previewSkillHub } from "./skill-hub.js";
 import { importTheme, listThemes, removeTheme, themeDirectory } from "./themes.js";
-import { LanguageServerRegistry } from "./language-server-registry.js";
-import type { WorkspaceFileChange } from "./language-server-host.js";
+import { LanguagePackRegistry } from "./language-pack-registry.js";
+import type { WorkspaceFileChange } from "./language-pack-host.js";
 import {
   agentKBashRcConfig,
   agentKStarshipConfig,
@@ -68,7 +68,7 @@ export interface DesktopBackendOptions {
   appDataPath: string;
   bundledExtensionsSource: string;
   firstPartyEditorExtensionsSource: string;
-  firstPartyLanguageServerPluginsSource: string;
+  firstPartyLanguagePacksSource: string;
   bundledSkillsSource: string;
   bundledThemesSource: string;
   bundledPiCli: string;
@@ -101,7 +101,7 @@ export class DesktopBackend {
   private localModels?: LocalModelManager;
   private readonly projectConsoles = new Map<string, ProjectConsoleProcess>();
   private readonly webProjects = new Map<string, ReturnType<typeof spawn>>();
-  private readonly languageServers: LanguageServerRegistry;
+  private readonly languagePacks: LanguagePackRegistry;
   private workspaceWatcher?: FSWatcher;
   private themeWatcher?: FSWatcher;
   private themeWatchTimer?: ReturnType<typeof setTimeout>;
@@ -116,9 +116,9 @@ export class DesktopBackend {
   constructor(options: DesktopBackendOptions) {
     this.options = options;
     this.files = new FileService(options.appDataPath, options.cachePath);
-    this.languageServers = new LanguageServerRegistry(
-      options.firstPartyLanguageServerPluginsSource,
-      join(options.appDataPath, "language-server-plugins"),
+    this.languagePacks = new LanguagePackRegistry(
+      options.firstPartyLanguagePacksSource,
+      join(options.appDataPath, "language-packs"),
       options.cachePath,
       (event) => this.options.emit(event),
     );
@@ -135,7 +135,7 @@ export class DesktopBackend {
     const startupText = (english: string, chinese: string) =>
       settings.locale === "en-US" ? english : chinese;
     await this.files.initialize();
-    await this.reloadLanguageServers(settings.disabledLanguageServers);
+    await this.reloadLanguagePacks(settings.disabledLanguagePacks);
     await migrateMisclassifiedVllm();
     await cp(this.options.bundledExtensionsSource, this.bundledExtensionsDirectory, {
       recursive: true,
@@ -243,12 +243,7 @@ export class DesktopBackend {
         directory: dirname(plugin.path),
         id: plugin.id,
       })),
-      firstPartyLanguageServerSkills: this.languageServers.list()
-        .filter((plugin) => Boolean(plugin.skill))
-        .map((plugin) => ({
-          directory: join(this.options.firstPartyLanguageServerPluginsSource, plugin.id),
-          id: plugin.id,
-        })),
+      firstPartyLanguagePackSkills: await this.languagePacks.skillDirectories(),
       launch: this.piLaunch,
       minimum: settings.workerPoolSize,
       permissionExtensionSource: this.options.permissionExtensionSource,
@@ -342,8 +337,9 @@ export class DesktopBackend {
             input.environmentPromptEnabled !== current.environmentPromptEnabled;
           const autoCompactionChanged =
             input.autoCompactEnabled !== current.autoCompactEnabled;
-          if (environmentPromptChanged && pool.status().busy > 0)
-            throw new Error("Wait for active Pi tasks and dialogs to finish before changing the environment prompt");
+          const languagePacksChanged = JSON.stringify(input.disabledLanguagePacks ?? current.disabledLanguagePacks) !== JSON.stringify(current.disabledLanguagePacks);
+          if ((environmentPromptChanged || languagePacksChanged) && pool.status().busy > 0)
+            throw new Error("Wait for active Pi tasks and dialogs to finish before changing runtime capabilities");
           const manager = this.requireLocalModels();
           const requestedDisabledProviders = asArray(input.disabledModelProviders).filter((id): id is string => typeof id === "string");
           const disabledModelProviders = manager.snapshot().enabled
@@ -351,15 +347,21 @@ export class DesktopBackend {
             : [...new Set([...requestedDisabledProviders, LOCAL_MODEL_PROVIDER_ID])];
           const saved = await saveClientSettings(this.options.appDataPath, { ...input, disabledModelProviders });
           this.terminalCharset = saved.terminalCharset;
-          for (const plugin of this.languageServers.list()) this.languageServers.setEnabled(plugin.id, !saved.disabledLanguageServers.includes(plugin.id));
-          if (environmentPromptChanged || autoCompactionChanged) {
+          for (const plugin of this.languagePacks.list()) await this.languagePacks.setEnabled(plugin.id, !saved.disabledLanguagePacks.includes(plugin.id));
+          if (languagePacksChanged) pool.setLanguagePackSkills(await this.languagePacks.skillDirectories());
+          if (environmentPromptChanged || autoCompactionChanged || languagePacksChanged) {
             try {
               if (autoCompactionChanged)
                 await pool.setAutoCompaction(saved.autoCompactEnabled);
-              if (environmentPromptChanged)
+              if (environmentPromptChanged || languagePacksChanged)
                 await pool.reload();
             } catch (cause) {
               await saveClientSettings(this.options.appDataPath, current);
+              if (languagePacksChanged) {
+                for (const plugin of this.languagePacks.list()) await this.languagePacks.setEnabled(plugin.id, !current.disabledLanguagePacks.includes(plugin.id));
+                pool.setLanguagePackSkills(await this.languagePacks.skillDirectories());
+                await pool.reload().catch(() => undefined);
+              }
               if (autoCompactionChanged)
                 await pool.setAutoCompaction(current.autoCompactEnabled).catch(() => undefined);
               throw cause;
@@ -391,7 +393,7 @@ export class DesktopBackend {
         return openProviderLogin(requiredString(args.providerId, "providerId"), this.requirePiLaunch());
       case "reload_pi_runtimes":
         await pool.reload();
-        await this.reloadLanguageServers((await loadClientSettings(this.options.appDataPath)).disabledLanguageServers);
+        await this.reloadLanguagePacks((await loadClientSettings(this.options.appDataPath)).disabledLanguagePacks);
         return;
       case "get_pi_resources":
         return getPiResources(
@@ -630,18 +632,39 @@ export class DesktopBackend {
         );
       case "start_web_project":
         return this.startWebProject(requiredString(args.root, "root"), requiredString(args.path, "path"));
-      case "list_language_server_plugins":
-        return this.languageServers.list();
-      case "install_language_server_plugin":
-        return this.languageServers.install(requiredString(args.sourceDirectory, "sourceDirectory"));
-      case "list_language_server_projects":
-        return this.languageServers.listProjects();
-      case "language_server_call":
-        return this.languageServers.call(requiredString(args.id, "id"), requiredString(args.method, "method"), ...(Array.isArray(args.args) ? args.args : []));
-      case "language_server_request":
-        return this.languageServers.callForLanguage(requiredString(args.language, "language"), "lsp", requiredString(args.file, "file"), requiredString(args.method, "method"), args.params);
-      case "language_server_notify":
-        return this.languageServers.callForLanguage(requiredString(args.language, "language"), "notify", requiredString(args.file, "file"), requiredString(args.method, "method"), args.params);
+      case "list_language_packs":
+        return this.languagePacks.list();
+      case "preview_language_pack":
+        return this.languagePacks.preview(requiredString(args.sourceDirectory, "sourceDirectory"));
+      case "install_language_pack":
+        {
+          if (pool.status().busy > 0) throw new Error("Wait for active Pi tasks before installing a Language Pack");
+          const installed = await this.languagePacks.install(requiredString(args.sourceDirectory, "sourceDirectory"), requiredString(args.approvalToken, "approvalToken"));
+          pool.setLanguagePackSkills(await this.languagePacks.skillDirectories()); await pool.reload(); return installed;
+        }
+      case "uninstall_language_pack":
+        if (pool.status().busy > 0) throw new Error("Wait for active Pi tasks before uninstalling a Language Pack");
+        await this.languagePacks.uninstall(requiredString(args.id, "id")); pool.setLanguagePackSkills(await this.languagePacks.skillDirectories()); await pool.reload(); return;
+      case "list_language_pack_projects":
+        return this.languagePacks.listProjects();
+      case "language_pack_call":
+        return this.languagePacks.call(requiredString(args.id, "id"), requiredString(args.method, "method"), ...(Array.isArray(args.args) ? args.args : []));
+      case "language_pack_invoke": {
+        const packId = requiredString(args.packId, "packId"); const action = requiredString(args.action, "action");
+        const cwd = resolve(requiredString(args.cwd, "cwd")); const arguments_ = asObject(args.arguments);
+        const workspace = arguments_.workspace;
+        if (workspace !== undefined) {
+          if (typeof workspace !== "string" || isAbsolute(workspace)) throw new Error("Language Pack workspace must be relative");
+          const absoluteWorkspace = resolve(cwd, workspace); const child = relative(cwd, absoluteWorkspace);
+          if (child.startsWith("..") || isAbsolute(child)) throw new Error("Language Pack workspace escapes the current workspace");
+          arguments_.workspace = absoluteWorkspace;
+        }
+        return this.languagePacks.invoke(packId, action, arguments_);
+      }
+      case "language_pack_request":
+        return this.languagePacks.callForLanguage(requiredString(args.language, "language"), "lsp", requiredString(args.file, "file"), requiredString(args.method, "method"), args.params);
+      case "language_pack_notify":
+        return this.languagePacks.callForLanguage(requiredString(args.language, "language"), "notify", requiredString(args.file, "file"), requiredString(args.method, "method"), args.params);
       case "write_text_file":
         return this.files.writeText(requiredString(args.root, "root"), requiredString(args.path, "path"), requiredString(args.content, "content"));
       case "create_directory":
@@ -701,7 +724,7 @@ export class DesktopBackend {
     this.webProjects.clear();
     this.pool?.shutdown();
     await this.localModels?.shutdown();
-    this.languageServers.shutdown();
+    await this.languagePacks.shutdown();
     this.files.shutdown();
   }
 
@@ -725,7 +748,7 @@ export class DesktopBackend {
       this.workspaceLanguageChangeTimer = undefined;
       const changes = [...this.workspaceLanguageChanges.values()];
       this.workspaceLanguageChanges.clear();
-      this.languageServers.workspaceFilesChanged(changes);
+      this.languagePacks.workspaceFilesChanged(changes);
     }, 120);
   }
 
@@ -888,10 +911,11 @@ export class DesktopBackend {
     consoleProcess.terminal.kill();
   }
 
-  private async reloadLanguageServers(disabled: readonly string[]): Promise<void> {
-    await this.languageServers.reload();
-    for (const id of disabled) this.languageServers.setEnabled(id, false);
-    this.options.emit({ type: "language_server_registry_reloaded" });
+  private async reloadLanguagePacks(disabled: readonly string[]): Promise<void> {
+    await this.languagePacks.reload();
+    const installed = new Set(this.languagePacks.list().map(({ id }) => id));
+    for (const id of disabled) if (installed.has(id)) await this.languagePacks.setEnabled(id, false);
+    this.options.emit({ type: "language_pack_registry_reloaded" });
   }
 
   private requirePool(): RpcPool {

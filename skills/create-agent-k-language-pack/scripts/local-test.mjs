@@ -1,0 +1,5 @@
+import { fork } from "node:child_process";
+import { join } from "node:path";
+const { root, manifest } = await (await import("./validate.mjs")).validatePack(process.argv[2] ?? "."); const child = fork(join(root, manifest.worker), [], { execArgv: [], silent: true }); let id = 1;
+const call = (method, ...args) => new Promise((resolve, reject) => { const requestId = id++; const timer = setTimeout(() => reject(new Error(`${method} timed out`)), 5000); const listener = (message) => { if (message?.type !== "response" || message.id !== requestId) return; clearTimeout(timer); child.off("message", listener); message.error ? reject(new Error(message.error)) : resolve(message.result); }; child.on("message", listener); child.send({ type: "request", id: requestId, method, args }); });
+try { await call("initialize", join(root, ".test-cache")); const projects = await call("list"); if (!Array.isArray(projects)) throw new Error("list must return an array"); await call("shutdown"); console.log(JSON.stringify({ ok: true, coldStart: true, shutdown: true })); } finally { child.kill(); }

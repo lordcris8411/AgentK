@@ -7,18 +7,18 @@ const DebugServerContext = createContext("");
 const DebugSessionContext = createContext<string | undefined>(undefined);
 export type DebugToolKind = "disassembly" | "memory" | "registers";
 
-function useDebugSnapshot(languageServerId: string, sessionId?: string) {
+function useDebugSnapshot(packId: string, sessionId?: string) {
   const [snapshot, setSnapshot] = useState<DebugSnapshot>(emptyDebugSnapshot);
   useEffect(() => {
     let disposed = false;
     setSnapshot(emptyDebugSnapshot());
-    void desktop.languageServerCall(languageServerId, "debugStatus", sessionId).then((value) => { if (!disposed) setSnapshot(value as DebugSnapshot); }).catch(() => undefined);
+    void desktop.languagePackCall(packId, "debugStatus", sessionId).then((value) => { if (!disposed) setSnapshot(value as DebugSnapshot); }).catch(() => undefined);
     const stop = desktop.onEvent((event) => {
-      if (event.type === "debug_session" && event.languageServerId === languageServerId && event.snapshot && typeof event.snapshot === "object" && (event.snapshot as DebugSnapshot).sessionId === sessionId)
+      if (event.type === "debug_session" && event.packId === packId && event.snapshot && typeof event.snapshot === "object" && (event.snapshot as DebugSnapshot).sessionId === sessionId)
         setSnapshot(event.snapshot as DebugSnapshot);
     });
     return () => { disposed = true; stop(); };
-  }, [languageServerId, sessionId]);
+  }, [packId, sessionId]);
   return snapshot;
 }
 
@@ -32,7 +32,7 @@ function memoryAddress(base: string, offset: number): string {
 }
 
 function MemoryTool({ initialTarget, snapshot }: { initialTarget?: string; snapshot: DebugSnapshot }) {
-  const languageServerId = useContext(DebugServerContext);
+  const packId = useContext(DebugServerContext);
   const sessionId = useContext(DebugSessionContext);
   const selectedFrame = snapshot.threads.flatMap((thread) => thread.frames).find((frame) => frame.id === snapshot.selectedFrameId);
   const [reference, setReference] = useState(initialTarget ?? "");
@@ -59,15 +59,15 @@ function MemoryTool({ initialTarget, snapshot }: { initialTarget?: string; snaps
       let resolved = input;
       if (!/^(?:0x[\da-f]+|\d+)$/iu.test(input)) {
         try {
-          const evaluation = await desktop.languageServerCall(languageServerId, "debugEvaluate", input, "watch", sessionId) as { memoryReference?: string };
+          const evaluation = await desktop.languagePackCall(packId, "debugEvaluate", input, "watch", sessionId) as { memoryReference?: string };
           resolved = evaluation.memoryReference ?? input;
         } catch { /* Adapter-specific expressions may also be valid memory references. */ }
       }
-      const result = await desktop.languageServerCall(languageServerId, "debugReadMemory", resolved, nextOffset, 256, sessionId) as DebugMemory;
+      const result = await desktop.languagePackCall(packId, "debugReadMemory", resolved, nextOffset, 256, sessionId) as DebugMemory;
       setActiveReference(resolved); setOffset(nextOffset); setMemory(result); setDraft(result.bytes.map((byte) => byte.toString(16).padStart(2, "0")));
     } catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
-  }, [languageServerId, offset, reference, sessionId]);
+  }, [packId, offset, reference, sessionId]);
   useEffect(() => desktopWindow.onDebugToolTarget((target) => { setReference(target); setOffset(0); void load(0, target); }), [load]);
   useEffect(() => { if (initialTarget && stopped && readable) void load(0, initialTarget); }, [initialTarget, readable, stopped]);
   const changed = useMemo(() => new Set(draft.flatMap((value, index) => value !== memory?.bytes[index]?.toString(16).padStart(2, "0") ? [index] : [])), [draft, memory]);
@@ -81,7 +81,7 @@ function MemoryTool({ initialTarget, snapshot }: { initialTarget?: string; snaps
         let end = start;
         while (cursor + 1 < indices.length && indices[cursor + 1] === end + 1) { cursor += 1; end += 1; }
         const bytes = draft.slice(start, end + 1).map((value) => Number.parseInt(value, 16));
-        const result = await desktop.languageServerCall(languageServerId, "debugWriteMemory", activeReference, offset + start, bytes, sessionId) as DebugMemoryWrite;
+        const result = await desktop.languagePackCall(packId, "debugWriteMemory", activeReference, offset + start, bytes, sessionId) as DebugMemoryWrite;
         if (result.bytesWritten !== bytes.length) throw new Error(`Only ${result.bytesWritten} of ${bytes.length} bytes were written`);
         cursor += 1;
       }
@@ -132,7 +132,7 @@ function MemoryTool({ initialTarget, snapshot }: { initialTarget?: string; snaps
 }
 
 function RegisterVariable({ canEdit, changed, parentReference, variable }: { canEdit: boolean; changed: boolean; parentReference: number; variable: DebugVariable }) {
-  const languageServerId = useContext(DebugServerContext);
+  const packId = useContext(DebugServerContext);
   const sessionId = useContext(DebugSessionContext);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(variable.value);
@@ -141,7 +141,7 @@ function RegisterVariable({ canEdit, changed, parentReference, variable }: { can
   const save = async () => {
     setEditing(false);
     if (value === variable.value) return;
-    try { await desktop.languageServerCall(languageServerId, "debugSetVariable", parentReference, variable.name, value, sessionId); }
+    try { await desktop.languagePackCall(packId, "debugSetVariable", parentReference, variable.name, value, sessionId); }
     catch (cause) { setValue(variable.value); setError(String(cause)); }
   };
   return <div className={`debug-register-row ${changed ? "is-changed" : ""}`}>
@@ -153,7 +153,7 @@ function RegisterVariable({ canEdit, changed, parentReference, variable }: { can
 }
 
 function RegistersTool({ snapshot }: { snapshot: DebugSnapshot }) {
-  const languageServerId = useContext(DebugServerContext);
+  const packId = useContext(DebugServerContext);
   const sessionId = useContext(DebugSessionContext);
   const previous = useRef(new Map<string, string>());
   const [nestedGroups, setNestedGroups] = useState<DebugScope[]>([]);
@@ -167,11 +167,11 @@ function RegistersTool({ snapshot }: { snapshot: DebugSnapshot }) {
     void Promise.all(groupVariables.map(async (variable): Promise<DebugScope> => ({
       expensive: false,
       name: variable.name,
-      variables: await desktop.languageServerCall(languageServerId, "debugVariables", variable.variablesReference, sessionId) as DebugVariable[],
+      variables: await desktop.languagePackCall(packId, "debugVariables", variable.variablesReference, sessionId) as DebugVariable[],
       variablesReference: variable.variablesReference,
     }))).then((groups) => { if (!disposed) setNestedGroups(groups); }).catch(() => { if (!disposed) setNestedGroups([]); });
     return () => { disposed = true; };
-  }, [groupKey, languageServerId, sessionId, snapshot.state]);
+  }, [groupKey, packId, sessionId, snapshot.state]);
   const scopes = [...directScopes, ...nestedGroups];
   const current = new Map(scopes.flatMap((scope) => scope.variables.map((variable) => [`${scope.name}:${variable.name}`, variable.value] as const)));
   const changed = new Set([...current].flatMap(([name, value]) => previous.current.has(name) && previous.current.get(name) !== value ? [name] : []));
@@ -187,7 +187,7 @@ function RegistersTool({ snapshot }: { snapshot: DebugSnapshot }) {
 }
 
 function DisassemblyTool({ snapshot }: { snapshot: DebugSnapshot }) {
-  const languageServerId = useContext(DebugServerContext);
+  const packId = useContext(DebugServerContext);
   const sessionId = useContext(DebugSessionContext);
   const selectedFrame = snapshot.threads.flatMap((thread) => thread.frames).find((frame) => frame.id === snapshot.selectedFrameId);
   const instructionPointer = selectedFrame?.instructionPointerReference ?? "";
@@ -201,11 +201,11 @@ function DisassemblyTool({ snapshot }: { snapshot: DebugSnapshot }) {
     if (!nextReference || snapshot.state !== "stopped" || !readable) return;
     setBusy(true); setError(undefined);
     try {
-      const value = await desktop.languageServerCall(languageServerId, "debugDisassemble", nextReference, nextPage * 64 - 32, 64, 0, sessionId);
+      const value = await desktop.languagePackCall(packId, "debugDisassemble", nextReference, nextPage * 64 - 32, 64, 0, sessionId);
       setReference(nextReference); setPage(nextPage); setInstructions(Array.isArray(value) ? value as DebugInstruction[] : []);
     } catch (cause) { setError(String(cause)); setInstructions([]); }
     finally { setBusy(false); }
-  }, [instructionPointer, languageServerId, page, readable, reference, sessionId, snapshot.state]);
+  }, [instructionPointer, packId, page, readable, reference, sessionId, snapshot.state]);
   useEffect(() => { if (instructionPointer && snapshot.state === "stopped" && readable) void load(0, instructionPointer); }, [instructionPointer, readable, snapshot.state]);
   useEffect(() => { if (snapshot.state !== "stopped") setInstructions([]); }, [snapshot.state]);
   if (snapshot.state !== "stopped") return <ToolMessage>调试暂停后可查看反汇编。</ToolMessage>;
@@ -214,7 +214,7 @@ function DisassemblyTool({ snapshot }: { snapshot: DebugSnapshot }) {
   const breakpointAddresses = new Set(snapshot.instructionBreakpoints.map((item) => item.address));
   const toggleBreakpoint = async (address: string) => {
     const next = breakpointAddresses.has(address) ? [...breakpointAddresses].filter((item) => item !== address) : [...breakpointAddresses, address];
-    try { await desktop.languageServerCall(languageServerId, "debugSetInstructionBreakpoints", next, sessionId); }
+    try { await desktop.languagePackCall(packId, "debugSetInstructionBreakpoints", next, sessionId); }
     catch (cause) { setError(String(cause)); }
   };
   return <>
@@ -235,18 +235,18 @@ function DisassemblyTool({ snapshot }: { snapshot: DebugSnapshot }) {
   </>;
 }
 
-export function DebugToolWindow({ initialLanguageServerId, initialRoot: _initialRoot, initialSessionId, initialTarget, kind }: { initialLanguageServerId: string; initialRoot?: string; initialSessionId?: string; initialTarget?: string; kind: DebugToolKind }) {
-  const [languageServerId, setLanguageServerId] = useState(initialLanguageServerId);
+export function DebugToolWindow({ initialPackId, initialRoot: _initialRoot, initialSessionId, initialTarget, kind }: { initialPackId: string; initialRoot?: string; initialSessionId?: string; initialTarget?: string; kind: DebugToolKind }) {
+  const [packId, setPackId] = useState(initialPackId);
   const [sessionId, setSessionId] = useState(initialSessionId);
-  const snapshot = useDebugSnapshot(languageServerId, sessionId);
-  useEffect(() => desktopWindow.onDebugToolProvider(setLanguageServerId), []);
+  const snapshot = useDebugSnapshot(packId, sessionId);
+  useEffect(() => desktopWindow.onDebugToolProvider(setPackId), []);
   useEffect(() => desktopWindow.onDebugToolSession(setSessionId), []);
   useEffect(() => {
     document.body.classList.add("is-native-debug-window");
     document.title = `Agent K — ${{ disassembly: "Disassembly", memory: "Memory", registers: "Registers" }[kind]}`;
     return () => document.body.classList.remove("is-native-debug-window");
   }, [kind]);
-  return <DebugServerContext.Provider value={languageServerId}><DebugSessionContext.Provider value={sessionId}>
+  return <DebugServerContext.Provider value={packId}><DebugSessionContext.Provider value={sessionId}>
     <main className="native-debug-window debug-tool-window">
       {kind === "memory" ? <MemoryTool initialTarget={initialTarget} snapshot={snapshot} /> : kind === "registers" ? <RegistersTool snapshot={snapshot} /> : <DisassemblyTool snapshot={snapshot} />}
     </main>

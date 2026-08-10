@@ -35,13 +35,13 @@ operations resolve real paths and reject access outside the active project.
 - `electron/files.ts`: workspace-scoped files, directory operations, search, preview servers, and native PTYs.
 - `electron/file-formats.ts`: Editor discovery, strict manifest validation, installation, runtime loading, and dependency-path
   validation.
-- `electron/language-server-host.ts` / `electron/language-server-registry.ts`: trusted native package discovery, lazy worker
+- `electron/language-pack-host.ts` / `electron/language-pack-registry.ts`: trusted native package discovery, lazy worker
   processes, and plugin-neutral request/event routing.
 - `electron/settings.ts` / `electron/resources.ts`: persisted client settings, providers, credentials, Skills, Extensions, and
   their enablement rules.
 - `editor/`: typed Editor message SDK, independent first-party Editor packages, and exact-version shared browser dependencies.
-- `language-servers/`: trusted native language packages. The bundled `cpp-clangd` package owns CMake detection, its managed
-  toolchain, compilation databases, clangd lifecycle, diagnostics, and LSP transport.
+- `language-packs/`: atomic language-family packages. C/C++, C#, and TS/JS use the same host; each package owns its Editor
+  contribution, Skills, worker, LSP/DAP, toolchains, and build/run/test/debug actions.
 - `extensions/` and `skills/`: bundled Pi Extensions and Skills loaded through Pi's public package/CLI interfaces.
 
 ## Pi independence and worker pool
@@ -93,24 +93,13 @@ crossed.
 
 See [File-format SDK](file-format-sdk.md).
 
-## Native language-extension boundary
+## Language Pack boundary
 
-Native language extensions are trusted packages, not Editor frames. Agent K discovers bundled packages and installed packages
-under the application-data `language-server-plugins/` directory; it never executes a worker from an opened project. The
-generic host lazily forks the package's built JavaScript worker with a private cache root and routes opaque requests, responses,
-and events.
+Language Packs are trusted atomic packages, not Editor frames. Agent K discovers bundled packages and active version receipts under the application-data `language-packs/` directory; it never executes a worker from an opened project. The generic host validates manifests and action schemas, resolves compatible system tools to absolute paths, forks built workers with private caches, routes LSP/DAP, and coordinates whole-package hot lifecycle changes.
 
-The worker owns language-specific behavior: project markers, managed language tools, build databases, LSP/DAP processes,
-diagnostics, and project lifecycle. The bundled C++ worker downloads pinned CMake, Ninja, and standalone clangd archives on
-Windows/Linux x64, verifies SHA-256 checksums, stores them in application cache, and uses a compiler available in the project
-environment to generate CMake metadata outside the project. clangd starts only for explicitly loaded projects. The Editor bridge forwards
-optional semantic requests by language without importing C++ logic into the host or text Editor.
+Language-specific behavior stays inside each package. Embedded Skills reach the same worker state through the single `agent_k` capability `language`; workspace paths are relative at the Pi boundary and contained before dispatch. There are no C++-specific host routes or independent language-Skill toggles.
 
-The bundled C++ Language Skill is loaded into Pi through its public Skill interface. Its tool request crosses Pi's Extension UI
-channel back into Electron, then reaches the same trusted `cpp-clangd` worker that owns the UI's loaded-project state. Pi never
-launches a second clangd instance, and queries cannot implicitly load a workspace.
-
-See [Native language-extension protocol](language-server-plugin.md).
+See [Language Pack protocol](language-pack.md).
 
 ## Credentials and security
 

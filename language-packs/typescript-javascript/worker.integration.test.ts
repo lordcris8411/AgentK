@@ -1,0 +1,52 @@
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import test from "node:test";
+import { TypeScriptService } from "./worker.ts";
+
+const enabled = process.env.AGENT_K_TYPESCRIPT_COLD_INTEGRATION === "1";
+
+test(`cold TypeScript load, semantics, private build and JavaScript debug on ${process.platform} x64`, { skip: !enabled, timeout: 600_000 }, async (context) => {
+  assert.ok(process.platform === "win32" || process.platform === "linux");
+  assert.equal(process.arch, "x64");
+  const parent = await mkdtemp(join(tmpdir(), "agent-k-typescript-integration-"));
+  const root = join(parent, "source");
+  const sourceDirectory = join(root, "src");
+  const externalCache = process.env.AGENT_K_TYPESCRIPT_INTEGRATION_CACHE;
+  const cache = externalCache ? resolve(externalCache) : join(parent, "agent-k-cache");
+  await mkdir(sourceDirectory, { recursive: true });
+  let service: TypeScriptService | undefined;
+  context.after(async () => { await service?.shutdown(); await rm(parent, { force: true, recursive: true }); });
+  await writeFile(join(root, "package.json"), `${JSON.stringify({ name: "agent-k-typescript-integration", private: true, type: "commonjs" }, undefined, 2)}\n`);
+  await writeFile(join(root, "tsconfig.json"), `${JSON.stringify({ compilerOptions: { module: "commonjs", strict: true, target: "ES2022" }, include: ["src/**/*.ts"] }, undefined, 2)}\n`);
+  const source = join(sourceDirectory, "main.ts");
+  await writeFile(source, "export function answer(): number { return 42; }\nsetTimeout(() => answer(), 30_000);\n");
+  const original = (await readdir(root)).sort();
+  const systemNode = process.env.AGENT_K_TYPESCRIPT_SYSTEM_NODE;
+  const systemNpm = process.env.AGENT_K_TYPESCRIPT_SYSTEM_NPM;
+  service = new TypeScriptService(cache, (event) => {
+    if (event.type === "language_pack_confirmation_request" && typeof event.requestId === "string") service?.respondConfirmation(event.requestId, true);
+  }, systemNode && systemNpm ? { node: { command: resolve(systemNode) }, npm: { command: resolve(systemNpm) } } : {});
+  const loaded = await service.load(root);
+  assert.equal(loaded.status, "ready");
+  const uri = pathToFileURL(source).href;
+  assert.equal(await service.notify(source, "textDocument/didOpen", { textDocument: { uri, languageId: "typescript", version: 1, text: await readFile(source, "utf8") } }), true);
+  const hover = await service.lsp(source, "textDocument/hover", { textDocument: { uri }, position: { line: 0, character: 16 } });
+  assert.notEqual(hover, undefined);
+  const built = await service.agent({ action: "build", workspace: root }) as { code?: unknown; artifacts?: unknown };
+  assert.equal(built.code, 0, JSON.stringify(built, undefined, 2));
+  assert.ok(Array.isArray(built.artifacts) && built.artifacts.length > 0);
+  const configurations = await service.debugConfigurations(root);
+  const target = configurations.find((item) => item.built && /main\.js$/iu.test(item.program));
+  assert.ok(target, "private TypeScript output did not produce a JavaScript debug target");
+  const debug = await service.debugStart({ mode: "launch", root, stopOnEntry: true, targetId: target.id });
+  assert.ok(["running", "stopped"].includes(debug.state), debug.error);
+  await service.debugStop(debug.sessionId);
+  await service.unload(root);
+  assert.deepEqual((await readdir(root)).sort(), original, "source tree acquired generated output");
+  await service.shutdown();
+  service = undefined;
+  await rm(parent, { force: true, recursive: true });
+});

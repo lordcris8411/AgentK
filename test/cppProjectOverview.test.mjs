@@ -11,14 +11,14 @@ const conversationSource = await readFile(
   "utf8",
 );
 
-test("C++ project folder selection owns Debug and README presentation", () => {
-  assert.match(inspectorSource, /selectedLanguagePlugin\?\.languages\.includes\("cpp"\)/);
+test("Language Pack project folder selection owns Debug and README presentation", () => {
+  assert.doesNotMatch(inspectorSource, /selectedLanguagePlugin\?\.languages\.includes\("cpp"\)/);
   assert.match(inspectorSource, /plugin\.projectMarkers\.some/);
   assert.match(inspectorSource, /selectedLanguageProject\?\.root \?\? absoluteWorkspacePath/);
   assert.match(inspectorSource, /entry\.name\.toLocaleLowerCase\("en-US"\) === "readme\.md"/);
-  assert.match(inspectorSource, /prepareAndOpenDebug\(selectedCppLanguagePlugin, selectedCppProject\.root\)/);
-  assert.match(inspectorSource, /await desktop\.languageServerCall\(plugin\.id, plugin\.debugServer\.prepareMethod\)[\s\S]*?await desktopWindow\.openDebug\(projectRoot\)/);
-  assert.match(inspectorSource, /project\?: \{ languageServerId: string; path: string \}/);
+  assert.match(inspectorSource, /prepareAndOpenDebug\(selectedDebugLanguagePack, selectedProjectOverview\.root\)/);
+  assert.match(inspectorSource, /await desktop\.languagePackCall\(plugin\.id, plugin\.debugServer\.prepareMethod\)[\s\S]*?await desktopWindow\.openDebug\(projectRoot\)/);
+  assert.match(inspectorSource, /project\?: \{ packId: string; path: string \}/);
   assert.match(inspectorSource, /projectOverview\?: \{ name: string; readmePath\?: string \}/);
   assert.match(inspectorSource, /project-overview:\$\{selectedTreeLanguagePlugin\.id\}/);
   assert.match(inspectorSource, /tab\.projectOverview\?\.name \?\? tab\.path/);
@@ -27,8 +27,14 @@ test("C++ project folder selection owns Debug and README presentation", () => {
   assert.match(inspectorSource, /current\.projectOverview && current\.project \? findTreeEntry\(tree, current\.project\.path\) : undefined/);
   assert.match(inspectorSource, /current && !current\.unsupported && current\.format\?\.editable/);
   assert.match(inspectorSource, /if \(selectedLanguageProject\) void unloadLanguageProject/);
-  assert.match(inspectorSource, /loadLanguageProject\(selectedLanguagePlugin, selectedCppProject\.root\)/);
+  assert.match(inspectorSource, /loadLanguageProject\(selectedLanguagePlugin, selectedProjectOverview\.root\)/);
   assert.doesNotMatch(inspectorSource, /currentIsWorkspaceFile\s*\?\s*\(\s*<button[\s\S]*?openDebug/);
+});
+
+test("workspace switching cannot preview a directory selected in the previous workspace", () => {
+  assert.match(inspectorSource, /const inspectorStateMatchesRoot = tabsRoot\.current === root/);
+  assert.match(inspectorSource, /const selectedDirectoryEntry = inspectorStateMatchesRoot && selectedEntry\?\.isDir/);
+  assert.match(inspectorSource, /\}\)\(\)\.catch\(\(cause\) => \{\s*if \(!disposed\) onError\(`无法预览工程/);
 });
 
 test("language projects remain visible in the tree before their server is loaded", () => {

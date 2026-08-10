@@ -28,17 +28,23 @@ export type FileEntry = {
   loaded: boolean;
   children: FileEntry[];
 };
-export type LanguageServerProject = { languageServerId: string; languageServerName: string; root: string; name: string; status: "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped"; error?: string; indexProgress?: string; [key: string]: unknown };
-export type LanguageServerTrace = { elapsedMs?: number; error?: string; file?: string; method: string; phase: "rejected" | "request" | "response" | "sent" | "timeout" | "write-error"; timestamp: number; version?: number };
-export type LanguageServerPlugin = {
+export type LanguagePackProject = { packId: string; packName: string; root: string; name: string; status: "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped"; error?: string; indexProgress?: string; [key: string]: unknown };
+export type LanguagePackTrace = { elapsedMs?: number; error?: string; file?: string; method: string; phase: "rejected" | "request" | "response" | "sent" | "timeout" | "write-error"; timestamp: number; version?: number };
+export type LanguagePack = {
   apiVersion: 1;
+  kind: "language-pack";
+  version: string;
   displayName: string;
   enabled?: boolean;
-  skillEnabled?: boolean;
-  contextMarkers?: string[];
   id: string;
+  platforms: string[];
   languages: string[];
+  fileExtensions: string[];
   projectMarkers: string[];
+  actions: Array<{ id: string; method: string; description: string; parameters: Record<string, unknown> }>;
+  permissions: { externalTools: string[]; network: boolean; processes: boolean; workspaceWrite: boolean };
+  toolchains: Array<{ id: string; system?: { commands: string[]; versionRange: string }; fallback?: { version: string; platforms: Record<string, { url: string; sha256?: string; sha512?: string }> } }>;
+  toolchainSources: Array<{ command?: string; id: string; source: "private" | "system"; version: string }>;
   projectMenu?: {
     loadLabel: string;
     unloadLabel: string;
@@ -51,7 +57,7 @@ export type LanguageServerPlugin = {
     }>;
   };
   editorContribution?: { description: string; editorPluginId: string; id: string; name: string; version: string };
-  skill?: { markdown: string; name: string };
+  skills: Array<{ markdown: string; name: string }>;
   commands?: Array<{ id: string; title: string; kind: "project-manager" }>;
   debugServer?: {
     adapters: Array<{ command: string; platforms: string[] }>;
@@ -60,6 +66,7 @@ export type LanguageServerPlugin = {
     protocol: "dap";
   };
 };
+export type LanguagePackPreview = LanguagePack & { approvalToken: string };
 
 export type ClientSettings = {
   version: number;
@@ -79,8 +86,7 @@ export type ClientSettings = {
   editorWordWrap: boolean;
   disabledFileEditors: string[];
   disabledFileEditorSkills: string[];
-  disabledLanguageServers: string[];
-  disabledLanguageServerSkills: string[];
+  disabledLanguagePacks: string[];
   disabledModelProviders: string[];
   disabledModels: string[];
   pinnedWorkspaces: string[];
@@ -408,12 +414,15 @@ export const desktop = {
     invoke<string>("start_workspace_preview", { root, path, content }),
   startWebProject: (root: string, path: string) =>
     invoke<{ id: string; url: string }>("start_web_project", { root, path }),
-  listLanguageServerPlugins: () => invoke<LanguageServerPlugin[]>("list_language_server_plugins"),
-  installLanguageServerPlugin: (sourceDirectory: string) => invoke<LanguageServerPlugin>("install_language_server_plugin", { sourceDirectory }),
-  listLanguageServerProjects: () => invoke<LanguageServerProject[]>("list_language_server_projects"),
-  languageServerCall: (id: string, method: string, ...args: unknown[]) => invoke<unknown>("language_server_call", { args, id, method }),
-  languageServerRequest: (language: string, file: string, method: string, params: unknown) => invoke<unknown>("language_server_request", { language, file, method, params }),
-  languageServerNotify: (language: string, file: string, method: string, params: unknown) => invoke<void>("language_server_notify", { language, file, method, params }),
+  listLanguagePacks: () => invoke<LanguagePack[]>("list_language_packs"),
+  previewLanguagePack: (sourceDirectory: string) => invoke<LanguagePackPreview>("preview_language_pack", { sourceDirectory }),
+  installLanguagePack: (sourceDirectory: string, approvalToken: string) => invoke<LanguagePack>("install_language_pack", { approvalToken, sourceDirectory }),
+  uninstallLanguagePack: (id: string) => invoke<void>("uninstall_language_pack", { id }),
+  listLanguagePackProjects: () => invoke<LanguagePackProject[]>("list_language_pack_projects"),
+  languagePackCall: (id: string, method: string, ...args: unknown[]) => invoke<unknown>("language_pack_call", { args, id, method }),
+  languagePackInvoke: (packId: string, action: string, arguments_: Record<string, unknown>, cwd: string) => invoke<unknown>("language_pack_invoke", { action, arguments: arguments_, cwd, packId }),
+  languagePackRequest: (language: string, file: string, method: string, params: unknown) => invoke<unknown>("language_pack_request", { language, file, method, params }),
+  languagePackNotify: (language: string, file: string, method: string, params: unknown) => invoke<void>("language_pack_notify", { language, file, method, params }),
   write: (root: string, path: string, content: string) =>
     invoke<void>("write_text_file", { root, path, content }),
   mkdir: (root: string, path: string) =>

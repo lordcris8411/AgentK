@@ -10,7 +10,6 @@ type Settings = {
   environmentPromptEnabled?: boolean;
   locale?: "zh-CN" | "en-US";
   permissionMode?: "ask" | "full";
-  disabledLanguageServerSkills?: string[];
 };
 
 function twoDigits(value: number): string {
@@ -29,10 +28,9 @@ export function environmentTimePrompt(
   return `Current system local time: ${localTime}\nHost time zone: ${timeZone} (${utcOffset})`;
 }
 
-const fileFormatActionPrefix = "agent-k-file-format-action:";
+const fileFormatActionRequestPrefix = "agent-k-file-action-request:";
 const providerRequestDumpPrefix = "agent-k-provider-request:";
-const cppLanguageServerRequestPrefix = "agent-k-cpp-language-server:";
-const nativeDebuggerRequestPrefix = "agent-k-native-debugger:";
+const languageActionRequestPrefix = "agent-k-language-action:";
 const protectedDebuggerActions = new Set([
   "clear-breakpoints", "clear-output", "continue", "detach", "evaluate", "next", "pause", "select-frame", "set-breakpoints",
   "set-exception-filters", "set-function-breakpoints", "set-instruction-breakpoints", "set-variable", "start", "step-in",
@@ -50,9 +48,10 @@ function previewScreenshotPath(ctx: unknown): string {
 const agentKTool = defineTool({
   name: "agent_k",
   label: "Agent K",
-  description: "Execute an Agent K desktop capability after loading its matching Skill. Use capability file-editor, cpp-language-server, or native-debugger; copy the action and arguments contract exactly from that Skill or the active Agent K context.",
+  description: "Execute an Agent K desktop capability after loading its matching Skill. Use capability file-editor or language and copy the declared action contract exactly.",
   parameters: Type.Object({
-    capability: Type.String({ description: "Agent K capability named by the loaded Skill: file-editor, cpp-language-server, or native-debugger." }),
+    capability: Type.String({ description: "Agent K capability named by the loaded Skill: file-editor or language." }),
+    packId: Type.Optional(Type.String({ description: "Installed Language Pack id; required for capability language." })),
     action: Type.String({ description: "Capability action documented by the loaded Skill or active Agent K context." }),
     arguments: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Action arguments documented by the loaded Skill; omit when the action has none." })),
   }),
@@ -61,32 +60,25 @@ const agentKTool = defineTool({
     const action = params.action.trim();
     const arguments_ = params.arguments ?? {};
     if (!action) throw new Error("Agent K requires a non-empty action.");
-    if (params.capability !== "file-editor") {
-      const settings = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {});
-      if (settings.disabledLanguageServerSkills?.includes("cpp-clangd"))
-        throw new Error("Agent K C++ project Skill is disabled.");
+    if (params.capability === "language") {
+      const packId = params.packId?.trim();
+      if (!packId) throw new Error("Agent K language capability requires packId.");
       const workspace = arguments_.workspace;
-      if (typeof workspace !== "string" || !workspace.trim())
-        throw new Error("Agent K requires a non-empty workspace.");
+      if (workspace !== undefined && (typeof workspace !== "string" || !workspace.trim() || isAbsolute(workspace) || normalize(workspace).split(/[\\/]/u).includes("..")))
+        throw new Error("Agent K language workspace must be a relative path inside the current workspace.");
       const cwd = typeof (ctx as { cwd?: unknown }).cwd === "string"
         ? (ctx as { cwd: string }).cwd
         : process.cwd();
-      const payload = { ...arguments_, action, workspace, cwd };
-      const requestPrefix = params.capability === "cpp-language-server"
-        ? cppLanguageServerRequestPrefix
-        : params.capability === "native-debugger"
-          ? nativeDebuggerRequestPrefix
-          : undefined;
-      if (!requestPrefix) throw new Error(`Unknown Agent K capability: ${params.capability}`);
-      const response = await ctx.ui.input(`${requestPrefix}${JSON.stringify(payload)}`);
+      const payload = { packId, action, arguments: arguments_, cwd };
+      const response = await ctx.ui.input(`${languageActionRequestPrefix}${JSON.stringify(payload)}`);
       if (!response) {
-        const label = params.capability === "cpp-language-server" ? "C++ language service" : "native debugger";
-        return { content: [{ type: "text", text: `Agent K ${label} request was cancelled.` }], details: { capability: params.capability, ...payload } };
+        return { content: [{ type: "text", text: "Agent K Language Pack request was cancelled." }], details: { capability: params.capability, ...payload } };
       }
       let details: unknown = response;
       try { details = JSON.parse(response); } catch { /* Preserve a host error as text. */ }
       return { content: [{ type: "text", text: response }], details };
     }
+    if (params.capability !== "file-editor") throw new Error(`Unknown Agent K capability: ${params.capability}`);
     if (action === "get-preview-console") {
       const limit = typeof arguments_.limit === "number" ? Math.max(1, Math.min(200, Math.round(arguments_.limit))) : 80;
       const output = await ctx.ui.input(`agent-k-preview-console:${limit}`);
@@ -115,7 +107,13 @@ const agentKTool = defineTool({
         details: { capability: params.capability, ...payload, ok: true },
       };
     }
-    ctx.ui.notify(`${fileFormatActionPrefix}${JSON.stringify(payload)}`, "info");
+    const response = await ctx.ui.input(`${fileFormatActionRequestPrefix}${JSON.stringify(payload)}`);
+    if (!response) throw new Error(`Agent K file editor did not accept action: ${action}.`);
+    let acknowledgement: { error?: unknown; ok?: unknown } | undefined;
+    try { acknowledgement = JSON.parse(response) as { error?: unknown; ok?: unknown }; }
+    catch { throw new Error(`Agent K file editor returned an invalid action response: ${response}`); }
+    if (acknowledgement.ok !== true)
+      throw new Error(String(acknowledgement.error ?? `Agent K file editor rejected action: ${action}.`));
     return {
       content: [{
         type: "text",
@@ -312,8 +310,8 @@ export default function agentKPermissions(pi: ExtensionAPI) {
         event.input.path = requested;
       }
     }
-    const debuggerAction = event.toolName === "agent_k" && event.input.capability === "native-debugger" && typeof event.input.action === "string"
-      ? event.input.action
+    const debuggerAction = event.toolName === "agent_k" && event.input.capability === "language" && typeof event.input.action === "string" && event.input.action.startsWith("debug.")
+      ? event.input.action.slice("debug.".length)
       : undefined;
     if (!(["bash", "write", "edit"] as string[]).includes(event.toolName) && !(debuggerAction && protectedDebuggerActions.has(debuggerAction))) return;
     const settings = readJson<Settings>(process.env.AGENT_K_SETTINGS_PATH, {});

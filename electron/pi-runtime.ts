@@ -49,16 +49,20 @@ export function resolvePiLaunch(
   const environmentExecutable = process.env.AGENT_K_PI_EXECUTABLE?.trim();
   if (environmentExecutable) return externalPi(environmentExecutable);
   if (configuredExecutable) return externalPi(configuredExecutable);
+  // The reviewed, pinned runtime is the deterministic default. An ambient
+  // npm `pi.cmd` may be a different version and requires shell execution on
+  // Windows; only explicit environment/settings overrides should replace it.
+  if (existsSync(bundledCli)) {
+    return {
+      executable: bundledNodeExecutable,
+      args: [bundledCli],
+      environment: {
+        AGENT_K_NODE_EXECUTABLE: bundledNodeExecutable,
+        ELECTRON_RUN_AS_NODE: "1",
+      },
+    };
+  }
   const discoveredExecutable = commandOnPath("pi");
   if (discoveredExecutable) return externalPi(discoveredExecutable);
-  if (!existsSync(bundledCli))
-    throw new Error("No Pi executable was found and the bundled Pi runtime is unavailable");
-  return {
-    executable: bundledNodeExecutable,
-    args: [bundledCli],
-    environment: {
-      AGENT_K_NODE_EXECUTABLE: bundledNodeExecutable,
-      ELECTRON_RUN_AS_NODE: "1",
-    },
-  };
+  throw new Error("No Pi executable was found and the bundled Pi runtime is unavailable");
 }

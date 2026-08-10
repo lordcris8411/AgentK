@@ -9,14 +9,14 @@ export function DebugWindow({ initialContextFile, initialRoot }: { initialContex
   const [root, setRoot] = useState(initialRoot);
   const [contextFile, setContextFile] = useState(initialContextFile);
   const [error, setError] = useState<string>();
-  const [plugins, setPlugins] = useState<Awaited<ReturnType<typeof desktop.listLanguageServerPlugins>>>([]);
+  const [plugins, setPlugins] = useState<Awaited<ReturnType<typeof desktop.listLanguagePacks>>>([]);
   const [selected, setSelected] = useState("");
   const providers = useMemo(() => rankDebugProviders(debugProviders(plugins), contextFile, root ? loadDebugProject(root).providerIdentity : undefined), [contextFile, plugins, root]);
   const provider = providers.find((item) => debugProviderIdentity(item) === selected) ?? providers[0];
   useEffect(() => {
     document.body.classList.add("is-native-debug-window");
     document.title = "Agent K — Debug";
-    void desktop.listLanguageServerPlugins().then(setPlugins).catch((cause) => setError(String(cause)));
+    void desktop.listLanguagePacks().then(setPlugins).catch((cause) => setError(String(cause)));
     return () => document.body.classList.remove("is-native-debug-window");
   }, []);
   useEffect(() => desktopWindow.onDebugContext((context) => {
@@ -25,8 +25,8 @@ export function DebugWindow({ initialContextFile, initialRoot }: { initialContex
     setError(undefined);
   }), []);
   useEffect(() => desktopWindow.onDebugRoot((next) => { setRoot(next); setError(undefined); }), []);
-  useEffect(() => desktopWindow.onDebugProviderHit((languageServerId) => {
-    const hitProvider = providers.find((item) => item.languageServerId === languageServerId);
+  useEffect(() => desktopWindow.onDebugProviderHit((packId) => {
+    const hitProvider = providers.find((item) => item.packId === packId);
     if (hitProvider) setSelected(debugProviderIdentity(hitProvider));
   }), [providers]);
   useEffect(() => {
@@ -42,11 +42,11 @@ export function DebugWindow({ initialContextFile, initialRoot }: { initialContex
     {providers.length ? <div className="debug-provider-bar">
       <span>调试目标</span>
       <select aria-label="Debug provider" onChange={(event) => setSelected(event.target.value)} value={provider ? debugProviderIdentity(provider) : ""}>
-        {providers.map((item) => <option key={debugProviderIdentity(item)} value={debugProviderIdentity(item)}>{item.label} · {item.languageServerId}</option>)}
+        {providers.map((item) => <option key={debugProviderIdentity(item)} value={debugProviderIdentity(item)}>{item.label} · {item.packId}</option>)}
       </select>
       {contextFile ? <small title={contextFile}>{contextFile.split(/[/\\]/u).pop()}</small> : null}
     </div> : null}
-    {provider ? <DebugPanel contextFile={contextFile} languageServerId={provider.languageServerId} modes={provider.modes} onError={setError} providerId={provider.id} root={root} />
+    {provider ? <DebugPanel contextFile={contextFile} packId={provider.packId} modes={provider.modes} onError={setError} providerId={provider.id} root={root} />
       : <div className="debug-provider-empty">当前没有已启用的调试 Provider。</div>}
     {error ? <div className="native-debug-window-error" role="alert">{error}</div> : null}
   </main>;

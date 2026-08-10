@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Agent K Language Pack"
+  short_description: "Create and validate hot-pluggable language support"
+  default_prompt: "Use $create-agent-k-language-pack to create a complete Agent K Language Pack."

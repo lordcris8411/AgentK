@@ -268,6 +268,22 @@ export async function discoverTopLevelSkillNames(cwd: string): Promise<Set<strin
   );
 }
 
+/** Pi natively discovers `.agents/skills`, but Agent K also exposes the
+ * project-local `.pi/skills` convention in Settings and its authoring Skills.
+ * Return those directories so the RPC launcher can pass them explicitly. */
+export async function discoverAgentKSkillPaths(cwd: string): Promise<string[]> {
+  const resources: PiResource[] = [];
+  const userBase = piAgentDirectory();
+  await Promise.all([
+    discoverSkills(resources, join(userBase, "skills"), "user", userBase, true),
+    discoverSkills(resources, join(cwd, ".pi", "skills"), "project", join(cwd, ".pi"), true),
+  ]);
+  return [...new Set(resources
+    .filter((resource) => resource.kind === "skill")
+    .map((resource) => resource.path.endsWith("SKILL.md") ? dirname(resource.path) : resource.path)
+    .map((path) => resolve(path)))].sort((left, right) => left.localeCompare(right));
+}
+
 export async function getPiResources(
   appDataPath: string,
   pool: RpcPool,

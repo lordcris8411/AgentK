@@ -6,7 +6,7 @@ import { createInterface } from "node:readline";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { JsonObject, PiResource } from "../types.js";
 import type { PiLaunch } from "../pi-runtime.js";
-import { discoverTopLevelSkillNames } from "../resources.js";
+import { discoverAgentKSkillPaths, discoverTopLevelSkillNames } from "../resources.js";
 import {
   asArray,
   asObject,
@@ -105,7 +105,7 @@ export interface RpcBridgeOptions {
   bundledExtensionsDirectory: string;
   bundledSkillsDirectory: string;
   firstPartyEditorExtensions: Array<{ directory: string; id: string }>;
-  firstPartyLanguageServerSkills: Array<{ directory: string; id: string }>;
+  firstPartyLanguagePackSkills: Array<{ directory: string; id: string }>;
   cwd: string;
   launch: PiLaunch;
   permissionExtensionSource: string;
@@ -287,6 +287,10 @@ export class RpcBridge {
       args.push("--extension", packagePath);
     }
     const topLevelSkillNames = await discoverTopLevelSkillNames(options.cwd);
+    for (const skillPath of await discoverAgentKSkillPaths(options.cwd)) {
+      if (disabledPaths.some((resource) => isPathInside(skillPath, resource))) continue;
+      args.push("--skill", skillPath);
+    }
     for (const skillPath of await bundledSkillPaths(
       options.bundledSkillsDirectory,
     )) {
@@ -306,12 +310,9 @@ export class RpcBridge {
       if (disabledEditorSkills.has(editorExtension.id)) continue;
       args.push("--skill", editorExtension.directory);
     }
-    const disabledLanguageServerSkills = new Set([
-      ...asArray(clientSettings.disabledLanguageServers),
-      ...asArray(clientSettings.disabledLanguageServerSkills),
-    ].filter((id): id is string => typeof id === "string"));
-    for (const languageServerSkill of options.firstPartyLanguageServerSkills) {
-      if (disabledLanguageServerSkills.has(languageServerSkill.id)) continue;
+    const disabledLanguagePacks = new Set(asArray(clientSettings.disabledLanguagePacks).filter((id): id is string => typeof id === "string"));
+    for (const languageServerSkill of options.firstPartyLanguagePackSkills) {
+      if (disabledLanguagePacks.has(languageServerSkill.id)) continue;
       if (!existsSync(join(languageServerSkill.directory, "SKILL.md"))) continue;
       args.push("--skill", languageServerSkill.directory);
     }
@@ -646,6 +647,7 @@ async function generateSessionName(
   firstMessage: string,
   cwd: string,
 ): Promise<string | undefined> {
+  if (process.env.AGENT_K_DISABLE_SESSION_TITLES === "1") return undefined;
   const instruction = [
     "Create a concise title for this coding-agent session from the first user message.",
     "Use the same language as the user. Return only the title, with no quotes, label, markdown, or ending punctuation.",
@@ -679,17 +681,28 @@ async function generateSessionName(
       },
     );
     let output = "";
-    const timeout = setTimeout(() => child.kill(), 45_000);
+    let settled = false;
+    const finish = (value: string | undefined) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolveName(value);
+    };
+    const timeout = setTimeout(() => {
+      if (process.platform === "win32" && child.pid) {
+        const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+        killer.unref();
+      } else child.kill();
+      finish(undefined);
+    }, 45_000);
     child.stdout.on("data", (chunk: Buffer) => {
       output += chunk.toString();
     });
     child.once("error", () => {
-      clearTimeout(timeout);
-      resolveName(undefined);
+      finish(undefined);
     });
     child.once("close", (code) => {
-      clearTimeout(timeout);
-      resolveName(code === 0 ? normalizedSessionName(output) : undefined);
+      finish(code === 0 ? normalizedSessionName(output) : undefined);
     });
   });
 }

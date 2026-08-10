@@ -1,0 +1,23 @@
+{
+  "apiVersion": 1,
+  "version": "1.0.0",
+  "id": "agent-k.eval-editor-actions",
+  "name": "Agent K Evaluation Editor",
+  "description": "Deterministic Editor capability fixture for Agent K evaluation.",
+  "match": { "extensions": ["pal", "todoz", "outlinez", "timelinez", "kvz", "bookmarkz", "inventoryz", "routez", "snippetz", "scorez"] },
+  "editor": "plugin",
+  "editable": true,
+  "capabilities": [
+    { "id": "sort-colors", "label": "Sort colors", "description": "Sort color entries by name." },
+    { "id": "complete-item", "label": "Complete item", "description": "Mark the first incomplete item complete." },
+    { "id": "promote-heading", "label": "Promote heading", "description": "Promote the first nested heading." },
+    { "id": "sort-events", "label": "Sort events", "description": "Sort event lines chronologically." },
+    { "id": "sort-keys", "label": "Sort keys", "description": "Sort key-value lines alphabetically." },
+    { "id": "deduplicate", "label": "Deduplicate", "description": "Remove duplicate lines." },
+    { "id": "recount", "label": "Recount", "description": "Append the number of data lines." },
+    { "id": "reverse-route", "label": "Reverse route", "description": "Reverse arrow-separated route nodes." },
+    { "id": "sort-snippets", "label": "Sort snippets", "description": "Sort snippet lines by title." },
+    { "id": "normalize-scores", "label": "Normalize scores", "description": "Clamp integer scores to zero through one hundred." }
+  ],
+  "runtime": { "entry": "dist/editor.iife.js", "style": "dist/editor.css" }
+}

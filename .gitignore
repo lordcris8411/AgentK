@@ -1,6 +1,8 @@
 node_modules/
 .DS_Store
 dist/
+!evaluation/agent-k/fixtures/editor/agent-k-eval-editor-actions/dist/
+!evaluation/agent-k/fixtures/editor/agent-k-eval-editor-actions/dist/**
 .electron-dist/
 .pi-runtime/
 release/
@@ -9,3 +11,8 @@ release-verify/
 *.log
 .env
 .env.*
+.agent-k-evaluation/
+.agent-k-evaluation-*/
+.agent-k-smoke/
+test-results/
+playwright-report/

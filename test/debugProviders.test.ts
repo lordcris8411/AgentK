@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { debugProviderForFile, debugProviderIdentity, debugProviders, rankDebugProviders } from "../src/features/debug/providers.ts";
-import type { LanguageServerPlugin } from "../src/lib/desktop.ts";
+import type { LanguagePack } from "../src/lib/desktop.ts";
 
-const plugin = (id: string, providerId: string, extension: string, priority: number, enabled = true): LanguageServerPlugin => ({
+const plugin = (id: string, providerId: string, extension: string, priority: number, enabled = true): LanguagePack => ({
   apiVersion: 1, displayName: id, enabled, id, languages: [], projectMarkers: [],
   debugServer: { adapters: [], protocol: "dap", providers: [{ fileExtensions: [extension], id: providerId, label: providerId, languages: [], modes: ["launch"], priority, projectMarkers: [] }] },
 });

@@ -90,10 +90,10 @@ and keeps custom provider names consistent in the model picker and conversation 
 
 ### Extending Agent K
 
-The bundled `create-agent-k-extensions` Skill can help Pi create two kinds of package:
+Agent K bundles separate author Skills for its two package families:
 
 - An **Editor Extension** supplies a file-specific interface and, optionally, an Editor Skill with format guidance and safe actions.
-- A **Language Service Extension** supplies project detection, diagnostics, navigation, project actions, and other semantic services.
+- A complete **Language Pack** atomically supplies Editor, Skills, project detection, semantics, toolchains, build/run/test, and debugging.
 
 For example, you can ask for an Editor for `.scene` files, or language support for a project identified by `acme.project`. Pi
 creates the package and runs its checks; you review the files before installing it. Generated code is never installed silently,
@@ -260,37 +260,24 @@ The first-party text package chooses Monaco 0.55.1, while other packages remain 
 Canvas, a framework, or plain DOM. Dependencies are identified and cached independently by exact version.
 See [File-format SDK](docs/file-format-sdk.md).
 
-### Native language extensions
+### Hot-pluggable Language Packs
 
-Native language packages are trusted worker packages with process access. They own project markers, tool preparation, build
-databases, diagnostics, LSP transport, project lifecycle, semantic Editor contributions, and DAP declarations. They are loaded
-only from the installation or application-data plugin directory—never from an opened workspace—and start lazily on first use.
+A Language Pack is the single atomic unit for a programming-language family. It owns the Editor contribution, embedded Pi
+Skills, LSP/DAP worker, compatible-system/private-fallback toolchains, and project/build/run/test/debug actions. Agent K loads
+trusted built packages only from bundled or application-data `language-packs/` roots—never from an opened workspace.
 
-The bundled `cpp-clangd` package supports CMake and compilation-database projects. On Windows/Linux x64 it downloads pinned
-CMake 3.31.6, Ninja 1.12.1, and standalone clangd 22.1.6 archives, verifies SHA-256 hashes, and keeps them in a private cache.
-ZIP files are extracted in-process instead of being passed to platform `tar` implementations.
+The first-party `agent-k.cpp`, `agent-k.csharp`, and `agent-k.typescript-javascript` packages use the same generic registry,
+worker supervisor, Editor routing, permission flow, and `agent_k` capability `language`; C++ has no host capability branch.
+Lifecycle changes apply to the whole package without restarting Agent K, and tools plus generated output stay in private caches.
 
-CMake metadata is generated outside the source tree with a compiler from the project environment. Linux uses the configured
-GCC/Clang toolchain. Windows accepts `CC`/`CXX`, Clang, MinGW, or MSVC; when necessary it discovers Visual Studio Build Tools via
-`vswhere` and initializes `VsDevCmd`. Missing compiler prerequisites produce an explicit error rather than downloading an
-incomplete full LLVM SDK. clangd runs in a separate process with background indexing and disk-backed PCH storage.
-
-The C++ Language Skill lets Pi check a named CMake workspace's load state and query exact-symbol references, definitions,
-declarations, implementations, hover information, diagnostics, workspace/document symbols, and call/type hierarchies through
-the already-running clangd worker. Queries never implicitly load a project, and lifecycle operations are idempotent so Pi can
-keep useful workspaces loaded instead of repeatedly configuring and indexing them. For semantic C++ questions this path takes
-priority over shell text search; builds, tests, execution, Git, and explicitly textual searches continue to use the terminal.
-
-See [Native language-extension protocol](docs/language-server-plugin.md).
+See [Language Pack protocol](docs/language-pack.md).
 
 ### Extension authoring from Agent K
 
-The bundled `create-agent-k-extensions` Skill gives Pi the repository's canonical boundary and verification workflow. An Editor
-request is routed to an independent `editor.json + editor.ts + SKILL.md + dist` package; a language request is routed to an
-`agent-k.language-server.json + worker.ts + dist/worker.js` package. Pi reads the corresponding protocol documentation before
-changing the package and keeps format UI separate from trusted project/LSP processes.
+The bundled `create-agent-k-extensions` Skill authors independent non-language Editors. The dedicated
+`create-agent-k-language-pack` Skill scaffolds, validates, builds, cold-tests, hashes, and previews complete Language Packs.
 
-Editor packages are built with `npm run build:editors`; language workers use `npm run build:language-servers`. The authoring flow
+Editor packages are built with `npm run build:editors`; language workers use `npm run build:language-packs`. The authoring flow
 then runs the relevant manifest tests, strict project checks, and `git diff --check`. Installation never compiles unknown source
 or runs npm lifecycle scripts on behalf of a downloaded package: an Editor must already contain its browser runtime, and a
 trusted language worker must already be built and explicitly reviewed.
@@ -304,7 +291,8 @@ include:
 | --- | --- |
 | `weather` Skill | Current, hourly, and seven-day weather through Open-Meteo |
 | `gdb-debug` Skill | GDB launch, backtrace, threads, and core-dump workflows |
-| `create-agent-k-extensions` Skill | Authoring and validation guidance for Agent K packages |
+| `create-agent-k-extensions` Skill | Authoring and validation for non-language Editor packages |
+| `create-agent-k-language-pack` Skill | Scaffold, validation, tests, packaging, and install preview for complete Language Packs |
 | `create-agent-k-theme` Skill | Creation and management of complete Agent K theme packages |
 | `agent-k-file-editor` Skill | Open workspace files in Agent K, preview Markdown or web projects, capture previews, and inspect preview-console output |
 | K's Plan Extension | Strict file-backed task planning and review through `/plan` |
@@ -393,7 +381,7 @@ prepared native module.
 | `npm run check` | Check renderer, Electron, language packages, Editors, and K's Plan |
 | `npm run check:desktop` | Type-check the Electron main process |
 | `npm run build:editors` | Build all first-party Editor packages and shared dependencies |
-| `npm run build:language-servers` | Build trusted first-party native language workers |
+| `npm run build:language-packs` | Build trusted first-party native language workers |
 | `npm test` | Run the repository test suite |
 | `npm run build` | Build language workers, Electron, Editors, and renderer |
 | `npm run dist:mac` | Build macOS DMG and ZIP packages |
@@ -410,7 +398,7 @@ AgentK/
 │   └── agent/              # Pi process and public RPC adapter
 ├── src/                    # sandboxed React renderer
 ├── editor/                 # programmable Editor SDK and independent packages
-├── language-servers/       # trusted native language packages
+├── language-packs/       # trusted native language packages
 ├── extensions/k-plan/      # bundled Pi Extension
 ├── skills/                 # bundled Pi Skills
 ├── themes/                 # built-in complete theme definitions
@@ -474,10 +462,10 @@ Agent K 不会把所有文件都塞进文本框。Editor 可以根据格式提�
 
 ### 扩展 Agent K
 
-内置的 `create-agent-k-extensions` Skill 可以协助 Pi 创建两类包：
+Agent K 为两类包提供独立的作者 Skill：
 
 - **Editor Extension** 提供面向特定文件的界面，并可附带包含格式说明和安全动作的 Editor Skill。
-- **Language Service Extension** 提供项目识别、诊断、跳转、项目操作及其他语义服务。
+- 完整 **Language Pack** 原子提供 Editor、Skills、工程识别、语义、工具链、编译/运行/测试和调试。
 
 例如，你可以要求创建 `.scene` 文件的 Editor，或为通过 `acme.project` 识别的项目增加语言支持。Pi 会创建包并执行检查；安装前
 由你审阅文件。生成的代码不会被静默安装，受信任的语言服务 worker 始终需要明确审阅。
@@ -635,34 +623,20 @@ runtime bundle 与解析后的真实资源路径。
 第一方文本包选择 Monaco 0.55.1；其他包可以使用另一 Monaco 版本、CodeMirror、Canvas、任意框架或原生 DOM。依赖按照精确版本
 分别识别和缓存。详见[文件格式 SDK](docs/file-format-sdk.md)。
 
-### 原生语言扩展
+### 可热插拔 Language Pack
 
-原生语言包是拥有进程权限的受信任 worker。它们独立负责项目标记、工具准备、构建数据库、诊断、LSP transport、项目生命周期、
-语义 Editor contribution 和 DAP 声明。包只会从安装目录或应用数据插件目录加载，绝不会直接加载当前工作区中的代码，并且在首次
-使用时才延迟启动。
+Language Pack 是一个语言家族的唯一原子扩展单元，统一包含 Editor contribution、包内 Pi Skills、LSP/DAP worker、系统兼容/私有回退工具链以及工程、编译、运行、测试和调试 action。Agent K 只从内置目录或应用数据 `language-packs/` 加载经过构建的受信任包。
 
-内置 `cpp-clangd` 包支持 CMake 和 compilation database 工程。在 Windows/Linux x64 上，它会下载固定版本的 CMake 3.31.6、
-Ninja 1.12.1 和独立 clangd 22.1.6，校验 SHA-256 后存入私有缓存。ZIP 归档在进程内解压，不再交给不同平台的 `tar` 实现。
+首批 `agent-k.cpp`、`agent-k.csharp` 和 `agent-k.typescript-javascript` 共用同一个通用 registry、worker supervisor、Editor 路由、权限流程和 `agent_k` 的 `language` capability；C++ 不再有宿主特化。整包生命周期无需重启 Agent K，工具与生成输出均保存在私有缓存。
 
-CMake 元数据在源码树之外生成，并使用项目环境中的编译器。Linux 使用已配置的 GCC/Clang；Windows 支持 `CC`/`CXX`、Clang、
-MinGW 或 MSVC，必要时通过 `vswhere` 发现 Visual Studio Build Tools 并初始化 `VsDevCmd`。如果缺少编译器，会返回明确错误，
-而不是下载仍不完整的完整 LLVM SDK。clangd 在独立进程中运行，启用后台索引并把 PCH 保存在磁盘。
-
-C++ Language Skill 可让 Pi 检查指定 CMake 工作区的加载状态，并通过已经运行的 clangd worker 查询精确符号的引用、定义、声明、
-实现、悬浮信息、诊断、工作区/文档符号以及调用/类型层级。查询不会隐式加载工程；生命周期操作具有幂等性，因此 Pi 可以保持有用
-的工作区处于加载状态，而不会反复执行 CMake 配置与 clangd 索引。
-对于 C++ 语义问题，该路径优先于 Shell 文本搜索；编译、测试、运行、Git 和明确的文本搜索仍直接使用终端。
-
-详见[原生语言扩展协议](docs/language-server-plugin.md)。
+详见[Language Pack 协议](docs/language-pack.md)。
 
 ### 在 Agent K 中编写扩展
 
-内置 `create-agent-k-extensions` Skill 会向 Pi 提供仓库的权威边界和校验流程。Editor 需求会落到相互独立的
-`editor.json + editor.ts + SKILL.md + dist` 包；语言需求会落到
-`agent-k.language-server.json + worker.ts + dist/worker.js` 包。Pi 在修改前读取对应协议文档，并始终把文件格式 UI 与受信任的
-工程/LSP 进程分开。
+内置 `create-agent-k-extensions` Skill 负责普通非语言 Editor；专用 `create-agent-k-language-pack` Skill 负责脚手架、校验、
+构建、冷启动测试、哈希打包和安装预览完整 Language Pack。
 
-Editor 包通过 `npm run build:editors` 构建，语言 worker 通过 `npm run build:language-servers` 构建；随后运行相关 manifest 测试、
+Editor 包通过 `npm run build:editors` 构建，语言 worker 通过 `npm run build:language-packs` 构建；随后运行相关 manifest 测试、
 严格项目检查和 `git diff --check`。安装过程不会替下载的包现场编译未知源码或执行 npm lifecycle script：Editor 必须已经包含
 浏览器 runtime，受信任语言 worker 也必须提前构建并经过明确审阅。
 
@@ -674,7 +648,8 @@ Agent K 通过 Pi 公开的启动参数提供 Skills 和 Extensions，不修改 
 | --- | --- |
 | `weather` Skill | 通过 Open-Meteo 查询实时、逐小时和七日天气 |
 | `gdb-debug` Skill | GDB 启动、回溯、线程和 core dump 工作流 |
-| `create-agent-k-extensions` Skill | Agent K 扩展包的编写和校验说明 |
+| `create-agent-k-extensions` Skill | 普通非语言 Editor 包的编写与校验 |
+| `create-agent-k-language-pack` Skill | 完整 Language Pack 的脚手架、校验、测试、打包和安装预览 |
 | `create-agent-k-theme` Skill | 创建和管理完整的 Agent K 主题包 |
 | `agent-k-file-editor` Skill | 在 Agent K 中打开工作区文件、预览 Markdown 或 Web 项目、截取预览图，并读取预览控制台输出 |
 | K's Plan Extension | 通过 `/plan` 使用严格、文件化的任务规划与审阅流程 |
@@ -760,7 +735,7 @@ macOS 或 Linux 源码环境构建 `node-pty` 需要 Python 3、`make` 和 C++ �
 | `npm run check` | 检查渲染层、Electron、语言包、Editors 和 K's Plan |
 | `npm run check:desktop` | 检查 Electron 主进程 TypeScript |
 | `npm run build:editors` | 构建全部第一方 Editor 包及共享依赖 |
-| `npm run build:language-servers` | 构建受信任的第一方原生语言 worker |
+| `npm run build:language-packs` | 构建受信任的第一方原生语言 worker |
 | `npm test` | 运行仓库测试套件 |
 | `npm run build` | 构建语言 worker、Electron、Editors 和渲染层 |
 | `npm run dist:mac` | 生成 macOS DMG 和 ZIP 包 |
@@ -777,7 +752,7 @@ AgentK/
 │   └── agent/              # Pi 进程与公开 RPC 适配
 ├── src/                    # 沙箱化 React 渲染层
 ├── editor/                 # 可编程 Editor SDK 与独立插件包
-├── language-servers/       # 受信任的原生语言包
+├── language-packs/       # 受信任的原生语言包
 ├── extensions/k-plan/      # 内置 Pi Extension
 ├── skills/                 # 内置 Pi Skills
 ├── themes/                 # 内置完整主题定义

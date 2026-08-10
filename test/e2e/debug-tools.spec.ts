@@ -1,5 +1,5 @@
 import { _electron as electron, expect, test } from "@playwright/test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,9 +10,14 @@ test("Debug tool windows are native singletons owned by the Debug window", async
   const environment = { ...process.env };
   delete environment.ELECTRON_RUN_AS_NODE;
   const userData = mkdtempSync(join(tmpdir(), "agent-k-e2e-"));
+  const workspace = join(userData, "workspace");
+  const programPath = join(workspace, "fixture-program.exe");
+  mkdirSync(workspace);
+  writeFileSync(programPath, "fixture");
   const application = await electron.launch({
-    args: ["."],
+    args: [".", ...(process.env.AGENT_K_E2E_DISABLE_SANDBOX === "1" ? ["--no-sandbox"] : [])],
     cwd: repository,
+    ...(process.env.AGENT_K_E2E_ELECTRON_EXECUTABLE ? { executablePath: process.env.AGENT_K_E2E_ELECTRON_EXECUTABLE } : {}),
     env: {
       ...environment,
       AGENT_K_E2E: "1",
@@ -24,16 +29,29 @@ test("Debug tool windows are native singletons owned by the Debug window", async
   try {
     await application.firstWindow();
     await expect.poll(() => application.windows().length).toBeGreaterThan(1);
-    const main = application.windows().find((page) => !page.url().includes("splashscreen"));
+    const isMainWindow = (url: string) => {
+      try {
+        const parsed = new URL(url);
+        return parsed.pathname.replaceAll("\\", "/").endsWith("/dist/index.html") && !parsed.searchParams.has("window");
+      } catch {
+        return false;
+      }
+    };
+    await expect.poll(() => application.windows().some((page) => isMainWindow(page.url()))).toBe(true);
+    const main = application.windows().find((page) => isMainWindow(page.url()));
     if (!main) throw new Error("The Agent K main window was not created");
-    await main.waitForLoadState("domcontentloaded");
-    const openedDebug = application.waitForEvent("window", { predicate: (page) => new URL(page.url()).searchParams.get("window") === "debug" });
-    await main.evaluate((root) => window.agentK.window.invoke("open-debug", { root }), repository);
-    const debug = await openedDebug;
-    await debug.waitForLoadState("domcontentloaded");
-    await expect(debug.locator(".debug-toolbar")).toHaveCount(0);
+    await expect.poll(() => main.evaluate(() => typeof window.agentK?.window?.invoke === "function")).toBe(true);
+    const packs = await main.evaluate(() => window.agentK.invoke<Array<{ enabled: boolean; id: string }>>("list_language_packs"));
+    expect(packs).toEqual(expect.arrayContaining([expect.objectContaining({ enabled: true, id: "agent-k.cpp" })]));
+    const [debug] = await Promise.all([
+      application.waitForEvent("window"),
+      main.evaluate((root) => window.agentK.window.invoke("open-debug", { root }), workspace),
+    ]);
+    await debug.waitForURL((url) => url.searchParams.get("window") === "debug");
+    await expect(debug.locator('select[aria-label="Debug provider"]')).toHaveValue(/agent-k\.cpp/u);
     const program = debug.locator('input[placeholder*="程序路径"], input[placeholder*="Program path"]').first();
-    await program.fill(join(repository, "package.json"));
+    await expect(program).toBeEditable();
+    await program.fill(programPath);
     await debug.locator(".debug-start-button").click();
     await main.bringToFront();
     await expect(debug.locator(".debug-state")).toContainText("stopped", { timeout: 20_000 });
@@ -69,8 +87,8 @@ test("Debug tool windows are native singletons owned by the Debug window", async
     await debug.mouse.up();
     expect((await nameCell.boundingBox())?.width ?? 0).toBeGreaterThan(initialNameWidth);
     const firstSessionId = await debug.locator(".debug-session-bar select").inputValue();
-    const pointerAddress = await debug.evaluate(async (sessionId) => window.agentK.invoke<{ memoryReference?: string }>("language_server_call", {
-      args: ["&(pointer)", "watch", sessionId], id: "cpp-clangd", method: "debugEvaluate",
+    const pointerAddress = await debug.evaluate(async (sessionId) => window.agentK.invoke<{ memoryReference?: string }>("language_pack_call", {
+      args: ["&(pointer)", "watch", sessionId], id: "agent-k.cpp", method: "debugEvaluate",
     }), firstSessionId);
     expect(pointerAddress.memoryReference).toBe("0x4000");
     const pointerLocal = locals.locator(".debug-variable-row").filter({ hasText: "pointer" }).first();

@@ -168,6 +168,7 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
     const nonceRef = useRef(crypto.randomUUID());
     const pendingReads = useRef(new Map<string, (content: string) => void>());
     const pendingSelections = useRef(new Map<string, (selection: string) => void>());
+    const pendingActions = useRef(new Map<string, { respond(result: { error?: string; ok: boolean }): void; timeout: number }>());
     const pendingNavigation = useRef<{ column: number; line: number } | undefined>(undefined);
     const activeLanguageProjectRef = useRef<string | undefined>(undefined);
     const themeRef = useRef(theme);
@@ -351,6 +352,18 @@ void (async () => {
         }
         if (message.nonce !== nonceRef.current) return;
         switch (message.type) {
+          case "action-complete":
+          case "action-error": {
+            if (typeof message.requestId !== "string") return;
+            const pending = pendingActions.current.get(message.requestId);
+            if (!pending) return;
+            pendingActions.current.delete(message.requestId);
+            window.clearTimeout(pending.timeout);
+            pending.respond(message.type === "action-complete"
+              ? { ok: true }
+              : { ok: false, error: typeof message.value === "string" ? message.value : "Editor action failed." });
+            break;
+          }
           case "content": {
             if (typeof message.requestId !== "string" || typeof message.value !== "string") return;
             const resolve = pendingReads.current.get(message.requestId);
@@ -431,11 +444,25 @@ void (async () => {
 
     useEffect(() => {
       const action = (event: Event) => {
-        const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+        const detail = (event as CustomEvent<Record<string, unknown> & { respond?: (result: { error?: string; ok: boolean }) => void }>).detail;
         if (!detail || typeof detail.action !== "string") return;
         if (typeof detail.pluginId === "string" && detail.pluginId !== plugin.id) return;
         if (typeof detail.path === "string" && detail.path !== path) return;
-        send("action", { id: detail.action, parameters: detail });
+        event.preventDefault();
+        const { respond, ...parameters } = detail;
+        if (!respond) {
+          send("action", { id: detail.action, parameters });
+          return;
+        }
+        const requestId = crypto.randomUUID();
+        const timeout = window.setTimeout(() => {
+          const pending = pendingActions.current.get(requestId);
+          if (!pending) return;
+          pendingActions.current.delete(requestId);
+          pending.respond({ ok: false, error: `Editor action timed out: ${detail.action}.` });
+        }, 10_000);
+        pendingActions.current.set(requestId, { respond, timeout });
+        send("action", { id: detail.action, parameters }, requestId);
       };
       window.addEventListener("agent-k-file-format-action", action);
       return () => window.removeEventListener("agent-k-file-format-action", action);
@@ -443,26 +470,26 @@ void (async () => {
 
     useEffect(() => {
       const stop = desktop.onEvent((event) => {
-        if (event.type === "language_server_project_removed" && typeof event.root === "string") {
+        if (event.type === "language_pack_project_removed" && typeof event.root === "string") {
           const removed = event.root.replaceAll("\\", "/").toLowerCase();
           const file = absolutePath.replaceAll("\\", "/").toLowerCase();
           if (file === removed || file.startsWith(`${removed}/`)) activeLanguageProjectRef.current = undefined;
           return;
         }
-        if (event.type !== "language_server_project") return;
+        if (event.type !== "language_pack_project") return;
         const project = event.project as { root?: unknown; status?: unknown } | undefined;
         if (typeof project?.root !== "string") return;
         const file = absolutePath.replaceAll("\\", "/").toLowerCase();
         const root = project.root.replaceAll("\\", "/").toLowerCase();
         if (file !== root && !file.startsWith(`${root}/`)) return;
-        const identity = `${typeof event.languageServerId === "string" ? event.languageServerId : ""}\0${root}`;
+        const identity = `${typeof event.packId === "string" ? event.packId : ""}\0${root}`;
         if (project.status !== "ready" && project.status !== "indexing") {
           if (activeLanguageProjectRef.current === identity) activeLanguageProjectRef.current = undefined;
           return;
         }
         if (activeLanguageProjectRef.current === identity) return;
         activeLanguageProjectRef.current = identity;
-        send("action", { id: "language-server-project-ready", parameters: { root: project.root, languageServerId: event.languageServerId } });
+        send("action", { id: "language-pack-project-ready", parameters: { root: project.root, packId: event.packId } });
       });
       return stop;
     }, [absolutePath]);

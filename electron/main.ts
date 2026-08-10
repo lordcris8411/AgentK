@@ -138,17 +138,17 @@ function bringDebugWindowToFront(): void {
 }
 
 function emitBackendEvent(event: JsonObject): void {
-  if (event.type === "debug_session" && typeof event.languageServerId === "string") {
-    const languageServerId = event.languageServerId;
+  if (event.type === "debug_session" && typeof event.packId === "string") {
+    const packId = event.packId;
     const snapshot = asObject(event.snapshot);
     const state = typeof snapshot.state === "string" ? snapshot.state : undefined;
     const stopReason = typeof snapshot.stopReason === "string" ? snapshot.stopReason : "";
     const stopReasonKind = typeof snapshot.stopReasonKind === "string" ? snapshot.stopReasonKind : "";
-    const sessionKey = `${languageServerId}:${typeof event.sessionId === "string" ? event.sessionId : "default"}`;
+    const sessionKey = `${packId}:${typeof event.sessionId === "string" ? event.sessionId : "default"}`;
     const breakpointHit = state === "stopped" && previousDebugStates.get(sessionKey) !== "stopped" && (stopReasonKind === "breakpoint" || /breakpoint/i.test(stopReason));
     previousDebugStates.set(sessionKey, state);
     if (breakpointHit) {
-      if (debugWindow && !debugWindow.isDestroyed()) debugWindow.webContents.send("agent-k:debug-provider-hit", languageServerId);
+      if (debugWindow && !debugWindow.isDestroyed()) debugWindow.webContents.send("agent-k:debug-provider-hit", packId);
       bringDebugWindowToFront();
     }
   }
@@ -231,10 +231,10 @@ function firstPartyEditorExtensionsPath(): string {
 
 /** Native language workers are extension packages too. The desktop host sees
  * only this package root; manifests select and describe every worker. */
-function firstPartyLanguageServerPluginsPath(): string {
+function firstPartyLanguagePacksPath(): string {
   return app.isPackaged
-    ? join(process.resourcesPath, "language-servers")
-    : projectPath("language-servers");
+    ? join(process.resourcesPath, "language-packs")
+    : projectPath("language-packs");
 }
 
 function resolvedAppearanceTheme(
@@ -323,7 +323,7 @@ function createWindows(theme: ClientSettings["theme"], resolvedTheme?: ThemeDefi
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
     const current = mainWindow?.webContents.getURL();
-    if (url !== current) event.preventDefault();
+    if (current && current !== "about:blank" && url !== current) event.preventDefault();
   });
   if (!app.isPackaged) {
     mainWindow.webContents.on("console-message", (details) => {
@@ -338,7 +338,18 @@ function createWindows(theme: ClientSettings["theme"], resolvedTheme?: ThemeDefi
     mainWindow = undefined;
     if (!quitting) app.quit();
   });
-  enablePreviewConsole(mainWindow);
+  // Electron's debugger API and Playwright both attach to the renderer through
+  // the DevTools protocol; keep the production console bridge out of E2E runs.
+  // Attaching while the BrowserWindow is still replacing its initial
+  // about:blank renderer can race Electron's sandbox bootstrap on Windows.
+  // Wait for the application document so startupData belongs to a committed
+  // renderer before enabling the preview-console domains.
+  if (process.env.AGENT_K_E2E !== "1") {
+    mainWindow.webContents.once("did-finish-load", () => {
+      const window = mainWindow;
+      if (window && !window.isDestroyed()) enablePreviewConsole(window);
+    });
+  }
 }
 
 function loadDebugWindow(root: string, contextFile?: string): void {
@@ -390,12 +401,12 @@ function saveDebugToolBounds(kind: DebugToolKind, window: BrowserWindow): void {
   }, 150);
 }
 
-function openDebugToolWindow(kind: DebugToolKind, target: string | undefined, languageServerId: string, sessionId?: string): void {
+function openDebugToolWindow(kind: DebugToolKind, target: string | undefined, packId: string, sessionId?: string): void {
   const owner = debugWindow;
   if (!owner || owner.isDestroyed() || !debugRoot) throw new Error("The Debug window is unavailable");
   const existing = debugToolWindows.get(kind);
   if (existing && !existing.isDestroyed()) {
-    existing.webContents.send("agent-k:debug-tool-provider", languageServerId);
+    existing.webContents.send("agent-k:debug-tool-provider", packId);
     existing.webContents.send("agent-k:debug-tool-session", sessionId);
     if (target) existing.webContents.send("agent-k:debug-tool-target", target);
     if (existing.isMinimized()) existing.restore();
@@ -428,13 +439,16 @@ function openDebugToolWindow(kind: DebugToolKind, target: string | undefined, la
   debugToolWindows.set(kind, window);
   window.setMenuBarVisibility(false);
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  window.webContents.on("will-navigate", (event, url) => { if (url !== window.webContents.getURL()) event.preventDefault(); });
+  window.webContents.on("will-navigate", (event, url) => {
+    const current = window.webContents.getURL();
+    if (current && current !== "about:blank" && url !== current) event.preventDefault();
+  });
   window.once("ready-to-show", () => { window.show(); window.focus(); });
   window.on("resize", () => saveDebugToolBounds(kind, window));
   window.on("move", () => saveDebugToolBounds(kind, window));
   window.on("closed", () => debugToolWindows.delete(kind));
   const initialTheme = initialThemePayload(splashTheme?.base ?? "light", splashTheme);
-  const query = { "initial-theme": initialTheme, "language-server": languageServerId, root: debugRoot, ...(sessionId ? { "session-id": sessionId } : {}), ...(target ? { target } : {}), tool: kind, window: "debug-tool" };
+  const query = { "initial-theme": initialTheme, "language-pack": packId, root: debugRoot, ...(sessionId ? { "session-id": sessionId } : {}), ...(target ? { target } : {}), tool: kind, window: "debug-tool" };
   const devUrl = process.env.AGENT_K_DEV_URL;
   if (devUrl) {
     const url = new URL(devUrl);
@@ -482,7 +496,7 @@ function openDebugWindow(root: string, contextFile?: string): void {
   debugWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   debugWindow.webContents.on("will-navigate", (event, url) => {
     const current = debugWindow?.webContents.getURL();
-    if (url !== current) event.preventDefault();
+    if (current && current !== "about:blank" && url !== current) event.preventDefault();
   });
   debugWindow.once("ready-to-show", () => {
     debugWindow?.setAlwaysOnTop(true);
@@ -727,10 +741,10 @@ function registerIpc(): void {
         const kind = data.kind;
         if (kind !== "memory" && kind !== "registers" && kind !== "disassembly") throw new Error("Unknown Debug tool window");
         const target = typeof data.target === "string" && data.target.length <= 4_096 ? data.target : undefined;
-        const languageServerId = typeof data.languageServerId === "string" && /^[a-z0-9][a-z0-9.-]*$/i.test(data.languageServerId) ? data.languageServerId : undefined;
-        if (!languageServerId) throw new Error("A valid Debug provider is required");
+        const packId = typeof data.packId === "string" && /^[a-z0-9][a-z0-9.-]*$/i.test(data.packId) ? data.packId : undefined;
+        if (!packId) throw new Error("A valid Debug provider is required");
         const sessionId = typeof data.sessionId === "string" && data.sessionId.length <= 128 ? data.sessionId : undefined;
-        openDebugToolWindow(kind, target, languageServerId, sessionId);
+        openDebugToolWindow(kind, target, packId, sessionId);
         break;
       }
       case "open-editor-location": {
@@ -948,7 +962,7 @@ async function start(): Promise<void> {
       ? join(process.resourcesPath, "extensions")
       : projectPath("extensions"),
     firstPartyEditorExtensionsSource: firstPartyEditorExtensionsPath(),
-    firstPartyLanguageServerPluginsSource: firstPartyLanguageServerPluginsPath(),
+    firstPartyLanguagePacksSource: firstPartyLanguagePacksPath(),
     bundledSkillsSource: app.isPackaged
       ? join(process.resourcesPath, "skills")
       : projectPath("skills"),

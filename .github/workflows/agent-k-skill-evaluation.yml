@@ -1,0 +1,153 @@
+name: Agent K Skill Evaluation
+
+on:
+  push:
+    branches:
+      - agent-k-evaluation/**
+  workflow_dispatch:
+    inputs:
+      case_id:
+        description: Optional single case id; empty runs the complete suite
+        required: false
+        type: string
+      allow_downloads:
+        description: Approve pinned language-tool downloads
+        default: true
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-k-skill-evaluation
+  cancel-in-progress: false
+
+jobs:
+  generate-and-run-windows:
+    runs-on: windows-latest
+    timeout-minutes: 720
+    env:
+      AGENT_K_EVAL_ALLOW_DOWNLOADS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.allow_downloads && '1' || '0') }}
+      AGENT_K_EVAL_AUTH_JSON: ${{ secrets.AGENT_K_EVAL_AUTH_JSON }}
+      AGENT_K_EVAL_CLIENT_SETTINGS_JSON: ${{ secrets.AGENT_K_EVAL_CLIENT_SETTINGS_JSON }}
+      AGENT_K_EVAL_MODELS_JSON: ${{ secrets.AGENT_K_EVAL_MODELS_JSON }}
+      AGENT_K_EVAL_PI_SETTINGS_JSON: ${{ secrets.AGENT_K_EVAL_PI_SETTINGS_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Install reviewed Electron runtime
+        run: node node_modules/electron/install.js
+      - name: Materialize isolated model configuration
+        run: node script/prepare-agent-k-eval-secrets.mjs
+      - run: npm run eval:agent-k-skills -- prepare --output .agent-k-evaluation ${{ inputs.case_id && format('--case {0}', inputs.case_id) || '' }}
+      - run: npm run eval:agent-k-skills:live -- --output .agent-k-evaluation ${{ inputs.case_id && format('--case {0}', inputs.case_id) || '' }}
+        continue-on-error: true
+      - run: npm run eval:agent-k-skills:replay -- --output .agent-k-evaluation ${{ inputs.case_id && format('--case {0}', inputs.case_id) || '' }}
+        continue-on-error: true
+      - run: npm run eval:agent-k-skills -- validate --artifact-root .agent-k-evaluation/artifacts --evidence-root .agent-k-evaluation/evidence --platform win32 --output .agent-k-evaluation/results-win32.json ${{ inputs.case_id && format('--case {0}', inputs.case_id) || '' }}
+        continue-on-error: true
+      - if: ${{ inputs.case_id == '' }}
+        run: npm run eval:agent-k-skills -- materialize --artifact-root .agent-k-evaluation/artifacts --target .
+      - if: ${{ inputs.case_id == '' }}
+        shell: pwsh
+        run: npm run check 2>&1 | Tee-Object -FilePath .agent-k-evaluation/windows-check.log
+      - if: ${{ inputs.case_id == '' }}
+        shell: pwsh
+        run: npm test 2>&1 | Tee-Object -FilePath .agent-k-evaluation/windows-test.log
+      - if: ${{ inputs.case_id == '' }}
+        shell: pwsh
+        run: npm run build 2>&1 | Tee-Object -FilePath .agent-k-evaluation/windows-build.log
+      - name: Inventory private toolchain cache
+        if: always()
+        run: node script/agent-k-skill-eval.mjs inventory-cache --root .agent-k-evaluation/cache/win32 --output .agent-k-evaluation/toolchain-hashes-win32.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-k-evaluation-windows
+          path: .agent-k-evaluation
+          if-no-files-found: error
+          retention-days: 30
+
+  validate-and-run-linux:
+    if: always()
+    needs: generate-and-run-windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 480
+    env:
+      AGENT_K_EVAL_ALLOW_DOWNLOADS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.allow_downloads && '1' || '0') }}
+      AGENT_K_EVAL_AUTH_JSON: ${{ secrets.AGENT_K_EVAL_AUTH_JSON }}
+      AGENT_K_EVAL_CLIENT_SETTINGS_JSON: ${{ secrets.AGENT_K_EVAL_CLIENT_SETTINGS_JSON }}
+      AGENT_K_EVAL_MODELS_JSON: ${{ secrets.AGENT_K_EVAL_MODELS_JSON }}
+      AGENT_K_EVAL_PI_SETTINGS_JSON: ${{ secrets.AGENT_K_EVAL_PI_SETTINGS_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Install reviewed Electron runtime
+        run: node node_modules/electron/install.js
+      - name: Materialize isolated model configuration
+        run: node script/prepare-agent-k-eval-secrets.mjs
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-k-evaluation-windows
+          path: .agent-k-evaluation
+      - name: Run invocation cases on Linux
+        run: xvfb-run -a npm run eval:agent-k-skills:live -- --phase invocation --output .agent-k-evaluation ${{ inputs.case_id && format('--case {0}', inputs.case_id) || '' }}
+        continue-on-error: true
+      - name: Install and exercise generated artifacts on Linux
+        run: xvfb-run -a npm run eval:agent-k-skills:replay -- --output .agent-k-evaluation ${{ inputs.case_id && format('--case {0}', inputs.case_id) || '' }}
+        continue-on-error: true
+      - run: npm run eval:agent-k-skills -- validate --artifact-root .agent-k-evaluation/artifacts --evidence-root .agent-k-evaluation/evidence --platform linux --output .agent-k-evaluation/results-linux.json ${{ inputs.case_id && format('--case {0}', inputs.case_id) || '' }}
+        continue-on-error: true
+      - if: ${{ inputs.case_id == '' }}
+        run: npm run eval:agent-k-skills -- materialize --artifact-root .agent-k-evaluation/artifacts --target .
+      - if: ${{ inputs.case_id == '' }}
+        run: npm run check 2>&1 | tee .agent-k-evaluation/linux-check.log
+      - if: ${{ inputs.case_id == '' }}
+        run: npm test 2>&1 | tee .agent-k-evaluation/linux-test.log
+      - if: ${{ inputs.case_id == '' }}
+        run: npm run build 2>&1 | tee .agent-k-evaluation/linux-build.log
+      - name: Inventory private toolchain cache
+        if: always()
+        run: node script/agent-k-skill-eval.mjs inventory-cache --root .agent-k-evaluation/cache/linux --output .agent-k-evaluation/toolchain-hashes-linux.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-k-evaluation-linux
+          path: .agent-k-evaluation
+          if-no-files-found: error
+          retention-days: 30
+
+  report:
+    if: always()
+    needs: [generate-and-run-windows, validate-and-run-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-k-evaluation-windows
+          path: windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-k-evaluation-linux
+          path: linux
+      - run: node script/agent-k-skill-eval.mjs merge --inputs windows/results-win32.json,linux/results-linux.json --output report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-k-evaluation-report
+          path: report
+          if-no-files-found: error
+          retention-days: 30
