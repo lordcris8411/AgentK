@@ -81,3 +81,10 @@ test("a staged steering message is submitted after the agent becomes idle", () =
     /if \(\s*!pendingSteer \|\|\s*running \|\|\s*submitting \|\|\s*compaction \|\|\s*!session \|\|\s*!connected\s*\) return;[\s\S]*?setPendingSteer\(undefined\);[\s\S]*?submit\("queue", pending\.value, pending\.attachments\)/,
   );
 });
+
+test("top-level workspace changes refresh the same depth as the initial tree", () => {
+  assert.match(
+    inspectorSource,
+    /desktop\.directory\(root, path, path \? 1 : 2\)/,
+  );
+});

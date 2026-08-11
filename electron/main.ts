@@ -23,6 +23,11 @@ import { loadClientSettings } from "./settings.js";
 import { resolveTheme, type ThemeDefinition } from "./themes.js";
 import type { ClientSettings, JsonObject } from "./types.js";
 import { asObject, errorMessage } from "./utils.js";
+import {
+  resizedWindowBounds,
+  usesManualWindowResize,
+  type ResizeDirection,
+} from "./window-resize.js";
 
 if (
   process.platform === "linux" &&
@@ -187,9 +192,6 @@ const previewConsoleFrames = new Map<string, string>();
 const previewConsoleContexts = new Map<number, string>();
 const PREVIEW_CONSOLE_LIMIT = 500;
 
-type ResizeDirection =
-  | "East" | "North" | "NorthEast" | "NorthWest"
-  | "South" | "SouthEast" | "SouthWest" | "West";
 type ResizeState = {
   bounds: Rectangle;
   direction: ResizeDirection;
@@ -782,6 +784,13 @@ function registerIpc(): void {
       case "open-devtools":
         window.webContents.openDevTools({ mode: "detach" });
         break;
+      case "resize-mode":
+        return usesManualWindowResize(
+          process.platform,
+          process.env,
+          app.commandLine.getSwitchValue("ozone-platform"),
+          app.commandLine.getSwitchValue("ozone-platform-hint"),
+        ) ? "manual" : "native";
       case "capture-preview": {
         const x = Math.max(0, number(data.x));
         const y = Math.max(0, number(data.y));
@@ -825,6 +834,12 @@ function registerIpc(): void {
         return results.filter((result) => result.status === "fulfilled").length;
       }
       case "resize-begin": {
+        if (!usesManualWindowResize(
+          process.platform,
+          process.env,
+          app.commandLine.getSwitchValue("ozone-platform"),
+          app.commandLine.getSwitchValue("ozone-platform-hint"),
+        )) return;
         const direction = String(data.direction) as ResizeDirection;
         if (![
           "East", "North", "NorthEast", "NorthWest", "South",
@@ -855,28 +870,17 @@ function updateWindowResize(window: BrowserWindow, screenX: number, screenY: num
   const dx = screenX - resizeState.startX;
   const dy = screenY - resizeState.startY;
   const start = resizeState.bounds;
-  const next = { ...start };
-  if (resizeState.direction.includes("East")) next.width = start.width + dx;
-  if (resizeState.direction.includes("South")) next.height = start.height + dy;
-  if (resizeState.direction.includes("West")) {
-    next.x = start.x + dx;
-    next.width = start.width - dx;
-  }
-  if (resizeState.direction.includes("North")) {
-    next.y = start.y + dy;
-    next.height = start.height - dy;
-  }
   const minimumSize = window.getMinimumSize();
   const minimumWidth = minimumSize[0] ?? 1372;
   const minimumHeight = minimumSize[1] ?? 640;
-  if (next.width < minimumWidth) {
-    if (resizeState.direction.includes("West")) next.x -= minimumWidth - next.width;
-    next.width = minimumWidth;
-  }
-  if (next.height < minimumHeight) {
-    if (resizeState.direction.includes("North")) next.y -= minimumHeight - next.height;
-    next.height = minimumHeight;
-  }
+  const next = resizedWindowBounds(
+    start,
+    resizeState.direction,
+    dx,
+    dy,
+    minimumWidth,
+    minimumHeight,
+  );
   window.setBounds(next, false);
 }
 

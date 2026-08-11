@@ -172,6 +172,15 @@ export function isolatedRuntimePath(
     .join(platform === "win32" ? ";" : ":");
 }
 
+export function npmScriptShell(
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  return platform === "win32"
+    ? environment.ComSpec ?? environment.COMSPEC ?? "cmd.exe"
+    : "/bin/sh";
+}
+
 export class TypeScriptService {
   private readonly projects = new Map<string, Project>();
   private readonly traces: Trace[] = [];
@@ -331,7 +340,7 @@ export class TypeScriptService {
       this.emit({ type: "language_pack_confirmation_request", requestId, title: "Download TypeScript/JavaScript tools", message: `Download pinned Node.js ${NODE_VERSION} LTS (${archive.asset}), then privately install typescript-language-server ${TYPESCRIPT_LANGUAGE_SERVER_VERSION} and TypeScript ${TYPESCRIPT_VERSION}? Files stay in the Agent K cache and lifecycle scripts are disabled.` });
     });
   }
-  private environment(home: string, runtimeNode = this.systemNode): NodeJS.ProcessEnv { const isolated = Object.fromEntries(Object.entries(process.env).filter(([key]) => !new Set(["PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR"]).has(key.toLocaleUpperCase("en-US")))); return { ...isolated, PATH: isolatedRuntimePath(runtimeNode, this.systemNpm), HOME: home, USERPROFILE: home, TMP: join(this.cachePath, "temp"), TEMP: join(this.cachePath, "temp"), TMPDIR: join(this.cachePath, "temp"), npm_config_cache: join(this.cachePath, "package-cache"), npm_config_audit: "false", npm_config_fund: "false", npm_config_ignore_scripts: "true", NODE_REPL_HISTORY: join(this.cachePath, "logs", "node_repl_history") }; }
+  private environment(home: string, runtimeNode = this.systemNode): NodeJS.ProcessEnv { const isolated = Object.fromEntries(Object.entries(process.env).filter(([key]) => !new Set(["PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR"]).has(key.toLocaleUpperCase("en-US")))); return { ...isolated, PATH: isolatedRuntimePath(runtimeNode, this.systemNpm), HOME: home, USERPROFILE: home, TMP: join(this.cachePath, "temp"), TEMP: join(this.cachePath, "temp"), TMPDIR: join(this.cachePath, "temp"), npm_config_cache: join(this.cachePath, "package-cache"), npm_config_audit: "false", npm_config_fund: "false", npm_config_ignore_scripts: "true", npm_config_script_shell: npmScriptShell(), NODE_REPL_HISTORY: join(this.cachePath, "logs", "node_repl_history") }; }
   private marker() { return `node=${NODE_VERSION}\nnode-source=${this.systemNode ? `system:${this.systemNode}` : "private"}\ntypescript-language-server=${TYPESCRIPT_LANGUAGE_SERVER_VERSION}\ntypescript=${TYPESCRIPT_VERSION}\njs-debug=${JS_DEBUG_VERSION}\nlock=${LOCKFILE_SHA256}\n`; }
   private nodeExecutable(root: string): string { return this.systemNode ?? join(root, nodeArchive(process.platform, process.arch)!.executable); }
   private npmCli(root: string): string {

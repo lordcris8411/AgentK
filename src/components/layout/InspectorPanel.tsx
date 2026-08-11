@@ -977,7 +977,11 @@ export function InspectorPanel({
       try {
         const refreshed = await Promise.all(paths.map(async (path) => {
           try {
-            return await desktop.directory(root, path, 1);
+            // Moving a populated directory into a watched Linux workspace can
+            // produce only one rename event for the new top-level directory.
+            // Match projectTree's initial depth at the root so that directory
+            // is not inserted as an apparently empty, unloaded node.
+            return await desktop.directory(root, path, path ? 1 : 2);
           } catch {
             // A rename/delete event may make the old parent disappear before
             // its coalesced refresh runs. Its surviving parent event will

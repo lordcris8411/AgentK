@@ -60,6 +60,8 @@ export const desktopWindow = {
     }>>("get-preview-console", { limit, url }),
   stylePreviewScrollbars: (url: string, css: string) =>
     window.agentK.window.invoke<number>("style-preview-scrollbars", { css, url }),
+  resizeMode: () =>
+    window.agentK.window.invoke<"manual" | "native">("resize-mode"),
   beginResize: (
     direction: WindowResizeDirection,
     screenX: number,

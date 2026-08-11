@@ -80,6 +80,7 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
   const [leftHidden, setLeftHidden] = useState(settings.leftPanelHidden);
   const [rightHidden, setRightHidden] = useState(settings.rightPanelHidden);
   const [windowMaximized, setWindowMaximized] = useState(false);
+  const [windowResizeMode, setWindowResizeMode] = useState<"manual" | "native">("native");
   const leftWidthRef = useRef(leftWidth);
   const rightWidthRef = useRef(rightWidth);
   const leftHiddenRef = useRef(leftHidden);
@@ -248,6 +249,13 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
       stopResizeListener?.();
     };
   }, []);
+  useEffect(() => {
+    let disposed = false;
+    void appWindow.resizeMode().then((mode) => {
+      if (!disposed) setWindowResizeMode(mode);
+    }).catch(() => undefined);
+    return () => { disposed = true; };
+  }, [appWindow]);
   useEffect(() => {
     const root = document.documentElement;
     root.style.setProperty(
@@ -551,7 +559,7 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
       ref={frameRef}
       style={layoutStyle}
     >
-      {WINDOW_RESIZE_DIRECTIONS.map((direction) => (
+      {windowResizeMode === "manual" && WINDOW_RESIZE_DIRECTIONS.map((direction) => (
         <div
           aria-hidden="true"
           className={`window-resize-handle is-${direction.toLowerCase()}`}

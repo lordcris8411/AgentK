@@ -27,6 +27,7 @@
 
 ## Git
 
+- Never create a Git branch unless the user explicitly authorizes it.
 - Do not commit unless the user asks.
 - Stage explicit paths only.
 - Preserve unrelated user changes.

@@ -7,7 +7,7 @@ import { isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import test from "node:test";
-import { extractOfficialNodeArchive, isolatedRuntimePath, JS_DEBUG_VERSION, NODE_VERSION, nodeArchive, packageScriptForAction, runProcess, systemTarExecutable, TYPESCRIPT_LANGUAGE_SERVER_VERSION, TYPESCRIPT_VERSION } from "./worker.ts";
+import { extractOfficialNodeArchive, isolatedRuntimePath, JS_DEBUG_VERSION, NODE_VERSION, nodeArchive, npmScriptShell, packageScriptForAction, runProcess, systemTarExecutable, TYPESCRIPT_LANGUAGE_SERVER_VERSION, TYPESCRIPT_VERSION } from "./worker.ts";
 
 async function download(url: string, path: string): Promise<void> {
   const response = await fetch(url);
@@ -49,6 +49,11 @@ test("exposes only the selected Node and npm directories to package scripts", ()
     isolatedRuntimePath("/cache/node/bin/node", "/usr/bin/npm", "linux"),
     "/cache/node/bin:/usr/bin",
   );
+});
+
+test("uses an absolute npm script shell outside the isolated Linux PATH", () => {
+  assert.equal(npmScriptShell("linux", {}), "/bin/sh");
+  assert.equal(npmScriptShell("win32", { ComSpec: "C:\\Windows\\System32\\cmd.exe" }), "C:\\Windows\\System32\\cmd.exe");
 });
 
 // This intentionally exercises cold downloads and the real extractors for both
