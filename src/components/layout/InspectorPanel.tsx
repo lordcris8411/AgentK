@@ -828,11 +828,20 @@ export function InspectorPanel({
     let disposed = false;
     const refresh = () => void desktop.listLanguagePackProjects().then((projects) => { if (!disposed) setLanguageProjects(projects); });
     void desktop.listLanguagePacks().then((plugins) => { if (!disposed) setLanguagePlugins(plugins); });
-    refresh();
+    // Project discovery cold-starts Language Pack workers. Keep those workers
+    // off the desktop critical path and begin discovery once the first Pi
+    // runtime has made the main window usable.
+    const refreshAfterStartup = () => refresh();
+    if (document.documentElement.dataset.agentKStartupReady === "true") refresh();
+    else window.addEventListener("agent-k-startup-ready", refreshAfterStartup, { once: true });
     const stop = desktop.onEvent((event) => {
       if (event.type === "language_pack_project" || event.type === "language_pack_project_removed") refresh();
     });
-    return () => { disposed = true; stop(); };
+    return () => {
+      disposed = true;
+      window.removeEventListener("agent-k-startup-ready", refreshAfterStartup);
+      stop();
+    };
   }, []);
   useEffect(() => {
     if (!languageProfileMenu) return;
@@ -1156,10 +1165,12 @@ export function InspectorPanel({
     advancedQueryRef.current.focus();
     if (advancedSearchSeed) advancedQueryRef.current.select();
   }, [advancedSearchOpen, advancedSearchSeed]);
-  const loadDirectory = async (path: string) => {
-    if (!root) return;
+  const loadDirectory = useCallback(async (path: string) => {
+    const targetRoot = root;
+    if (!targetRoot) return;
     try {
-      const loaded = await desktop.directory(root, path);
+      const loaded = await desktop.directory(targetRoot, path);
+      if (currentRoot.current !== targetRoot) return;
       const replace = (entry: FileEntry): FileEntry =>
         entry.path === path
           ? loaded
@@ -1170,9 +1181,13 @@ export function InspectorPanel({
         return next;
       });
     } catch (cause) {
-      onError(`无法读取目录：${String(cause)}`);
+      // A directory expansion from the previous workspace may finish after a
+      // project switch. Its result and failure no longer belong to the active
+      // explorer and must not leak into the new project's notifications.
+      if (currentRoot.current === targetRoot)
+        onError(`无法读取目录：${String(cause)}`);
     }
-  };
+  }, [onError, root]);
   const paintTreeSelection = useCallback((path?: string, target?: HTMLElement) => {
     const container = fileTreeRef.current;
     if (!container) return;
@@ -1195,7 +1210,7 @@ export function InspectorPanel({
     setTreeSelectionRevision((revision) => revision + 1);
     paintTreeSelection(entry.path, element);
     if (entry.isDir && !entry.loaded) void loadDirectory(entry.path);
-  }, [paintTreeSelection]);
+  }, [loadDirectory, paintTreeSelection]);
   useLayoutEffect(() => {
     paintTreeSelection(selectedEntryRef.current?.path);
   }, [paintTreeSelection, query, tree]);
@@ -1382,17 +1397,34 @@ export function InspectorPanel({
   }, [root, tabs]);
   useEffect(() => {
     const runWebProject = (event: Event) => {
-      const detail = (event as CustomEvent<{ action?: string; path?: string }>).detail;
-      if (detail?.action !== "run-web-project" || !root || typeof detail.path !== "string") return;
+      const detail = (event as CustomEvent<{
+        action?: string;
+        path?: string;
+        respond?(result: { error?: string; ok: boolean }): void;
+      }>).detail;
+      if (detail?.action !== "run-web-project") return;
+      if (detail.respond) event.preventDefault();
+      const fail = (message: string) => {
+        if (detail.respond) detail.respond({ ok: false, error: message });
+        else onError(message);
+      };
+      if (!root || typeof detail.path !== "string") {
+        fail("A workspace project path is required to start a web project.");
+        return;
+      }
       const projectPath = relativeWorkspacePath(root, detail.path);
-      if (projectPath === undefined) return;
+      if (projectPath === undefined) {
+        fail("The requested web project is outside the current workspace.");
+        return;
+      }
       void desktop.startWebProject(root, projectPath).then(({ url }) => {
         const path = `web-preview:${projectPath}`;
         setTabs((currentTabs) => currentTabs.some((tab) => tab.path === path)
           ? currentTabs.map((tab) => tab.path === path ? { ...tab, webPreviewUrl: url } : tab)
           : [...currentTabs, { content: "", path, saved: "", webPreviewUrl: url }]);
         activateTab(path);
-      }).catch((cause) => onError(`无法启动 Web 项目：${String(cause)}`));
+        detail.respond?.({ ok: true });
+      }).catch((cause) => fail(`无法启动 Web 项目：${String(cause)}`));
     };
     window.addEventListener("agent-k-file-format-action", runWebProject);
     return () => window.removeEventListener("agent-k-file-format-action", runWebProject);
@@ -1513,8 +1545,7 @@ export function InspectorPanel({
   const selectedTreeLanguagePlugin = selectedDirectoryEntry
     ? detectedLanguageProjects.get(normalizedTreePath(selectedDirectoryEntry.path))
     : undefined;
-  const selectedTreeCppProject = root && selectedDirectoryEntry &&
-      selectedTreeLanguagePlugin?.languages.includes("cpp")
+  const selectedTreeLanguageProject = root && selectedDirectoryEntry && selectedTreeLanguagePlugin
     ? {
         root: languageProjects.find((project) =>
           project.packId === selectedTreeLanguagePlugin.id &&
@@ -1551,32 +1582,34 @@ export function InspectorPanel({
       Boolean(selectedLanguagePlugin.debugServer?.providers.length)
     ? selectedLanguagePlugin
     : undefined;
-  const selectedProjectOverview = root && projectDirectoryEntry && selectedDebugLanguagePack
+  const selectedProjectOverview = root && projectDirectoryEntry && selectedLanguagePlugin
     ? {
-        packName: selectedLanguageProject?.packName ?? selectedDebugLanguagePack.displayName,
+        packName: selectedLanguageProject?.packName ?? selectedLanguagePlugin.displayName,
         name: selectedLanguageProject?.name ?? projectDirectoryEntry.name,
         root: selectedLanguageProject?.root ?? absoluteWorkspacePath(root, projectDirectoryEntry.path),
         status: selectedLanguageProject?.status,
       }
     : undefined;
-  const selectedProfileAction = selectedDebugLanguagePack?.projectMenu?.actions?.find((action) => action.profiles?.length);
-  const selectedProfileActionKey = selectedProjectOverview && selectedProfileAction && selectedDebugLanguagePack
-    ? `${selectedDebugLanguagePack.id}:${selectedProjectOverview.root}:${selectedProfileAction.id}`
+  const selectedProjectActions = selectedLanguagePlugin?.projectMenu?.actions ?? [];
+  const selectedSimpleActions = selectedProjectActions.filter((action) => !action.profiles?.length);
+  const selectedProfileAction = selectedProjectActions.find((action) => action.profiles?.length);
+  const selectedProfileActionKey = selectedProjectOverview && selectedProfileAction && selectedLanguagePlugin
+    ? `${selectedLanguagePlugin.id}:${selectedProjectOverview.root}:${selectedProfileAction.id}`
     : undefined;
   const selectedActionProfile = selectedProfileAction && selectedProfileActionKey
     ? languageActionProfiles[selectedProfileActionKey] ?? selectedProfileAction.defaultProfile ?? selectedProfileAction.profiles?.[0]?.id
     : undefined;
   const runSelectedProjectAction = (action: LanguageProjectAction, profile?: string) => {
-    if (!selectedProjectOverview || !projectDirectoryEntry || !selectedDebugLanguagePack) return;
+    if (!selectedProjectOverview || !projectDirectoryEntry || !selectedLanguagePlugin) return;
     window.dispatchEvent(new CustomEvent("agent-k-file-format-action", {
       detail: {
-        action: `language-pack:${selectedDebugLanguagePack.id}:${action.method}`,
-        arguments: profile ? [profile] : [],
+        action: `language-pack:${selectedLanguagePlugin.id}:${action.id}`,
+        arguments: profile ? { configuration: profile } : {},
         path: projectDirectoryEntry.path,
       },
     }));
   };
-  const selectedProjectReadme = selectedTreeCppProject && selectedDirectoryEntry
+  const selectedProjectReadme = selectedTreeLanguageProject && selectedDirectoryEntry
     ? selectedDirectoryEntry.children.find((entry) =>
         !entry.isDir && entry.name.toLocaleLowerCase("en-US") === "readme.md",
       )
@@ -1584,7 +1617,7 @@ export function InspectorPanel({
   const selectedProjectReadmePath = selectedProjectReadme?.path;
   const showCreateProjectReadme = Boolean(current?.projectOverview && !current.projectOverview.readmePath);
   useEffect(() => {
-    if (!root || !selectedTreeCppProject || !selectedDirectoryEntry || !selectedTreeLanguagePlugin) return;
+    if (!root || !selectedTreeLanguageProject || !selectedDirectoryEntry || !selectedTreeLanguagePlugin) return;
     let disposed = false;
     const projectTabPath = `project-overview:${selectedTreeLanguagePlugin.id}:${normalizedTreePath(selectedDirectoryEntry.path)}`;
     void (async () => {
@@ -1629,13 +1662,13 @@ export function InspectorPanel({
       });
       activateTab(projectTabPath);
       setReadmeRequestedProject((requested) =>
-        requested === selectedTreeCppProject.root ? undefined : requested,
+        requested === selectedTreeLanguageProject.root ? undefined : requested,
       );
     })().catch((cause) => {
       if (!disposed) onError(`无法预览工程：${String(cause)}`);
     });
     return () => { disposed = true; };
-  }, [selectedProjectReadmePath, selectedTreeCppProject?.root, treeSelectionRevision]);
+  }, [selectedProjectReadmePath, selectedTreeLanguageProject?.root, treeSelectionRevision]);
   const contextLanguagePlugin = contextMenu?.entry.isDir
     ? detectedLanguageProjects.get(normalizedTreePath(contextMenu.entry.path))
     : undefined;
@@ -1695,20 +1728,25 @@ export function InspectorPanel({
       setLanguageProgress({ packId: plugin.id, purpose: "debug", stage: "failed", error: String(cause) });
     }
   };
-  const captureRenderedPreview = (requestedOutputPath?: string) => {
+  const captureRenderedPreview = (
+    requestedOutputPath?: string,
+    reportError = true,
+  ): Promise<{ error?: string; ok: boolean }> => {
+    const failed = (message: string) => {
+      if (reportError) onError(message);
+      return Promise.resolve({ ok: false, error: message });
+    };
     const target = current?.webPreviewUrl
       ? inspectorRef.current?.querySelector<HTMLElement>(".web-project-preview")
       : current?.previewMode && current.format?.id === "agent-k.html"
         ? inspectorRef.current?.querySelector<HTMLElement>(".cached-plugin-editor.is-active .plugin-editor-frame")
         : undefined;
     if (!target) {
-      onError(en ? "Open an HTML or web-project preview before capturing it." : "请先打开 HTML 或网站预览，再进行抓图。");
-      return Promise.resolve(undefined);
+      return failed(en ? "Open an HTML or web-project preview before capturing it." : "请先打开 HTML 或网站预览，再进行抓图。");
     }
     const bounds = target.getBoundingClientRect();
     if (!root) {
-      onError(en ? "A project is required to save the preview screenshot." : "抓图需要先打开一个项目。");
-      return Promise.resolve(undefined);
+      return failed(en ? "A project is required to save the preview screenshot." : "抓图需要先打开一个项目。");
     }
     const baseName = (current?.path ?? "agent-k-preview")
       .replace(/^web-preview:/, "")
@@ -1718,23 +1756,28 @@ export function InspectorPanel({
     const fallbackOutputPath = `screenshot/${baseName}-preview-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
     const relativeOutputPath = relativeWorkspacePath(root, requestedOutputPath ?? fallbackOutputPath);
     if (!relativeOutputPath || !relativeOutputPath.toLowerCase().endsWith(".png")) {
-      onError(en ? "Preview screenshots must be saved as PNG files inside the current project." : "预览截图必须保存为当前项目内的 PNG 文件。");
-      return Promise.resolve(undefined);
+      return failed(en ? "Preview screenshots must be saved as PNG files inside the current project." : "预览截图必须保存为当前项目内的 PNG 文件。");
     }
     return desktopWindow.capturePreview({
       height: Math.round(bounds.height),
       width: Math.round(bounds.width),
       x: Math.round(bounds.left),
       y: Math.round(bounds.top),
-    }, absoluteWorkspacePath(root, relativeOutputPath)).catch((cause) => {
-      onError(`${en ? "Unable to capture preview" : "抓图失败"}：${String(cause)}`);
-      return undefined;
-    });
+    }, absoluteWorkspacePath(root, relativeOutputPath))
+      .then(() => ({ ok: true }))
+      .catch((cause) => failed(`${en ? "Unable to capture preview" : "抓图失败"}：${String(cause)}`));
   };
   useEffect(() => {
     const captureFromAgent = (event: Event) => {
-      const detail = (event as CustomEvent<{ action?: string; outputPath?: string }>).detail;
-      if (detail?.action === "capture-preview") void captureRenderedPreview(detail.outputPath);
+      const detail = (event as CustomEvent<{
+        action?: string;
+        outputPath?: string;
+        respond?(result: { error?: string; ok: boolean }): void;
+      }>).detail;
+      if (detail?.action !== "capture-preview") return;
+      if (detail.respond) event.preventDefault();
+      void captureRenderedPreview(detail.outputPath, !detail.respond)
+        .then((result) => detail.respond?.(result));
     };
     window.addEventListener("agent-k-file-format-action", captureFromAgent);
     return () => window.removeEventListener("agent-k-file-format-action", captureFromAgent);
@@ -2462,6 +2505,17 @@ export function InspectorPanel({
                 <i aria-hidden="true" className={languageProjectMutation ? "fa-solid fa-circle-notch fa-spin" : selectedLanguageProject ? "fa-solid fa-eject" : "fa-solid fa-download"} />
                 {selectedLanguageProject ? (en ? "Unload" : "卸载") : (en ? "Load" : "加载")}
               </button>
+              {selectedSimpleActions.map((action) => (
+                <button
+                  key={action.id}
+                  onClick={() => runSelectedProjectAction(action)}
+                  title={action.label}
+                  type="button"
+                >
+                  <i aria-hidden="true" className={action.id === "test" ? "fa-solid fa-vial" : action.id === "run" ? "fa-solid fa-play" : "fa-solid fa-hammer"} />
+                  {action.label}
+                </button>
+              ))}
               {selectedProfileAction && selectedProfileActionKey && selectedActionProfile ? (
                 <span className="language-build-split">
                   <button
@@ -2492,15 +2546,17 @@ export function InspectorPanel({
                   </button>
                 </span>
               ) : null}
-              <button
-                disabled={Boolean(languageProgress)}
-                onClick={() => { if (selectedDebugLanguagePack) void prepareAndOpenDebug(selectedDebugLanguagePack, selectedProjectOverview.root); }}
-                title={en ? "Open native Debug window" : "打开原生调试窗口"}
-                type="button"
-              >
-                <i aria-hidden="true" className="fa-solid fa-bug" />
-                {en ? "Debug" : "调试"}
-              </button>
+              {selectedDebugLanguagePack ? (
+                <button
+                  disabled={Boolean(languageProgress)}
+                  onClick={() => void prepareAndOpenDebug(selectedDebugLanguagePack, selectedProjectOverview.root)}
+                  title={en ? "Open Debug window" : "打开调试窗口"}
+                  type="button"
+                >
+                  <i aria-hidden="true" className="fa-solid fa-bug" />
+                  {en ? "Debug" : "调试"}
+                </button>
+              ) : null}
             </div>
           ) : current && !current.unsupported && current.format?.editable ? (
             <div className="editor-floating-actions">
@@ -2851,7 +2907,7 @@ export function InspectorPanel({
               key={`${contextLanguagePlugin.id}:${action.id}`}
               onClick={() => {
                 window.dispatchEvent(new CustomEvent("agent-k-file-format-action", {
-                  detail: { action: `language-pack:${contextLanguagePlugin.id}:${action.method}`, path: contextMenu.entry.path },
+                  detail: { action: `language-pack:${contextLanguagePlugin.id}:${action.id}`, arguments: {}, path: contextMenu.entry.path },
                 }));
                 setContextMenu(undefined);
               }}

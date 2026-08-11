@@ -37,8 +37,20 @@ import {
   useExtensionUi,
 } from "../extensions/ExtensionUiContext";
 import { AgentKLogo } from "../../components/AgentKLogo";
+import { activeBranchMessages } from "./sessionHistory";
 
 type ToolCall = { id?: string; name: string; args: Record<string, unknown> };
+
+async function runtimeBranchMessages(runtimeId?: string) {
+  const page = await desktop.command(
+    { type: "get_entries" },
+    runtimeId,
+  ) as {
+    entries?: Array<Record<string, unknown>>;
+    leafId?: string | null;
+  };
+  return activeBranchMessages(page.entries ?? [], page.leafId);
+}
 
 function normalizedWorkspacePath(path: string): string {
   return path.replaceAll("\\", "/").replace(/\/+$/u, "").toLocaleLowerCase("en-US");
@@ -2005,12 +2017,10 @@ export function ConversationWorkspace({
       };
     }
     setItems([]);
-    // Read the complete JSONL immediately. Once Pi has switched, replace it
-    // with the complete authoritative context (including active tree state).
+    // Render the complete active branch. Pi's get_messages is only the model
+    // context and intentionally drops ancestors after compaction.
     const history = connected
-      ? desktop.command({ type: "get_messages" }, session.runtimeId).then((raw) =>
-          (raw as { messages?: Array<Record<string, unknown>> }).messages ?? [],
-        )
+      ? runtimeBranchMessages(session.runtimeId)
       : desktop.sessionMessages(session.path);
     void history
       .then((messages) => {
@@ -2579,11 +2589,8 @@ export function ConversationWorkspace({
           if (typeof tokensAfter === "number" && Number.isFinite(tokensAfter))
             setReportedContextTokens(Math.max(0, tokensAfter));
           if (result) {
-            void desktop.command({ type: "get_messages" }, activeRuntimeId)
-              .then((page) => {
-                const messages = (page as { messages?: Array<Record<string, unknown>> }).messages;
-                if (messages) setItems(toItems(messages));
-              })
+            void runtimeBranchMessages(activeRuntimeId)
+              .then((messages) => setItems(toItems(messages)))
               .catch((cause) => onError(String(cause)));
           }
           const manual = event.reason === "manual" || manualCompactionRef.current;
@@ -3037,11 +3044,8 @@ export function ConversationWorkspace({
           : {};
         if (typeof result.estimatedTokensAfter === "number")
           setReportedContextTokens(Math.max(0, result.estimatedTokensAfter));
-        const page = await desktop.command(
-          { type: "get_messages" },
-          session?.runtimeId,
-        ) as { messages?: Array<Record<string, unknown>> };
-        if (page.messages) setItems(toItems(page.messages));
+        const messages = await runtimeBranchMessages(session?.runtimeId);
+        setItems(toItems(messages));
         const reduction = typeof result.tokensBefore === "number" &&
             typeof result.estimatedTokensAfter === "number"
           ? `：${formatContextTokens(result.tokensBefore)} → ${formatContextTokens(result.estimatedTokensAfter)}`
@@ -3209,9 +3213,13 @@ export function ConversationWorkspace({
     const after = await desktop.command(
       { type: "get_entries" },
       session.runtimeId,
-    ) as { leafId?: string | null };
+    ) as {
+      entries?: Array<Record<string, unknown>>;
+      leafId?: string | null;
+    };
     if ((after.leafId ?? null) !== expectedLeafId)
       throw new Error(en ? "Pi did not change the session tree position" : "Pi 未能切换会话树位置");
+    return after;
   };
   const selectCommandBranch = async (entryId: string) => {
     if (!session || running || compaction) return;
@@ -3221,12 +3229,11 @@ export function ConversationWorkspace({
       await cancelExtensionUi();
       clearSessionUi();
       if (kind === "tree") {
-        await navigateSessionTree(entryId);
-        const page = await desktop.command(
-          { type: "get_messages" },
-          session.runtimeId,
-        ) as { messages?: Array<Record<string, unknown>> };
-        const messages = page.messages ?? [];
+        const page = await navigateSessionTree(entryId) as {
+          entries?: Array<Record<string, unknown>>;
+          leafId?: string | null;
+        };
+        const messages = activeBranchMessages(page.entries ?? [], page.leafId);
         setItems(toItems(messages));
         setReportedContextTokens(latestContextTokens(messages));
         pushNotification(en ? "Session tree position changed" : "已切换会话树位置");
@@ -3478,14 +3485,11 @@ export function ConversationWorkspace({
       if (!target) throw new Error("无法定位这条消息的会话树节点");
       await cancelExtensionUi();
       clearSessionUi();
-      await navigateSessionTree(target.entryId);
-      const page = (await desktop.command(
-        { type: "get_messages" },
-        session.runtimeId,
-      )) as {
-        messages?: Array<Record<string, unknown>>;
+      const page = await navigateSessionTree(target.entryId) as {
+        entries?: Array<Record<string, unknown>>;
+        leafId?: string | null;
       };
-      const messages = page.messages ?? [];
+      const messages = activeBranchMessages(page.entries ?? [], page.leafId);
       setItems(toItems(messages));
       setReportedContextTokens(latestContextTokens(messages));
       commitDraft(query);
@@ -3538,12 +3542,11 @@ export function ConversationWorkspace({
 
       await cancelExtensionUi();
       clearSessionUi();
-      await navigateSessionTree(targetEntry.id);
-      const page = await desktop.command(
-        { type: "get_messages" },
-        session.runtimeId,
-      ) as { messages?: Array<Record<string, unknown>> };
-      const messages = page.messages ?? [];
+      const page = await navigateSessionTree(targetEntry.id) as {
+        entries?: Array<Record<string, unknown>>;
+        leafId?: string | null;
+      };
+      const messages = activeBranchMessages(page.entries ?? [], page.leafId);
       setItems(toItems(messages));
       setReportedContextTokens(latestContextTokens(messages));
       commitDraft("");
@@ -4400,7 +4403,37 @@ export function ConversationWorkspace({
           ))}
         {pendingSteer ? (
           <section className="pending-steer-card">
-            <span className="pending-steer-text">{pendingSteer.value || pendingSteer.attachments.map((attachment) => attachment.name).join(", ")}</span>
+            <div className="pending-steer-content">
+              {pendingSteer.value && (
+                <span className="pending-steer-text">{pendingSteer.value}</span>
+              )}
+              {pendingSteer.attachments.length > 0 && (
+                <div
+                  aria-label={en ? "Queued attachments" : "排队消息的附件"}
+                  className="pending-steer-attachments"
+                >
+                  {pendingSteer.attachments.map((attachment) => (
+                    <figure className={`is-${attachment.kind}`} key={attachment.id}>
+                      {attachment.previewUrl ? (
+                        <img alt={attachment.name} src={attachment.previewUrl} />
+                      ) : (
+                        <span className="pending-steer-attachment-icon">
+                          <i
+                            aria-hidden="true"
+                            className={
+                              attachment.kind === "document"
+                                ? "fa-regular fa-file-lines"
+                                : "fa-regular fa-file-code"
+                            }
+                          />
+                        </span>
+                      )}
+                      <figcaption title={attachment.name}>{attachment.name}</figcaption>
+                    </figure>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="pending-steer-actions">
               <button
                 aria-label={en ? "Steer" : "引导"}

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -147,6 +147,31 @@ type Project = { root: string; name: string; status: Status; error?: string; chi
 type Trace = { timestamp: number; method: string; phase: "request" | "response" | "notification" | "rejected"; elapsedMs?: number; error?: string; file?: string };
 type Change = { path: string; type: 1 | 2 | 3 };
 
+export function packageScriptForAction(
+  packageJson: unknown,
+  action: "build" | "run" | "test",
+): string | undefined {
+  if (!packageJson || typeof packageJson !== "object") return undefined;
+  const scripts = (packageJson as { scripts?: unknown }).scripts;
+  if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) return undefined;
+  const names = action === "run" ? ["start"] : [action];
+  return names.find((name) => {
+    const value = (scripts as Record<string, unknown>)[name];
+    return typeof value === "string" && value.trim().length > 0;
+  });
+}
+
+export function isolatedRuntimePath(
+  runtimeNode: string | undefined,
+  systemNpm: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const paths = platform === "win32" ? win32 : posix;
+  return [runtimeNode ? paths.dirname(runtimeNode) : undefined, systemNpm ? paths.dirname(systemNpm) : undefined]
+    .filter((value): value is string => Boolean(value))
+    .join(platform === "win32" ? ";" : ":");
+}
+
 export class TypeScriptService {
   private readonly projects = new Map<string, Project>();
   private readonly traces: Trace[] = [];
@@ -159,7 +184,7 @@ export class TypeScriptService {
   private readonly systemNode?: string;
   private readonly systemNpm?: string;
   private readonly debug: DebugSessionManager;
-  constructor(cachePath: string, emit: (event: Record<string, unknown>) => void, systemTools: Record<string, { command?: unknown }> = {}) { this.cachePath = cachePath; this.emit = emit; const node = typeof systemTools.node?.command === "string" ? systemTools.node.command : undefined; const npm = typeof systemTools.npm?.command === "string" ? systemTools.npm.command : undefined; this.systemNode = node && npm ? node : undefined; this.systemNpm = node && npm ? npm : undefined; this.debug = new DebugSessionManager((snapshot) => this.emit({ type: "language_pack_debug", snapshot }), () => { const root = this.toolchainRoot(); const command = this.nodeExecutable(root); const script = join(root, "js-debug", "src", "dapDebugServer.js"); if (!existsSync(command) || !existsSync(script)) throw new Error("JavaScript DAP adapter is unavailable. Prepare the Language Pack first."); const port = 40_000 + Math.floor(Math.random() * 20_000); return { adapter: "pwa-node", command, args: [script, String(port), "127.0.0.1"], env: this.environment(join(this.cachePath, "home")), transport: { kind: "tcp", host: "127.0.0.1", port } }; }); }
+  constructor(cachePath: string, emit: (event: Record<string, unknown>) => void, systemTools: Record<string, { command?: unknown }> = {}) { this.cachePath = cachePath; this.emit = emit; const node = typeof systemTools.node?.command === "string" ? systemTools.node.command : undefined; const npm = typeof systemTools.npm?.command === "string" ? systemTools.npm.command : undefined; this.systemNode = node && npm ? node : undefined; this.systemNpm = node && npm ? npm : undefined; this.debug = new DebugSessionManager((snapshot) => this.emit({ type: "language_pack_debug", snapshot }), () => { const root = this.toolchainRoot(); const command = this.nodeExecutable(root); const script = join(root, "js-debug", "src", "dapDebugServer.js"); if (!existsSync(command) || !existsSync(script)) throw new Error("JavaScript DAP adapter is unavailable. Prepare the Language Pack first."); const port = 40_000 + Math.floor(Math.random() * 20_000); return { adapter: "pwa-node", command, args: [script, String(port), "127.0.0.1"], env: this.environment(join(this.cachePath, "home"), command), transport: { kind: "tcp", host: "127.0.0.1", port } }; }); }
   private public(entry: Project) { return { root: entry.root, name: entry.name, status: entry.status, ...(entry.error ? { error: entry.error } : {}) }; }
   private publish(entry: Project) { this.emit({ type: "language_pack_project", project: this.public(entry) }); }
   private record(trace: Trace) { this.traces.push(trace); if (this.traces.length > 200) this.traces.splice(0, this.traces.length - 200); }
@@ -222,13 +247,29 @@ export class TypeScriptService {
   private async executeProjectAction(workspace: string, action: "build" | "run" | "test", input: Record<string, unknown>): Promise<Record<string, unknown>> {
     const toolchain = await this.managedToolchain(); const node = this.nodeExecutable(toolchain);
     const output = join(this.cachePath, "build", hash(workspace).slice(0, 16)); await mkdir(output, { recursive: true });
-    let args: string[];
-    if (action === "build") args = [join(toolchain, "packages", "node_modules", "typescript", "bin", "tsc"), "-p", workspace, "--rootDir", workspace, "--outDir", output, "--incremental", "--tsBuildInfoFile", join(output, "tsconfig.tsbuildinfo")];
-    else if (action === "test") args = ["--test", typeof input.file === "string" ? resolve(workspace, input.file) : workspace];
-    else { if (typeof input.file !== "string") throw new Error("run requires a workspace-relative file"); const file = resolve(workspace, input.file); if (!inside(workspace, file)) throw new Error("Run file escapes the workspace"); args = [file, ...(Array.isArray(input.args) ? input.args.filter((value): value is string => typeof value === "string") : [])]; }
+    const packagePath = join(workspace, "package.json");
+    const packageJson = existsSync(packagePath)
+      ? JSON.parse(await readFile(packagePath, "utf8")) as unknown
+      : undefined;
+    const packageScript = packageScriptForAction(packageJson, action);
+    let args: string[]; let cwd = output; let artifacts: string[] = [];
+    if (packageScript && !(action === "run" && typeof input.file === "string")) {
+      args = [this.npmCli(toolchain), "run", packageScript];
+      cwd = workspace;
+    } else if (action === "build") {
+      const config = ["tsconfig.json", "jsconfig.json"].find((name) => existsSync(join(workspace, name)));
+      if (!config) throw new Error("JavaScript package does not declare a 'build' script in package.json and has no tsconfig.json or jsconfig.json");
+      args = [join(toolchain, "packages", "node_modules", "typescript", "bin", "tsc"), "-p", join(workspace, config), "--outDir", output, "--incremental", "--tsBuildInfoFile", join(output, "tsconfig.tsbuildinfo")];
+      artifacts = [output];
+    } else if (action === "test") args = ["--test", typeof input.file === "string" ? resolve(workspace, input.file) : workspace];
+    else { if (typeof input.file !== "string") throw new Error("run requires a workspace-relative file or a package.json 'start' script"); const file = resolve(workspace, input.file); if (!inside(workspace, file)) throw new Error("Run file escapes the workspace"); args = [file, ...(Array.isArray(input.args) ? input.args.filter((value): value is string => typeof value === "string") : [])]; }
     const started = Date.now();
-    try { const result = await runProcess(node, args, { cwd: output, env: this.environment(join(this.cachePath, "home")), timeout: 300_000 }); return { code: 0, ...result, command: node, args, cwd: output, artifacts: action === "build" ? [output] : [], durationMs: Date.now() - started, cancelled: false }; }
-    catch (cause) { return { code: 1, stdout: "", stderr: cause instanceof Error ? cause.message : String(cause), command: node, args, cwd: output, artifacts: [], durationMs: Date.now() - started, cancelled: false }; }
+    try {
+      const result = await runProcess(node, args, { cwd, env: this.environment(join(this.cachePath, "home"), node), timeout: 300_000 });
+      if (action === "build" && packageScript) artifacts = ["dist", "build", "out"].map((name) => join(workspace, name)).filter(existsSync);
+      return { code: 0, ...result, command: node, args, cwd, artifacts, durationMs: Date.now() - started, cancelled: false };
+    }
+    catch (cause) { return { code: 1, stdout: "", stderr: cause instanceof Error ? cause.message : String(cause), command: node, args, cwd, artifacts: [], durationMs: Date.now() - started, cancelled: false }; }
   }
   async debugPrepare() { await this.managedToolchain(); }
   debugStatus(sessionId?: string) { return this.debug.status(sessionId); }
@@ -290,9 +331,21 @@ export class TypeScriptService {
       this.emit({ type: "language_pack_confirmation_request", requestId, title: "Download TypeScript/JavaScript tools", message: `Download pinned Node.js ${NODE_VERSION} LTS (${archive.asset}), then privately install typescript-language-server ${TYPESCRIPT_LANGUAGE_SERVER_VERSION} and TypeScript ${TYPESCRIPT_VERSION}? Files stay in the Agent K cache and lifecycle scripts are disabled.` });
     });
   }
-  private environment(home: string): NodeJS.ProcessEnv { const isolated = Object.fromEntries(Object.entries(process.env).filter(([key]) => !new Set(["PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR"]).has(key.toLocaleUpperCase("en-US")))); return { ...isolated, PATH: [this.systemNode ? dirname(this.systemNode) : undefined, this.systemNpm ? dirname(this.systemNpm) : undefined].filter(Boolean).join(process.platform === "win32" ? ";" : ":"), HOME: home, USERPROFILE: home, TMP: join(this.cachePath, "temp"), TEMP: join(this.cachePath, "temp"), TMPDIR: join(this.cachePath, "temp"), npm_config_cache: join(this.cachePath, "package-cache"), npm_config_audit: "false", npm_config_fund: "false", npm_config_ignore_scripts: "true", NODE_REPL_HISTORY: join(this.cachePath, "logs", "node_repl_history") }; }
+  private environment(home: string, runtimeNode = this.systemNode): NodeJS.ProcessEnv { const isolated = Object.fromEntries(Object.entries(process.env).filter(([key]) => !new Set(["PATH", "HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR"]).has(key.toLocaleUpperCase("en-US")))); return { ...isolated, PATH: isolatedRuntimePath(runtimeNode, this.systemNpm), HOME: home, USERPROFILE: home, TMP: join(this.cachePath, "temp"), TEMP: join(this.cachePath, "temp"), TMPDIR: join(this.cachePath, "temp"), npm_config_cache: join(this.cachePath, "package-cache"), npm_config_audit: "false", npm_config_fund: "false", npm_config_ignore_scripts: "true", NODE_REPL_HISTORY: join(this.cachePath, "logs", "node_repl_history") }; }
   private marker() { return `node=${NODE_VERSION}\nnode-source=${this.systemNode ? `system:${this.systemNode}` : "private"}\ntypescript-language-server=${TYPESCRIPT_LANGUAGE_SERVER_VERSION}\ntypescript=${TYPESCRIPT_VERSION}\njs-debug=${JS_DEBUG_VERSION}\nlock=${LOCKFILE_SHA256}\n`; }
   private nodeExecutable(root: string): string { return this.systemNode ?? join(root, nodeArchive(process.platform, process.arch)!.executable); }
+  private npmCli(root: string): string {
+    if (this.systemNpm) {
+      if (process.platform === "win32" && this.systemNpm.toLowerCase().endsWith(".cmd"))
+        return join(dirname(this.systemNpm), "node_modules", "npm", "bin", "npm-cli.js");
+      return this.systemNpm;
+    }
+    const archive = nodeArchive(process.platform, process.arch)!;
+    const nodeRoot = join(root, archive.topLevel);
+    return archive.platform === "win32"
+      ? join(nodeRoot, "node_modules", "npm", "bin", "npm-cli.js")
+      : join(nodeRoot, "lib", "node_modules", "npm", "bin", "npm-cli.js");
+  }
   private toolchainRoot(): string { return join(this.cachePath, "tools", process.platform, process.arch, `node-${NODE_VERSION}-tls-${TYPESCRIPT_LANGUAGE_SERVER_VERSION}-ts-${TYPESCRIPT_VERSION}-js-debug-${JS_DEBUG_VERSION}`); }
   private async managedToolchain(): Promise<string> {
     const archive = nodeArchive(process.platform, process.arch);
@@ -328,7 +381,7 @@ export class TypeScriptService {
     try {
       this.emit({ type: "language_pack_progress", stage: "preparing", detail: `Extracting ${archive.asset}` });
       const stagedNode = this.systemNode ?? await extractOfficialNodeArchive(archivePath, staging, archive, signal);
-      const env = this.environment(join(this.cachePath, "home"));
+      const env = this.environment(join(this.cachePath, "home"), stagedNode);
       const version = (await runProcess(stagedNode, ["--version"], { cwd: staging, env, signal, timeout: 30_000 })).stdout.trim();
       if (version !== `v${NODE_VERSION}`) throw new Error(`Extracted private Node version mismatch: expected v${NODE_VERSION}, received ${version || "no output"}`);
       const packageRoot = join(staging, "packages"); await mkdir(packageRoot, { recursive: true });
@@ -367,7 +420,7 @@ export class TypeScriptService {
     const node = this.nodeExecutable(toolchain); const cli = join(toolchain, "packages", "node_modules", "typescript-language-server", "lib", "cli.mjs"); const tsserver = join(toolchain, "packages", "node_modules", "typescript", "lib", "tsserver.js");
     if (![node, cli, tsserver].every(existsSync)) throw new Error("Completed private TypeScript toolchain is incomplete");
     entry.status = "starting"; this.publish(entry);
-    const env = this.environment(join(this.cachePath, "home"));
+    const env = this.environment(join(this.cachePath, "home"), node);
     const child = spawn(node, [cli, "--stdio"], { cwd: entry.root, env, windowsHide: true, stdio: "pipe" }); entry.child = child;
     let buffer = Buffer.alloc(0); const fail = (cause: unknown) => { const error = cause instanceof Error ? cause : new Error(String(cause)); if (entry.status !== "stopped") { entry.status = "failed"; entry.error = error.message; this.publish(entry); } for (const pending of entry.pending.values()) { clearTimeout(pending.timer); pending.reject(error); } entry.pending.clear(); };
     child.stderr.on("data", (data: Buffer) => { entry.stderr = `${entry.stderr}${data}`.slice(-16_384); void writeFile(join(this.cachePath, "logs", `${hash(entry.root).slice(0, 16)}.log`), entry.stderr, "utf8"); });

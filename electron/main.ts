@@ -925,7 +925,10 @@ async function start(): Promise<void> {
       const response = await net.fetch(pathToFileURL(path).toString());
       const headers = new Headers(response.headers);
       headers.set("Access-Control-Allow-Origin", "*");
-      headers.set("Cache-Control", "public, max-age=31536000, immutable");
+      headers.set(
+        "Cache-Control",
+        app.isPackaged ? "public, max-age=31536000, immutable" : "no-store",
+      );
       headers.set(
         "Content-Type",
         kind === "style"

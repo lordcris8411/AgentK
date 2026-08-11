@@ -346,8 +346,16 @@ void (async () => {
           const error = locale === "en-US"
             ? `The Editor plugin failed: ${detail}`
             : `编辑器插件运行失败：${detail}`;
+          const agentActions = [...pendingActions.current.values()];
+          pendingActions.current.clear();
+          for (const pending of agentActions) {
+            window.clearTimeout(pending.timeout);
+            pending.respond({ ok: false, error });
+          }
           setLoadError(error);
-          onError(error);
+          // Agent-requested utilities receive the failure through their tool
+          // result. Only an unsolicited editor crash belongs in global UI.
+          if (!agentActions.length) onError(error);
           return;
         }
         if (message.nonce !== nonceRef.current) return;

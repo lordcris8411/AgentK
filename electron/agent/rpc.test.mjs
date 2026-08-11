@@ -87,6 +87,72 @@ test("workspace-backed commands connect Pi when no runtime is active", async () 
   }
 });
 
+test("standby Pi maintenance starts at most one cold runtime at a time", async () => {
+  const pool = new RpcPool({
+    appDataPath: "/tmp/agent-k-rpc-test",
+    bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
+    bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
+    firstPartyEditorExtensions: [],
+    firstPartyLanguagePackSkills: [],
+    launch: { executable: "pi", args: [] },
+    minimum: 4,
+    permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
+    emit() {},
+  });
+  let release;
+  const gate = new Promise((resolveGate) => { release = resolveGate; });
+  let starts = 0;
+  pool.poolCwd = "/tmp/agent-k-rpc-test/workspace";
+  pool.backgroundWarmupAfter = 0;
+  pool.spawn = async () => {
+    starts += 1;
+    await gate;
+    return `runtime-${starts}`;
+  };
+  try {
+    const first = pool.maintain();
+    const overlapping = pool.maintain();
+    await flushLines();
+    assert.equal(starts, 1);
+    release();
+    await Promise.all([first, overlapping]);
+  } finally {
+    pool.shutdown();
+  }
+});
+
+test("resizing the Pi pool fills the requested capacity sequentially", async () => {
+  const pool = new RpcPool({
+    appDataPath: "/tmp/agent-k-rpc-test",
+    bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
+    bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
+    firstPartyEditorExtensions: [],
+    firstPartyLanguagePackSkills: [],
+    launch: { executable: "pi", args: [] },
+    minimum: 2,
+    permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
+    emit() {},
+  });
+  let activeStarts = 0;
+  let maximumConcurrentStarts = 0;
+  let starts = 0;
+  pool.spawn = async () => {
+    starts += 1;
+    activeStarts += 1;
+    maximumConcurrentStarts = Math.max(maximumConcurrentStarts, activeStarts);
+    await flushLines();
+    activeStarts -= 1;
+    return `runtime-${starts}`;
+  };
+  try {
+    await pool.resize(4);
+    assert.equal(starts, 4);
+    assert.equal(maximumConcurrentStarts, 1);
+  } finally {
+    pool.shutdown();
+  }
+});
+
 test("configuration reload replaces an invalid Pi session instead of failing the save", async () => {
   const events = [];
   let oldStopped = false;

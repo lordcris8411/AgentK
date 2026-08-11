@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -207,4 +207,23 @@ test("serves versioned Editor dependencies through cached internal URLs", async 
   } finally {
     await rm(root, { force: true, recursive: true });
   }
+});
+
+test("keeps JavaScript and TypeScript semantics in the Language Pack", async () => {
+  const dependencySource = await readFile(
+    new URL("../editor/dependencies/monaco-editor@0.55.1/dependency.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    dependencySource,
+    /basic-languages\/javascript\/javascript\.contribution/,
+  );
+  assert.match(
+    dependencySource,
+    /basic-languages\/typescript\/typescript\.contribution/,
+  );
+  assert.doesNotMatch(
+    dependencySource,
+    /language\/typescript\/(?:monaco\.contribution|ts\.worker)/,
+  );
 });

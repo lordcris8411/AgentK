@@ -25,6 +25,7 @@ import {
 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { shell } from "electron";
+import { activeBranchMessages } from "./session-history.js";
 import type { FileEntry, JsonObject, ProjectSummary, SessionSummary } from "./types.js";
 import {
   asArray,
@@ -346,16 +347,16 @@ export class FileService {
     const target = await realpath(path);
     if (!isPathInside(root, target) || extname(target) !== ".jsonl")
       throw new Error("Session path is outside Pi's session directory");
-    return (await readFile(target, "utf8"))
+    const entries = (await readFile(target, "utf8"))
       .split(/\r?\n/)
       .flatMap((line) => {
         try {
-          const entry = asObject(JSON.parse(line));
-          return entry.type === "message" ? [asObject(entry.message)] : [];
+          return [asObject(JSON.parse(line))];
         } catch {
           return [];
         }
       });
+    return activeBranchMessages(entries);
   }
 
   async hideSession(path: string, hidden: boolean): Promise<void> {

@@ -260,12 +260,12 @@ export function ProjectConsole({ root, onError, docked = false }: { root?: strin
 
   useEffect(() => {
     const runLanguageProjectAction = (event: Event) => {
-      const detail = (event as CustomEvent<{ action?: string; arguments?: unknown[]; path?: string }>).detail;
+      const detail = (event as CustomEvent<{ action?: string; arguments?: Record<string, unknown>; path?: string }>).detail;
       const match = /^language-pack:([a-z0-9.-]+):([a-z0-9.-]+)$/i.exec(detail?.action ?? "");
       if (!match || typeof detail?.path !== "string") return;
       const activeRoot = rootRef.current;
-      const terminalId = terminalIdRef.current;
-      if (!activeRoot || !terminalId) {
+      const terminal = terminalRef.current;
+      if (!activeRoot || !terminal) {
         onErrorRef.current(
           enRef.current
             ? "The project console is not ready"
@@ -274,17 +274,29 @@ export function ProjectConsole({ root, onError, docked = false }: { root?: strin
         return;
       }
       setCollapsed(false);
-      void desktop.languagePackCall(match[1], match[2], activeRoot, detail.path, ...(Array.isArray(detail.arguments) ? detail.arguments : []))
-        .then((command) => {
-          if (typeof command !== "string") throw new Error("Language extension did not return terminal input");
-          return desktop.writeProjectConsole(terminalId, command);
+      terminal.write(`\r\n\x1b[90m${enRef.current ? "Running" : "正在执行"} ${match[2]}…\x1b[0m\r\n`);
+      void desktop.languagePackInvoke(match[1], match[2], {
+        ...(detail.arguments ?? {}),
+        workspace: detail.path,
+      }, activeRoot)
+        .then((result) => {
+          if (rootRef.current !== activeRoot || terminalRef.current !== terminal) return;
+          const value = result && typeof result === "object" ? result as Record<string, unknown> : {};
+          const write = (text: unknown) => {
+            if (typeof text === "string" && text) terminal.write(text.replace(/\r?\n/g, "\r\n"));
+          };
+          write(value.stdout);
+          write(value.stderr);
+          const code = typeof value.code === "number" ? value.code : undefined;
+          terminal.write(`\r\n\x1b[90m[${enRef.current ? "action finished" : "操作已完成"}${code === undefined ? "" : `: ${code}`}]\x1b[0m\r\n`);
+          terminal.focus();
         })
-        .then(() => terminalRef.current?.focus())
-        .catch((cause) =>
-          onErrorRef.current(
+        .catch((cause) => {
+          if (rootRef.current === activeRoot)
+            onErrorRef.current(
             `${enRef.current ? "Project action failed" : "工程操作失败"}：${String(cause)}`,
-          ),
-        );
+            );
+        });
     };
     window.addEventListener("agent-k-file-format-action", runLanguageProjectAction);
     return () =>

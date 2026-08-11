@@ -1,6 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import { defineEditor, type EditorTheme, type EditorThemeConfig } from "../../sdk";
 import "./editor.css";
+import { boundedLinePrefix } from "./model-position";
 
 const monaco = (globalThis as typeof globalThis & {
   AgentKEditorDependencies: { monaco: typeof Monaco };
@@ -714,7 +715,10 @@ defineEditor((host, initial) => {
     if (languageClient) {
       syncDocument();
       const cursor = editor.getPosition();
-      const prefix = cursor ? model.getLineContent(cursor.lineNumber).slice(0, cursor.column - 1) : "";
+      // Monaco emits the content-change event while executeCommands is still
+      // updating the selection. Deleting the last line can therefore leave
+      // getPosition() pointing one line past the new model for this callback.
+      const prefix = boundedLinePrefix(model, cursor);
       if (/(?:->|\.|::)$/.test(prefix)) {
         if (suggestTimer !== undefined) window.clearTimeout(suggestTimer);
         const version = model.getVersionId();

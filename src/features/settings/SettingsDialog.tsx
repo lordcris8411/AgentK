@@ -1325,7 +1325,7 @@ export function SettingsDialog({
             )}
             {page === "languagePacks" && (
               <>
-                <div className="settings-title-row"><h2>{t("languagePacks")}</h2><div className="settings-title-actions"><button disabled={busy || resourcesLocked} onClick={() => setExtensionPicker("language")} type="button"><i className="fa-solid fa-box-open" /> 安装 Language Pack</button></div></div>
+                <div className="settings-title-row"><h2>{t("languagePacks")}</h2><div className="settings-title-actions language-pack-install-action"><button disabled={busy || resourcesLocked} onClick={() => setExtensionPicker("language")} type="button"><i className="fa-solid fa-box-open" /> 安装 Language Pack</button></div></div>
                 <p className="settings-description">每个包原子提供 Editor、Skill、语义、工具链、编译、运行、测试和调试能力；启停无需重启 Agent K。</p>
                 <div className="resource-list editor-language-list">
                   {languagePacks.map((plugin) => <article className="resource-card" key={plugin.id}>

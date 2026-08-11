@@ -20,6 +20,7 @@ import { useExtensionUi } from "./features/extensions/ExtensionUiContext";
 import { modelIsEnabled } from "./lib/modelAvailability";
 import { shutdownRuntime } from "./lib/runtimeLifecycle";
 import { AgentKLogo } from "./components/AgentKLogo";
+import { activeBranchMessages } from "./features/conversation/sessionHistory";
 
 const DRAFT_SESSION_PATH = "__new__";
 
@@ -297,14 +298,16 @@ export function App() {
         const [loaded, persistedSettings] = await Promise.all([
           desktop.listProjects(),
           desktop.getSettings(),
-          document.fonts.ready,
         ]);
         if (cancelled) return;
         setProjects(loaded);
         const defaultProject =
           loaded.find((project) => !project.isHome) ?? loaded[0];
         const initialCwd = defaultProject?.cwd;
-        const warmWorkerCount = persistedSettings.workerPoolSize;
+        // Only the first usable Pi runtime belongs on the critical startup
+        // path. RpcPool fills the configured standby capacity in the
+        // background, one process at a time, after the UI is ready.
+        const warmWorkerCount = initialCwd ? 1 : 0;
         const startupTheme =
           persistedSettings.theme === "system"
             ? window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -312,17 +315,16 @@ export function App() {
               : "light"
             : persistedSettings.theme;
         const startupTotal = warmWorkerCount + 1;
-        const editorMessage = en
-          ? "Configuring Editor plugins…"
-          : "配置编辑器插件…";
-        setBootMessage(editorMessage);
+        const workspaceMessage = en
+          ? "Preparing workspace…"
+          : "正在准备工作区…";
+        setBootMessage(workspaceMessage);
         await desktop.updateStartupProgress(
-          editorMessage,
+          workspaceMessage,
           0,
           startupTotal,
           startupTheme,
         );
-        await desktop.firstPartyFileFormatPlugins();
         // The main window stays hidden behind the native startup window.
         // Chromium may stop delivering animation frames to hidden windows, so
         // startup must never wait for requestAnimationFrame here.
@@ -398,6 +400,8 @@ export function App() {
       } finally {
         if (!cancelled) {
           await desktop.finishStartup().catch(() => undefined);
+          document.documentElement.dataset.agentKStartupReady = "true";
+          window.dispatchEvent(new Event("agent-k-startup-ready"));
           setBootMessage(undefined);
           setBooting(false);
         }
@@ -434,15 +438,19 @@ export function App() {
       );
       runtimeIds.current.set(session.path, runtimeId);
       const raw = (await desktop.command(
-        { type: "get_messages" },
+        { type: "get_entries" },
         runtimeId,
       )) as {
-        messages?: Array<Record<string, unknown>>;
+        entries?: Array<Record<string, unknown>>;
+        leafId?: string | null;
       };
       if (version !== selectionVersion.current) return;
       const connectedSession = { ...session, runtimeId };
       activeRef.current = connectedSession;
-      setHistorySeed({ path: session.path, messages: raw.messages ?? [] });
+      setHistorySeed({
+        path: session.path,
+        messages: activeBranchMessages(raw.entries ?? [], raw.leafId),
+      });
       setActive(connectedSession);
       setActiveRuntimeId(runtimeId);
       setWorkspaceCwd(session.cwd);
@@ -934,8 +942,9 @@ export function App() {
           sessionFile?: string;
           sessionId?: string;
         }>,
-        desktop.command({ type: "get_messages" }, runtimeId) as Promise<{
-          messages?: Array<Record<string, unknown>>;
+        desktop.command({ type: "get_entries" }, runtimeId) as Promise<{
+          entries?: Array<Record<string, unknown>>;
+          leafId?: string | null;
         }>,
       ]);
       const refreshed = await reload();
@@ -964,7 +973,10 @@ export function App() {
       activeRef.current = connectedNext;
       setActive(connectedNext);
       setActiveRuntimeId(runtimeId);
-      setHistorySeed({ path: next.path, messages: raw.messages ?? [] });
+      setHistorySeed({
+        path: next.path,
+        messages: activeBranchMessages(raw.entries ?? [], raw.leafId),
+      });
       setWorkspaceCwd(next.cwd);
       setReadyPath(next.path);
     } catch (cause) {

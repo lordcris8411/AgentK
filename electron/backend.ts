@@ -158,6 +158,12 @@ export class DesktopBackend {
     this.firstPartyEditorPlugins = await loadFirstPartyFileFormatPlugins(
       this.options.firstPartyEditorExtensionsSource,
     );
+    this.options.updateSplash(
+      startupText("Preparing desktop services…", "正在准备桌面服务…"),
+      0,
+      1,
+      startupTheme,
+    );
     this.piLaunch = resolvePiLaunch(
       settings.piExecutable,
       this.options.bundledPiCli,

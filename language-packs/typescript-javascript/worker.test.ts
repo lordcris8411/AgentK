@@ -7,7 +7,7 @@ import { isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import test from "node:test";
-import { extractOfficialNodeArchive, JS_DEBUG_VERSION, NODE_VERSION, nodeArchive, runProcess, systemTarExecutable, TYPESCRIPT_LANGUAGE_SERVER_VERSION, TYPESCRIPT_VERSION } from "./worker.ts";
+import { extractOfficialNodeArchive, isolatedRuntimePath, JS_DEBUG_VERSION, NODE_VERSION, nodeArchive, packageScriptForAction, runProcess, systemTarExecutable, TYPESCRIPT_LANGUAGE_SERVER_VERSION, TYPESCRIPT_VERSION } from "./worker.ts";
 
 async function download(url: string, path: string): Promise<void> {
   const response = await fetch(url);
@@ -31,6 +31,26 @@ test("resolves archive extraction through an absolute declared platform tool", (
   assert.equal(isAbsolute(systemTarExecutable()), true);
 });
 
+test("routes package lifecycle actions through declared npm scripts", () => {
+  const packageJson = { scripts: { build: "vite build", start: "vite", test: "node --test" } };
+  assert.equal(packageScriptForAction(packageJson, "build"), "build");
+  assert.equal(packageScriptForAction(packageJson, "run"), "start");
+  assert.equal(packageScriptForAction(packageJson, "test"), "test");
+  assert.equal(packageScriptForAction({ scripts: { build: "" } }, "build"), undefined);
+  assert.equal(packageScriptForAction({}, "build"), undefined);
+});
+
+test("exposes only the selected Node and npm directories to package scripts", () => {
+  assert.equal(
+    isolatedRuntimePath("C:\\private-node\\node.exe", undefined, "win32"),
+    "C:\\private-node",
+  );
+  assert.equal(
+    isolatedRuntimePath("/cache/node/bin/node", "/usr/bin/npm", "linux"),
+    "/cache/node/bin:/usr/bin",
+  );
+});
+
 // This intentionally exercises cold downloads and the real extractors for both
 // official layouts. Set AGENT_K_SKIP_NODE_ARCHIVE_SMOKE=1 only in an explicitly
 // offline environment; release verification runs it without that override.
@@ -52,10 +72,11 @@ test("cold-extracts both official Node archive layouts and executes the host pri
 });
 
 test("manifest routes TSX/JSX and declares the pinned JavaScript DAP adapter", async () => {
-  const manifest = JSON.parse(await readFile(new URL("./agent-k.language-pack.json", import.meta.url), "utf8")) as { debugServer?: { adapters?: Array<{ command?: string }> }; languages: string[]; projectMarkers: string[]; toolchains?: Array<{ id?: string; fallback?: { version?: string } }> };
+  const manifest = JSON.parse(await readFile(new URL("./agent-k.language-pack.json", import.meta.url), "utf8")) as { debugServer?: { adapters?: Array<{ command?: string }> }; languages: string[]; permissions?: { workspaceWrite?: boolean }; projectMarkers: string[]; toolchains?: Array<{ id?: string; fallback?: { version?: string } }> };
   assert.deepEqual(manifest.languages, ["typescript", "typescriptreact", "javascript", "javascriptreact"]);
   assert.deepEqual(manifest.projectMarkers, ["tsconfig.json", "jsconfig.json", "package.json"]);
   assert.equal(manifest.debugServer?.adapters?.[0]?.command, "js-debug");
+  assert.equal(manifest.permissions?.workspaceWrite, true);
   assert.equal(manifest.toolchains?.find(({ id }) => id === "js-debug")?.fallback?.version, JS_DEBUG_VERSION);
 });
 
