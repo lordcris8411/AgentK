@@ -1,4 +1,4 @@
 interface:
   display_name: "Create Agent K Extensions"
-  short_description: "Create Editor and language extensions"
-  default_prompt: "Create a validated Agent K Editor extension, language extension, or related Skill."
+  short_description: "Create validated non-language Editor extensions"
+  default_prompt: "Use $create-agent-k-extensions to create a validated Agent K Editor extension."

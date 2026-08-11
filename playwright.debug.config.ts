@@ -5,6 +5,6 @@ export default defineConfig({
   reporter: "line",
   testDir: "./test/e2e",
   testMatch: "debug-tools.spec.ts",
-  timeout: 45_000,
+  timeout: 60_000,
   workers: 1,
 });

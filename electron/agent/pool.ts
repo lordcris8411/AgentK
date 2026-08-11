@@ -27,7 +27,7 @@ export interface RpcPoolOptions {
   bundledExtensionsDirectory: string;
   bundledSkillsDirectory: string;
   firstPartyEditorExtensions: Array<{ directory: string; id: string }>;
-  firstPartyLanguageServerSkills: Array<{ directory: string; id: string }>;
+  firstPartyLanguagePackSkills: Array<{ directory: string; id: string }>;
   launch: PiLaunch;
   minimum: number;
   permissionExtensionSource: string;
@@ -35,6 +35,7 @@ export interface RpcPoolOptions {
 }
 
 export class RpcPool {
+  private static readonly STARTUP_REQUEST_TIMEOUT = 90_000;
   private readonly options: RpcPoolOptions;
   private readonly workers = new Map<string, RpcBridge>();
   private activeRuntime?: string;
@@ -42,6 +43,8 @@ export class RpcPool {
   private minimum: number;
   private starting = 0;
   private poolCwd?: string;
+  private maintaining = false;
+  private backgroundWarmupAfter = 0;
   private readonly reaper: NodeJS.Timeout;
 
   constructor(options: RpcPoolOptions) {
@@ -92,17 +95,22 @@ export class RpcPool {
         runtimeId,
       });
       try {
-        await this.requestData(bridge, { type: "get_state" });
+        await this.requestData(bridge, { type: "get_state" }, RpcPool.STARTUP_REQUEST_TIMEOUT);
         await this.requestData(bridge, {
           type: "set_auto_compaction",
           enabled: this.autoCompactionEnabled,
-        });
+        }, RpcPool.STARTUP_REQUEST_TIMEOUT);
       } catch (cause) {
         bridge.stop();
         throw new Error(`Pi RPC did not become ready: ${errorMessage(cause)}`);
       }
+      const firstWorker = this.workers.size === 0;
       this.workers.set(runtimeId, bridge);
       this.poolCwd = cwd;
+      // Let the first usable session reach the UI before spending CPU and I/O
+      // on standby runtimes. This is especially important on Windows where
+      // several cold Pi processes contend in module and antivirus scanning.
+      if (firstWorker) this.backgroundWarmupAfter = Date.now() + 10_000;
       return runtimeId;
     } finally {
       this.starting -= 1;
@@ -117,7 +125,11 @@ export class RpcPool {
     const missing = Math.max(0, size - this.workers.size - this.starting);
     if (missing > 0) {
       const cwd = this.poolCwd ?? homeDirectory();
-      await Promise.all(Array.from({ length: missing }, () => this.spawn(cwd)));
+      this.backgroundWarmupAfter = 0;
+      // A settings change still resolves only after the requested capacity is
+      // present, but starts each cold runtime sequentially to avoid the same
+      // Windows startup contention as application boot.
+      for (let index = 0; index < missing; index += 1) await this.spawn(cwd);
     }
     return this.status();
   }
@@ -149,6 +161,10 @@ export class RpcPool {
       throw failure.reason;
     }
     this.autoCompactionEnabled = enabled;
+  }
+
+  setLanguagePackSkills(skills: Array<{ directory: string; id: string }>): void {
+    this.options.firstPartyLanguagePackSkills.splice(0, this.options.firstPartyLanguagePackSkills.length, ...skills);
   }
 
   async connect(
@@ -413,8 +429,9 @@ export class RpcPool {
   private async requestData(
     bridge: RpcBridge,
     command: JsonObject,
+    timeoutOverride?: number,
   ): Promise<unknown> {
-    const response = await bridge.request(command);
+    const response = await bridge.request(command, timeoutOverride);
     if (response.success === false)
       throw new Error(asString(response.error) ?? "Pi RPC error");
     return response.data ?? null;
@@ -459,15 +476,16 @@ export class RpcPool {
   }
 
   private async maintain(): Promise<void> {
-    this.reap(false);
-    if (!this.poolCwd) return;
-    const missing = Math.max(
-      0,
-      this.minimum - this.workers.size - this.starting,
-    );
-    await Promise.allSettled(
-      Array.from({ length: missing }, () => this.spawn(this.poolCwd as string)),
-    );
+    if (this.maintaining) return;
+    this.maintaining = true;
+    try {
+      this.reap(false);
+      if (!this.poolCwd || this.starting > 0 || Date.now() < this.backgroundWarmupAfter) return;
+      const missing = Math.max(0, this.minimum - this.workers.size);
+      if (missing > 0) await this.spawn(this.poolCwd);
+    } finally {
+      this.maintaining = false;
+    }
   }
 }
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Pi Skill"
+  short_description: "Create reliable, tested, callable Pi Skills"
+  default_prompt: "Use $create-pi-skill to create a reusable Pi Skill with a documented and tested invocation contract."

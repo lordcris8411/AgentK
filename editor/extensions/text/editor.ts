@@ -1,6 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import { defineEditor, type EditorTheme, type EditorThemeConfig } from "../../sdk";
 import "./editor.css";
+import { boundedLinePrefix } from "./model-position";
 
 const monaco = (globalThis as typeof globalThis & {
   AgentKEditorDependencies: { monaco: typeof Monaco };
@@ -343,21 +344,42 @@ defineEditor((host, initial) => {
     host.toggleBreakpoint(event.target.position.lineNumber);
   });
   const cpp = initial.language === "cpp";
-  const languageStatus = cpp ? globalThis.document.createElement("div") : undefined;
+  const languageClient = new Set(["cpp", "csharp", "typescript", "typescriptreact", "javascript", "javascriptreact"]).has(initial.language);
+  const languageStatus = languageClient ? globalThis.document.createElement("div") : undefined;
   if (languageStatus) {
     languageStatus.className = "agent-k-cpp-language-status";
     languageStatus.dataset.theme = initial.theme;
     const spinner = globalThis.document.createElement("span");
     spinner.className = "agent-k-cpp-language-spinner";
     const label = globalThis.document.createElement("span");
-    label.textContent = initial.locale === "en-US" ? "Preparing C++ analysis…" : "正在准备 C++ 语义分析…";
+    const displayLanguage = cpp ? "C++" : initial.language;
+    label.textContent = initial.locale === "en-US" ? `Preparing ${displayLanguage} analysis…` : `正在准备 ${displayLanguage} 语义分析…`;
     languageStatus.append(spinner, label);
     host.root.append(languageStatus);
   }
   const hideLanguageStatus = () => { if (languageStatus) languageStatus.hidden = true; };
   const showLanguageStatus = () => { if (languageStatus) languageStatus.hidden = false; };
+  const languageResult = languageClient ? globalThis.document.createElement("output") : undefined;
+  if (languageResult) {
+    languageResult.className = "agent-k-language-result";
+    languageResult.hidden = true;
+    languageResult.setAttribute("aria-live", "polite");
+    host.root.append(languageResult);
+  }
+  const showLanguageResult = (method: string, result: unknown, error?: unknown) => {
+    if (!languageResult) return;
+    const record = error === undefined ? { method, result } : { error: String(error), method };
+    languageResult.dataset.languageOperationMethod = method;
+    languageResult.dataset.languageOperationStatus = error === undefined ? "done" : "error";
+    languageResult.dataset.languageOperationResult = JSON.stringify(record);
+    const summary = error === undefined ? JSON.stringify(result) : "";
+    languageResult.textContent = error === undefined
+      ? (initial.locale === "en-US" ? `${method} completed: ${summary.slice(0, 400)}` : `${method} 已完成：${summary.slice(0, 400)}`)
+      : (initial.locale === "en-US" ? `${method} failed: ${String(error)}` : `${method} 失败：${String(error)}`);
+    languageResult.hidden = false;
+  };
   const position = (value: Monaco.Position) => ({ line: value.lineNumber - 1, character: value.column - 1 });
-  const document = () => ({ uri: model.uri.toString(), languageId: "cpp", version: model.getVersionId(), text: model.getValue() });
+  const document = () => ({ uri: model.uri.toString(), languageId: initial.language, version: model.getVersionId(), text: model.getValue() });
   let languageSync: Promise<void> = Promise.resolve();
   let cppDocumentOpened = false;
   const semanticChangeListeners = new Set<(event: void) => unknown>();
@@ -365,7 +387,7 @@ defineEditor((host, initial) => {
     for (const listener of semanticChangeListeners) listener(undefined);
   };
   const openDocument = () => {
-    if (!cpp) return languageSync;
+    if (!languageClient) return languageSync;
     const openingDocument = document();
     showLanguageStatus();
     languageSync = languageSync.catch(() => undefined).then(() => host.languageRequest("textDocument/didOpen", { textDocument: openingDocument })
@@ -378,7 +400,7 @@ defineEditor((host, initial) => {
     return languageSync;
   };
   const syncDocument = () => {
-    if (!cpp) return languageSync;
+    if (!languageClient) return languageSync;
     // Capture the exact edit snapshot now. Reading Monaco only when this
     // queued operation eventually runs makes rapid edits send the same latest
     // version repeatedly, so clangd and completion positions can diverge.
@@ -407,7 +429,7 @@ defineEditor((host, initial) => {
       const severity = item.severity === 1 ? monaco.MarkerSeverity.Error : item.severity === 2 ? monaco.MarkerSeverity.Warning : item.severity === 3 ? monaco.MarkerSeverity.Info : monaco.MarkerSeverity.Hint;
       return [{ endColumn, endLineNumber: end.line + 1, message: item.message, severity, startColumn, startLineNumber: start.line + 1 }];
     });
-    monaco.editor.setModelMarkers(model, "clangd", markers);
+    monaco.editor.setModelMarkers(model, "agent-k-language-service", markers);
   };
   const sanitizeSemanticTokens = (data: number[]): number[] => {
     let inputCharacter = 0; let inputLine = 0; let outputCharacter = 0; let outputLine = 0;
@@ -448,15 +470,15 @@ defineEditor((host, initial) => {
       return typeof uri === "string" && range ? [{ uri, range }] : [];
     });
   };
-  if (cpp) void openDocument();
+  if (languageClient) void openDocument();
   let completion: { dispose(): void } | undefined;
   let hover: { dispose(): void } | undefined;
   let semantic: { dispose(): void } | undefined;
-  if (cpp) {
+  if (languageClient) {
     // Language-service integrations are optional. A Monaco API mismatch or a
     // failed provider must never prevent the underlying C++ file from opening.
     try {
-      completion = monaco.languages.registerCompletionItemProvider("cpp", { triggerCharacters: [".", ">", ":"], provideCompletionItems: async (requestedModel, at, context, token) => {
+      completion = monaco.languages.registerCompletionItemProvider(initial.language, { triggerCharacters: [".", ">", ":"], provideCompletionItems: async (requestedModel, at, context, token) => {
         try {
           if (requestedModel !== model) return { suggestions: [] };
           const requestedVersion = model.getVersionId();
@@ -519,7 +541,7 @@ defineEditor((host, initial) => {
           return { suggestions: [] };
         }
       } });
-      hover = monaco.languages.registerHoverProvider("cpp", { provideHover: async (_, at) => {
+      hover = monaco.languages.registerHoverProvider(initial.language, { provideHover: async (_, at) => {
         try {
           const value = await host.languageRequest("textDocument/hover", { textDocument: { uri: model.uri.toString() }, position: position(at) }) as { contents?: unknown }; if (!value?.contents) return null;
           const contents = hoverMarkdown(value.contents); return contents.length ? { contents } : null;
@@ -527,7 +549,7 @@ defineEditor((host, initial) => {
           return null;
         }
       } });
-      semantic = monaco.languages.registerDocumentSemanticTokensProvider("cpp", {
+      if (cpp) semantic = monaco.languages.registerDocumentSemanticTokensProvider(initial.language, {
         onDidChange: (listener: (event: void) => unknown, thisArg?: unknown) => {
           const subscribed = thisArg === undefined
             ? listener
@@ -560,7 +582,7 @@ defineEditor((host, initial) => {
         releaseDocumentSemanticTokens: () => undefined,
       });
     } catch (cause) {
-      host.reportError(cause instanceof Error ? `C++ language service unavailable: ${cause.message}` : "C++ language service unavailable");
+      host.reportError(cause instanceof Error ? `${initial.language} language service unavailable: ${cause.message}` : `${initial.language} language service unavailable`);
     }
   }
   let saved = initial.content;
@@ -570,13 +592,13 @@ defineEditor((host, initial) => {
   let layoutWidth = 0;
   const definitionLink = editor.createDecorationsCollection();
   const definitionHover = editor.onMouseMove((event) => {
-    if (!cpp || !(event.event.ctrlKey || event.event.metaKey) || !event.target.position) { definitionLink.clear(); return; }
+    if (!languageClient || !(event.event.ctrlKey || event.event.metaKey) || !event.target.position) { definitionLink.clear(); return; }
     const word = model.getWordAtPosition(event.target.position);
     if (!word) { definitionLink.clear(); return; }
     definitionLink.set([{ range: new monaco.Range(event.target.position.lineNumber, word.startColumn, event.target.position.lineNumber, word.endColumn), options: { inlineClassName: "agent-k-definition-link" } }]);
   });
   const definitionClick = editor.onMouseDown((event) => {
-    if (!cpp || !(event.event.ctrlKey || event.event.metaKey) || !event.target.position) return;
+    if (!languageClient || !(event.event.ctrlKey || event.event.metaKey) || !event.target.position) return;
     void openFirstLocation("textDocument/definition", event.target.position);
   });
   const openFirstLocation = async (method: "textDocument/declaration" | "textDocument/definition", at: Monaco.Position) => {
@@ -679,7 +701,7 @@ defineEditor((host, initial) => {
   const languageFocus = editor.onDidFocusEditorText(() => {
     // A tab can outlive an unload/reload or be opened before the worker is
     // ready. Retry didOpen only until clangd confirms it accepted the write.
-    if (cpp && !cppDocumentOpened) void openDocument();
+    if (languageClient && !cppDocumentOpened) void openDocument();
   });
   let contextLine: number | undefined;
   let contextPosition: Monaco.Position | undefined;
@@ -690,10 +712,13 @@ defineEditor((host, initial) => {
     host.reportDirty(content !== saved);
     if (contentTimer !== undefined) window.clearTimeout(contentTimer);
     contentTimer = window.setTimeout(() => host.updateContent(model.getValue()), 350);
-    if (cpp) {
+    if (languageClient) {
       syncDocument();
       const cursor = editor.getPosition();
-      const prefix = cursor ? model.getLineContent(cursor.lineNumber).slice(0, cursor.column - 1) : "";
+      // Monaco emits the content-change event while executeCommands is still
+      // updating the selection. Deleting the last line can therefore leave
+      // getPosition() pointing one line past the new model for this callback.
+      const prefix = boundedLinePrefix(model, cursor);
       if (/(?:->|\.|::)$/.test(prefix)) {
         if (suggestTimer !== undefined) window.clearTimeout(suggestTimer);
         const version = model.getVersionId();
@@ -733,7 +758,7 @@ defineEditor((host, initial) => {
     });
     // cppDocumentOpened is true only after the language worker accepted
     // didOpen, which also proves that this file belongs to a loaded project.
-    if (cpp && cppDocumentOpened && at) {
+    if (languageClient && cppDocumentOpened && at) {
       addContextAction(initial.locale === "en-US" ? "Go to Declaration" : "跳转到声明", () => openFirstLocation("textDocument/declaration", at));
       addContextAction(initial.locale === "en-US" ? "Go to Definition" : "跳转到定义", () => openFirstLocation("textDocument/definition", at));
       addContextAction(initial.locale === "en-US" ? "Find All References" : "查找所有引用", () => showReferences(at));
@@ -815,7 +840,8 @@ defineEditor((host, initial) => {
       languageFocus.dispose(); referenceBlur.dispose();
       hideReferences(); referencePanel.remove();
       languageStatus?.remove();
-      if (cpp) void host.languageRequest("textDocument/didClose", { textDocument: { uri: model.uri.toString() } }).catch(() => undefined);
+      languageResult?.remove();
+      if (languageClient) void host.languageRequest("textDocument/didClose", { textDocument: { uri: model.uri.toString() } }).catch(() => undefined);
       completion?.dispose(); hover?.dispose(); semantic?.dispose();
       semanticChangeListeners.clear();
       editor.dispose();
@@ -823,10 +849,28 @@ defineEditor((host, initial) => {
     },
     executeAction(action, parameters) {
       if (action === "set-language-diagnostics" && Array.isArray(parameters.diagnostics))
-        { applyDiagnostics(parameters.diagnostics as LspDiagnostic[]); hideLanguageStatus(); }
-      if (action === "language-server-project-ready") {
+        {
+          applyDiagnostics(parameters.diagnostics as LspDiagnostic[]);
+          hideLanguageStatus();
+          showLanguageResult("textDocument/publishDiagnostics", { diagnostics: parameters.diagnostics });
+        }
+      if (action === "language-pack-project-ready") {
         cppDocumentOpened = false;
         void openDocument();
+      }
+      if (action === "language-service-request" && typeof parameters.method === "string") {
+        const method = parameters.method;
+        if (languageResult) {
+          languageResult.hidden = false;
+          languageResult.dataset.languageOperationMethod = method;
+          languageResult.dataset.languageOperationStatus = "pending";
+          languageResult.removeAttribute("data-language-operation-result");
+          languageResult.textContent = initial.locale === "en-US" ? `${method} running…` : `${method} 执行中…`;
+        }
+        void flushDocumentSync()
+          .then(() => host.languageRequest(method, parameters.params ?? {}))
+          .then((result) => showLanguageResult(method, result))
+          .catch((cause) => showLanguageResult(method, undefined, cause));
       }
     },
     focus() {
@@ -842,7 +886,7 @@ defineEditor((host, initial) => {
     markSaved(content) {
       saved = content;
       host.reportDirty(model.getValue() !== saved);
-      if (cpp && cppDocumentOpened) {
+      if (languageClient && cppDocumentOpened) {
         languageSync = languageSync.catch(() => undefined).then(() =>
           host.languageRequest("textDocument/didSave", {
             textDocument: { uri: model.uri.toString() },

@@ -25,7 +25,12 @@ async function waitForVite(child) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (child.exitCode !== null) throw new Error("Vite exited before it became ready");
     try {
-      const response = await fetch("http://127.0.0.1:1420/");
+      // A listening socket is not enough: Vite may still be optimizing the
+      // renderer graph. Bound each probe so one stalled response cannot hang
+      // the desktop launcher forever.
+      const response = await fetch("http://127.0.0.1:1420/", {
+        signal: AbortSignal.timeout(1_000),
+      });
       if (response.ok) return;
     } catch {
       // Vite is still starting.
@@ -48,7 +53,7 @@ const editorBuild = run(process.execPath, [join(root, "script", "build-editor-ex
 const editorBuildCode = await new Promise((resolve) => editorBuild.once("exit", resolve));
 if (editorBuildCode !== 0) process.exit(Number(editorBuildCode) || 1);
 
-const languageServerBuild = run(process.execPath, [join(root, "script", "build-language-server-plugins.mjs")]);
+const languageServerBuild = run(process.execPath, [join(root, "script", "build-language-packs.mjs")]);
 const languageServerBuildCode = await new Promise((resolve) => languageServerBuild.once("exit", resolve));
 if (languageServerBuildCode !== 0) process.exit(Number(languageServerBuildCode) || 1);
 

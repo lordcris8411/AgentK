@@ -167,7 +167,7 @@ defineEditor((host, initial) => {
 
 `initial.language` 的来源是 manifest 的 `languageId`；未声明时由宿主根据当前文件扩展名推断。使用 Monaco 的插件通常把它传给 `monaco.editor.createModel`，其他插件可以将它用于自己的语法模式、解析器或高亮系统，也可以忽略。Agent K 不会把这个字段解释为依赖，也不会据此加载某个编辑器库版本；依赖版本只能通过 `runtime.dependencies` 声明。旧字段 `monacoLanguage` 不会被兼容或降级处理，包含它的 manifest 将直接校验失败。
 
-`languageRequest` 也使用这个编辑器无关的语言 ID 做路由，但不把 Editor 与某个 LSP 实现绑定。通知类 `textDocument/didOpen`、`didChange`、`didClose` 走无响应通知通道，completion、hover、definition、references、semantic tokens 等走请求/响应通道。当前第一方文本插件只在 C++ 模式启用这些语义功能；原生实现与工程生命周期由 `language-servers/cpp-clangd/` 独立拥有。完整协议见[原生语言扩展文档](language-server-plugin.md)。
+`languageRequest` 使用编辑器无关的 language ID 路由到当前启用的 Language Pack，不把 Editor 与特定 LSP 实现绑定。通知类 `textDocument/didOpen`、`didChange`、`didClose` 走无响应通道，completion、hover、definition、references、semantic tokens 等走请求/响应通道。C/C++、C# 与 TS/JS 均复用该文本面；工程生命周期和语言实现留在对应的整包 worker。完整协议见 [Language Pack 文档](language-pack.md)。
 
 ## 文件树上下文菜单
 

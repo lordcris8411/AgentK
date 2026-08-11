@@ -252,8 +252,18 @@ export function defineEditor(factory: EditorFactory): void {
       }
       case "action": {
         const action = message.value as { id?: unknown; parameters?: unknown };
-        if (typeof action?.id === "string")
-          instance.executeAction?.(action.id, action.parameters && typeof action.parameters === "object" ? action.parameters as Record<string, unknown> : {});
+        if (typeof action?.id === "string") {
+          try {
+            const result = instance.executeAction?.(action.id, action.parameters && typeof action.parameters === "object" ? action.parameters as Record<string, unknown> : {});
+            Promise.resolve(result).then(() => {
+              if (message.requestId) post(nonce, "action-complete", undefined, message.requestId);
+            }).catch((cause: unknown) => {
+              if (message.requestId) post(nonce, "action-error", cause instanceof Error ? cause.message : String(cause), message.requestId);
+            });
+          } catch (cause) {
+            if (message.requestId) post(nonce, "action-error", cause instanceof Error ? cause.message : String(cause), message.requestId);
+          }
+        }
         break;
       }
       case "focus":

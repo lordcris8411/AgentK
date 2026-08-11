@@ -35,3 +35,10 @@ test("preview surfaces receive compact controls and themed scrollbars", async ()
   assert.match(inspector, /styleWebPreviewScrollbars\(current\.webPreviewUrl!/);
   assert.match(main, /case "style-preview-scrollbars"/);
 });
+
+test("preview console capture waits for the application renderer to load", async () => {
+  const main = await source("electron/main.ts");
+  const createWindows = main.slice(main.indexOf("function createWindows"), main.indexOf("function loadDebugWindow"));
+  assert.match(createWindows, /webContents\.once\("did-finish-load", \(\) => \{[\s\S]*?enablePreviewConsole\(window\)/u);
+  assert.doesNotMatch(createWindows, /if \(process\.env\.AGENT_K_E2E !== "1"\) enablePreviewConsole\(mainWindow\)/u);
+});

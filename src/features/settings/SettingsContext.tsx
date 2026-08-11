@@ -33,8 +33,7 @@ const fallback: ClientSettings = {
   editorWordWrap: false,
   disabledFileEditors: [],
   disabledFileEditorSkills: [],
-  disabledLanguageServers: [],
-  disabledLanguageServerSkills: [],
+  disabledLanguagePacks: [],
   disabledModelProviders: [],
   disabledModels: [],
   pinnedWorkspaces: [],
@@ -70,6 +69,7 @@ const dictionaries = {
     skills: "Skills",
     extensions: "Extensions",
     editors: "Editor 扩展",
+    languagePacks: "Language Packs",
     permissions: "运行权限",
     about: "关于",
     close: "关闭",
@@ -240,6 +240,7 @@ const dictionaries = {
     skills: "Skills",
     extensions: "Extensions",
     editors: "Editor Extensions",
+    languagePacks: "Language Packs",
     permissions: "Execution permissions",
     about: "About",
     close: "Close",
@@ -445,6 +446,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const settingsRef = useRef(settings);
   const settingsRevision = useRef(0);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const initialSettingsLoad = useRef<Promise<ClientSettings | undefined>>(undefined);
+  const initialSettingsPromise = initialSettingsLoad.current ??=
+    desktop.getSettings().catch(() => undefined);
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
@@ -501,9 +505,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [settings.browserId]);
   useEffect(() => {
     let disposed = false;
-    void desktop
-      .getSettings()
+    void initialSettingsPromise
       .then((loaded) => {
+        if (!loaded) return;
         // A user action can occur before the native settings bridge responds.
         // Never replace such a newer value with this initial, older snapshot.
         if (!disposed && settingsRevision.current === 0) {
@@ -526,6 +530,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
   const update = useCallback(
     async (patch: Partial<ClientSettings>) => {
+      // Layout observers can fire during the first render. Do not let one of
+      // those partial updates merge with localStorage/fallback defaults and
+      // overwrite native provider or permission settings before they load.
+      const loaded = await initialSettingsPromise;
+      if (settingsRevision.current === 0 && loaded) {
+        const hydrated = { ...fallback, ...loaded };
+        settingsRef.current = hydrated;
+        setSettings(hydrated);
+        localStorage.setItem("agent-k-settings", JSON.stringify(hydrated));
+      }
       const previous = settingsRef.current;
       const next = { ...previous, ...patch };
       const revision = ++settingsRevision.current;

@@ -65,3 +65,18 @@ test("composer ignores Enter while an IME composition is active", () => {
   assert.ok(guard >= 0, "composer is missing its IME composition guard");
   assert.ok(guard < sendShortcut, "IME composition must be checked before Enter sends");
 });
+
+test("queued composer messages render every attachment", () => {
+  assert.match(
+    workspaceSource,
+    /pendingSteer\.attachments\.map\(\(attachment\) => \([\s\S]*?attachment\.previewUrl[\s\S]*?<figcaption title=\{attachment\.name\}>\{attachment\.name\}<\/figcaption>/,
+  );
+  assert.match(
+    workspaceSource,
+    /aria-label=\{en \? "Queued attachments" : "排队消息的附件"\}/,
+  );
+  assert.match(
+    themeSource,
+    /\.pending-steer-attachments\s*{[^}]*display:\s*flex;[^}]*overflow-x:\s*auto;/s,
+  );
+});

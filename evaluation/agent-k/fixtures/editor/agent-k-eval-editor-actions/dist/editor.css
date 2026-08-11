@@ -1,0 +1,3 @@
+html, body { box-sizing: border-box; height: 100%; margin: 0; }
+body { background: var(--agent-k-surface-app, #fff); padding: 12px; }
+textarea { background: var(--agent-k-surface-panel, #fff); color: var(--agent-k-text-primary, #111); box-sizing: border-box; font: 14px/1.5 monospace; height: 100%; resize: none; width: 100%; }

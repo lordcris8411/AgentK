@@ -10,25 +10,38 @@ const conversationSource = await readFile(
   new URL("../src/features/conversation/ConversationWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const projectConsoleSource = await readFile(
+  new URL("../src/components/layout/ProjectConsole.tsx", import.meta.url),
+  "utf8",
+);
 
-test("C++ project folder selection owns Debug and README presentation", () => {
-  assert.match(inspectorSource, /selectedLanguagePlugin\?\.languages\.includes\("cpp"\)/);
+test("Language Pack project folder selection owns Debug and README presentation", () => {
+  assert.doesNotMatch(inspectorSource, /languages\.includes\("cpp"\)/);
   assert.match(inspectorSource, /plugin\.projectMarkers\.some/);
   assert.match(inspectorSource, /selectedLanguageProject\?\.root \?\? absoluteWorkspacePath/);
   assert.match(inspectorSource, /entry\.name\.toLocaleLowerCase\("en-US"\) === "readme\.md"/);
-  assert.match(inspectorSource, /prepareAndOpenDebug\(selectedCppLanguagePlugin, selectedCppProject\.root\)/);
-  assert.match(inspectorSource, /await desktop\.languageServerCall\(plugin\.id, plugin\.debugServer\.prepareMethod\)[\s\S]*?await desktopWindow\.openDebug\(projectRoot\)/);
-  assert.match(inspectorSource, /project\?: \{ languageServerId: string; path: string \}/);
+  assert.match(inspectorSource, /prepareAndOpenDebug\(selectedDebugLanguagePack, selectedProjectOverview\.root\)/);
+  assert.match(inspectorSource, /await desktop\.languagePackCall\(plugin\.id, plugin\.debugServer\.prepareMethod\)[\s\S]*?await desktopWindow\.openDebug\(projectRoot\)/);
+  assert.match(inspectorSource, /project\?: \{ packId: string; path: string \}/);
   assert.match(inspectorSource, /projectOverview\?: \{ name: string; readmePath\?: string \}/);
   assert.match(inspectorSource, /project-overview:\$\{selectedTreeLanguagePlugin\.id\}/);
+  assert.match(inspectorSource, /const selectedTreeLanguageProject = root && selectedDirectoryEntry && selectedTreeLanguagePlugin/);
+  assert.match(inspectorSource, /const selectedProjectActions = selectedLanguagePlugin\?\.projectMenu\?\.actions \?\? \[\]/);
+  assert.match(inspectorSource, /selectedSimpleActions\.map/);
   assert.match(inspectorSource, /tab\.projectOverview\?\.name \?\? tab\.path/);
   assert.doesNotMatch(inspectorSource, /open\(selectedProjectReadmePath\)/);
   assert.match(inspectorSource, /const projectDirectoryEntry = current/);
   assert.match(inspectorSource, /current\.projectOverview && current\.project \? findTreeEntry\(tree, current\.project\.path\) : undefined/);
   assert.match(inspectorSource, /current && !current\.unsupported && current\.format\?\.editable/);
   assert.match(inspectorSource, /if \(selectedLanguageProject\) void unloadLanguageProject/);
-  assert.match(inspectorSource, /loadLanguageProject\(selectedLanguagePlugin, selectedCppProject\.root\)/);
+  assert.match(inspectorSource, /loadLanguageProject\(selectedLanguagePlugin, selectedProjectOverview\.root\)/);
   assert.doesNotMatch(inspectorSource, /currentIsWorkspaceFile\s*\?\s*\(\s*<button[\s\S]*?openDebug/);
+});
+
+test("workspace switching cannot preview a directory selected in the previous workspace", () => {
+  assert.match(inspectorSource, /const inspectorStateMatchesRoot = tabsRoot\.current === root/);
+  assert.match(inspectorSource, /const selectedDirectoryEntry = inspectorStateMatchesRoot && selectedEntry\?\.isDir/);
+  assert.match(inspectorSource, /\}\)\(\)\.catch\(\(cause\) => \{\s*if \(!disposed\) onError\(`无法预览工程/);
 });
 
 test("language projects remain visible in the tree before their server is loaded", () => {
@@ -47,7 +60,14 @@ test("nested C++ folders are owned by the outer language project", () => {
 test("project build action renders profiles and sends the selected profile to the plugin", () => {
   assert.match(inspectorSource, /className="language-build-split"/);
   assert.match(inspectorSource, /selectedProfileAction\.profiles\?\.map/);
-  assert.match(inspectorSource, /arguments: profile \? \[profile\] : \[\]/);
+  assert.match(inspectorSource, /arguments: profile \? \{ configuration: profile \} : \{\}/);
+});
+
+test("project menu actions use the generic structured Language Pack capability", () => {
+  assert.match(inspectorSource, /action: `language-pack:\$\{selectedLanguagePlugin\.id\}:\$\{action\.id\}`/);
+  assert.match(projectConsoleSource, /desktop\.languagePackInvoke\(match\[1\], match\[2\]/);
+  assert.doesNotMatch(projectConsoleSource, /desktop\.languagePackCall\(match\[1\], match\[2\]/);
+  assert.match(projectConsoleSource, /rootRef\.current !== activeRoot/);
 });
 
 test("missing README action is delivered through the normal Pi prompt path", () => {

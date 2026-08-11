@@ -31,7 +31,7 @@ createRoot(rootElement).render(
       {windowKind === "debug"
         ? <DebugWindow initialContextFile={parameters.get("context-file") ?? undefined} initialRoot={parameters.get("root") ?? undefined} />
         : windowKind === "debug-tool" && (debugTool === "memory" || debugTool === "registers" || debugTool === "disassembly")
-          ? <DebugToolWindow initialLanguageServerId={parameters.get("language-server") ?? ""} initialRoot={parameters.get("root") ?? undefined} initialSessionId={parameters.get("session-id") ?? undefined} initialTarget={parameters.get("target") ?? undefined} kind={debugTool} />
+          ? <DebugToolWindow initialPackId={parameters.get("language-pack") ?? ""} initialRoot={parameters.get("root") ?? undefined} initialSessionId={parameters.get("session-id") ?? undefined} initialTarget={parameters.get("target") ?? undefined} kind={debugTool} />
         : <ExtensionUiProvider><App /></ExtensionUiProvider>}
     </SettingsProvider>
   </StrictMode>,

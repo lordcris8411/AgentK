@@ -8,7 +8,7 @@ children, native language workers, credentials, and other privileged operations 
 npm ci --ignore-scripts
 npm run prepare:native
 npm run build:editors
-npm run build:language-servers
+npm run build:language-packs
 npm run check
 npm test
 ```
@@ -18,9 +18,9 @@ Editor packages must remain independent: keep implementation and CSS inside each
 dependencies in `editor.json`, and do not add a common Editor UI base class or imports between plugins.
 
 Native language extensions are trusted code. Keep language-specific project detection, toolchain management, LSP/DAP
-behavior, and diagnostics inside the package worker under `language-servers/`; the generic host and React UI must route only
+behavior, and diagnostics inside the package worker under `language-packs/`; the generic host and React UI must route only
 manifest-declared commands and opaque worker RPC. Do not load native workers from an opened project.
 
 Use exact dependency versions, preserve strict TypeScript, stage explicit paths, and update the relevant documents when a
 public command, manifest field, installation path, or security boundary changes. See the [architecture](docs/architecture.md),
-[Editor SDK](docs/file-format-sdk.md), and [native language-extension protocol](docs/language-server-plugin.md).
+[Editor SDK](docs/file-format-sdk.md), and [native language-extension protocol](docs/language-pack.md).

@@ -1,0 +1,9 @@
+# Toolchain policy
+
+Probe only tools and version ranges declared by the manifest. Resolve a compatible system command once to a canonical absolute path and display its source. Spawn with an allowlisted environment and private HOME, package cache, index, logs, temp, build, and dependency directories; never mutate global PATH or user caches.
+
+Every fallback entry in the manifest must pin a version and, for every declared platform archive, an HTTPS URL plus `sha256` or `sha512`; a package lockfile integrity field does not replace this manifest-level digest. If npm packages are installed together from a checked-in lockfile rather than downloaded as standalone archives, model them inside the private Node toolchain implementation instead of declaring digest-less fallback toolchains. Ask before network access. Download to a partial file with progress and cancellation, verify the digest, extract into staging, probe final executables, then atomically activate. Retain the prior complete toolchain until the new one passes. Reuse verified caches.
+
+Download confirmation is an asynchronous worker/host handshake, not an error response. When a call needs a download, create a unique `requestId`, retain a pending promise, and emit `{ type: "language_pack_confirmation_request", requestId, title, message }`. Keep the original `load`, build, run, test, or debug request pending. Implement the worker method `respondConfirmation(requestId, confirmed)` to resolve that promise; continue provisioning only when true and cancel cleanly when false or after a bounded timeout. Do not emit a similarly named custom event and then throw “confirmation required”, because the host cannot resume a request that already failed.
+
+Build databases, compiler output, restored dependencies, indexes, and temporary files default to the package cache. An action that writes the source tree must declare workspace write permission and receive explicit authorization.

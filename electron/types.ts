@@ -18,8 +18,7 @@ export interface ClientSettings {
   editorWordWrap: boolean;
   disabledFileEditors: string[];
   disabledFileEditorSkills: string[];
-  disabledLanguageServers: string[];
-  disabledLanguageServerSkills: string[];
+  disabledLanguagePacks: string[];
   disabledModelProviders: string[];
   disabledModels: string[];
   pinnedWorkspaces: string[];

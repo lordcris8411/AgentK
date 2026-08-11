@@ -88,6 +88,7 @@ for (const entry of entries.filter((candidate) => candidate.isDirectory())) {
   const sourceContents = await readFile(source, "utf8");
   const relativeImports = [...sourceContents.matchAll(/(?:from\s*|import\s*)["'](\.{1,2}\/[^"']+)["']/g)]
     .map((match) => match[1]);
+  const relativeImportInputs = [];
   const sdkDirectory = join(root, "editor", "sdk");
   for (const specifier of relativeImports) {
     const target = resolve(packageDirectory, specifier);
@@ -97,6 +98,10 @@ for (const entry of entries.filter((candidate) => candidate.isDirectory())) {
     const insideSdk = !isAbsolute(sdkRelative) && sdkRelative !== ".." && !sdkRelative.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`);
     if (!insidePackage && !insideSdk)
       throw new Error(`Editor '${manifest.id}' imports code or styles from another plugin: ${specifier}`);
+    relativeImportInputs.push(
+      ...[target, `${target}.ts`, `${target}.css`, join(target, "index.ts")]
+        .filter((candidate) => existsSync(candidate)),
+    );
   }
   const outDir = join(packageDirectory, "dist");
   const outputs = [
@@ -111,6 +116,7 @@ for (const entry of entries.filter((candidate) => candidate.isDirectory())) {
     source,
     join(packageDirectory, "editor.css"),
     join(root, "editor", "sdk", "index.ts"),
+    ...relativeImportInputs,
     buildScriptPath,
     join(root, "package-lock.json"),
   ];

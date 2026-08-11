@@ -49,8 +49,7 @@ const DEFAULT_SETTINGS: ClientSettings = {
   editorWordWrap: false,
   disabledFileEditors: [],
   disabledFileEditorSkills: [],
-  disabledLanguageServers: [],
-  disabledLanguageServerSkills: [],
+  disabledLanguagePacks: [],
   disabledModelProviders: [],
   disabledModels: [],
   pinnedWorkspaces: [],
@@ -171,8 +170,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
       ...settings.disabledFileEditors,
     ]),
   ];
-  settings.disabledLanguageServers = editorSettingIds(source.disabledLanguageServers);
-  settings.disabledLanguageServerSkills = [...new Set([...editorSettingIds(source.disabledLanguageServerSkills), ...settings.disabledLanguageServers])];
+  settings.disabledLanguagePacks = editorSettingIds(source.disabledLanguagePacks);
   settings.disabledModelProviders = modelProviderIds(source.disabledModelProviders);
   settings.disabledModels = modelSettingKeys(source.disabledModels);
   settings.pinnedWorkspaces = [
@@ -245,8 +243,7 @@ export async function saveClientSettings(
     settings.editorWordWrap === original.editorWordWrap &&
     sameStringArray(original.disabledFileEditors, settings.disabledFileEditors) &&
     sameStringArray(original.disabledFileEditorSkills, settings.disabledFileEditorSkills) &&
-    sameStringArray(original.disabledLanguageServers, settings.disabledLanguageServers) &&
-    sameStringArray(original.disabledLanguageServerSkills, settings.disabledLanguageServerSkills) &&
+    sameStringArray(original.disabledLanguagePacks, settings.disabledLanguagePacks) &&
     sameStringArray(original.disabledModelProviders, settings.disabledModelProviders) &&
     sameStringArray(original.disabledModels, settings.disabledModels) &&
     sameStringArray(original.pinnedWorkspaces, settings.pinnedWorkspaces) &&

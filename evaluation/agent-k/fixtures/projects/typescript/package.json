@@ -1,0 +1,6 @@
+{
+  "name": "agent-k-typescript-evaluation",
+  "private": true,
+  "type": "module",
+  "scripts": { "check": "tsc --noEmit" }
+}

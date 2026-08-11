@@ -23,7 +23,7 @@ function bridgeFixture() {
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     cwd: "/tmp/agent-k-rpc-test/workspace",
     launch: { executable: "pi", args: [] },
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -55,7 +55,7 @@ test("workspace-backed commands connect Pi when no runtime is active", async () 
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -82,6 +82,72 @@ test("workspace-backed commands connect Pi when no runtime is active", async () 
     );
     assert.deepEqual(result, { models: [] });
     assert.deepEqual(commands, [{ type: "get_available_models" }]);
+  } finally {
+    pool.shutdown();
+  }
+});
+
+test("standby Pi maintenance starts at most one cold runtime at a time", async () => {
+  const pool = new RpcPool({
+    appDataPath: "/tmp/agent-k-rpc-test",
+    bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
+    bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
+    firstPartyEditorExtensions: [],
+    firstPartyLanguagePackSkills: [],
+    launch: { executable: "pi", args: [] },
+    minimum: 4,
+    permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
+    emit() {},
+  });
+  let release;
+  const gate = new Promise((resolveGate) => { release = resolveGate; });
+  let starts = 0;
+  pool.poolCwd = "/tmp/agent-k-rpc-test/workspace";
+  pool.backgroundWarmupAfter = 0;
+  pool.spawn = async () => {
+    starts += 1;
+    await gate;
+    return `runtime-${starts}`;
+  };
+  try {
+    const first = pool.maintain();
+    const overlapping = pool.maintain();
+    await flushLines();
+    assert.equal(starts, 1);
+    release();
+    await Promise.all([first, overlapping]);
+  } finally {
+    pool.shutdown();
+  }
+});
+
+test("resizing the Pi pool fills the requested capacity sequentially", async () => {
+  const pool = new RpcPool({
+    appDataPath: "/tmp/agent-k-rpc-test",
+    bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
+    bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
+    firstPartyEditorExtensions: [],
+    firstPartyLanguagePackSkills: [],
+    launch: { executable: "pi", args: [] },
+    minimum: 2,
+    permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
+    emit() {},
+  });
+  let activeStarts = 0;
+  let maximumConcurrentStarts = 0;
+  let starts = 0;
+  pool.spawn = async () => {
+    starts += 1;
+    activeStarts += 1;
+    maximumConcurrentStarts = Math.max(maximumConcurrentStarts, activeStarts);
+    await flushLines();
+    activeStarts -= 1;
+    return `runtime-${starts}`;
+  };
+  try {
+    await pool.resize(4);
+    assert.equal(starts, 4);
+    assert.equal(maximumConcurrentStarts, 1);
   } finally {
     pool.shutdown();
   }
@@ -124,7 +190,7 @@ test("configuration reload replaces an invalid Pi session instead of failing the
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -200,6 +266,14 @@ test("bundled Pi uses the macOS background helper as its Node executable", () =>
   }
 });
 
+test("bundled Pi is preferred over an ambient command wrapper", () => {
+  const bundledCli = resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
+  const launch = resolvePiLaunch("", bundledCli, process.execPath);
+  assert.equal(launch.executable, process.execPath);
+  assert.deepEqual(launch.args, [bundledCli]);
+  assert.equal(launch.environment?.ELECTRON_RUN_AS_NODE, "1");
+});
+
 function respondWithState(child, state) {
   child.stdin.once("data", (chunk) => {
     const request = JSON.parse(chunk.toString());
@@ -263,7 +337,7 @@ test("pool abort waits for Pi to acknowledge that the session is idle", async ()
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -297,7 +371,7 @@ test("pool synchronizes Pi native auto-compaction across existing runtimes", asy
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -337,7 +411,7 @@ test("new sessions preserve the model shown by their prepared runtime", async ()
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",
@@ -381,7 +455,7 @@ test("new sessions do not restore Pi's unconfigured placeholder model", async ()
     bundledExtensionsDirectory: "/tmp/agent-k-rpc-test/extensions",
     bundledSkillsDirectory: "/tmp/agent-k-rpc-test/skills",
     firstPartyEditorExtensions: [],
-    firstPartyLanguageServerSkills: [],
+    firstPartyLanguagePackSkills: [],
     launch: { executable: "pi", args: [] },
     minimum: 2,
     permissionExtensionSource: "/tmp/agent-k-rpc-test/permissions.ts",

@@ -19,7 +19,7 @@ test("normalizes persisted project debugger configuration", () => {
     mode: "dump",
     processId: "123",
     program: "build/app",
-    providerIdentity: "cpp-clangd:cpp-native",
+    providerIdentity: "agent-k.cpp:cpp-native",
     sourceMap: { "/build/src": "/workspace/src", "": "ignored", broken: 7 },
     stopOnEntry: true,
     targetId: "target",
@@ -39,7 +39,7 @@ test("normalizes persisted project debugger configuration", () => {
   assert.equal(parsed.layout.consolePercent, 20);
   assert.equal(parsed.layout.rowPercent, 44);
   assert.equal(parsed.targetId, "target");
-  assert.equal(parsed.providerIdentity, "cpp-clangd:cpp-native");
+  assert.equal(parsed.providerIdentity, "agent-k.cpp:cpp-native");
 });
 
 test("uses safe defaults for malformed debugger configuration", () => {

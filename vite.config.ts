@@ -8,6 +8,13 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    // Agent and extension evaluations deliberately create isolated worktrees
+    // under .agent-k-* directories. They are build artifacts, not renderer
+    // source. Watching them recursively can create hundreds of thousands of
+    // Windows handles and delay the first page response by over a minute.
+    watch: {
+      ignored: ["**/.agent-k-*/**"],
+    },
   },
   envPrefix: ["VITE_"],
   build: {

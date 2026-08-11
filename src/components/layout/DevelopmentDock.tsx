@@ -7,7 +7,7 @@ import { desktop } from "../../lib/desktop";
 import { desktopWindow } from "../../lib/platform";
 import { ProjectConsole } from "./ProjectConsole";
 
-function persistProviderSnapshot(root: string, languageServerId: string, snapshot: DebugSnapshot, providers: DebugProvider[]): void {
+function persistProviderSnapshot(root: string, packId: string, snapshot: DebugSnapshot, providers: DebugProvider[]): void {
   const saved = loadDebugProject(root);
   const breakpoints = snapshot.breakpoints.map(({ condition, enabled, file, hitCondition, line, logMessage }) => ({
     enabled, file, line,
@@ -18,9 +18,9 @@ function persistProviderSnapshot(root: string, languageServerId: string, snapsho
   saveDebugProject(root, {
     ...saved,
     breakpoints: mergePersistedDebugBreakpoints(saved.breakpoints, breakpoints,
-      (file) => debugProviderForFile(providers, file)?.languageServerId === languageServerId),
-    ...(saved.providerIdentity.startsWith(`${languageServerId}:`) ? { exceptionFilters: snapshot.exceptionFilters } : {}),
-    ...(saved.providerIdentity.startsWith(`${languageServerId}:`) ? { functionBreakpoints: snapshot.functionBreakpoints.map(({ condition, hitCondition, name }) => ({
+      (file) => debugProviderForFile(providers, file)?.packId === packId),
+    ...(saved.providerIdentity.startsWith(`${packId}:`) ? { exceptionFilters: snapshot.exceptionFilters } : {}),
+    ...(saved.providerIdentity.startsWith(`${packId}:`) ? { functionBreakpoints: snapshot.functionBreakpoints.map(({ condition, hitCondition, name }) => ({
       name, ...(condition ? { condition } : {}), ...(hitCondition ? { hitCondition } : {}),
     })) } : {}),
   });
@@ -56,7 +56,7 @@ export function DevelopmentDock({ root, onError }: { root?: string; onError(mess
   ]);
   useEffect(() => {
     let disposed = false;
-    void desktop.listLanguageServerPlugins().then((plugins) => {
+    void desktop.listLanguagePacks().then((plugins) => {
       if (!disposed) setAvailableProviders(debugProviders(plugins));
     }).catch(() => { if (!disposed) setAvailableProviders([]); });
     return () => { disposed = true; };
@@ -71,23 +71,23 @@ export function DevelopmentDock({ root, onError }: { root?: string; onError(mess
     const saved = loadDebugProject(root);
     const restore = async () => {
       const current = () => !disposed && debugRoot.current === root;
-      const servers = [...new Set(availableProviders.map((provider) => provider.languageServerId))];
-      await Promise.all(servers.map((server) => desktop.languageServerCall(server, "debugClearBreakpoints")));
+      const servers = [...new Set(availableProviders.map((provider) => provider.packId))];
+      await Promise.all(servers.map((server) => desktop.languagePackCall(server, "debugClearBreakpoints")));
       const byServerAndFile = new Map<string, Map<string, PersistedDebugBreakpoint[]>>();
       for (const breakpoint of saved.breakpoints) {
         const provider = debugProviderForFile(availableProviders, breakpoint.file);
         if (!provider) continue;
-        const byFile = byServerAndFile.get(provider.languageServerId) ?? new Map<string, PersistedDebugBreakpoint[]>();
+        const byFile = byServerAndFile.get(provider.packId) ?? new Map<string, PersistedDebugBreakpoint[]>();
         byFile.set(breakpoint.file, [...(byFile.get(breakpoint.file) ?? []), breakpoint]);
-        byServerAndFile.set(provider.languageServerId, byFile);
+        byServerAndFile.set(provider.packId, byFile);
       }
       for (const [server, byFile] of byServerAndFile) for (const [file, breakpoints] of byFile) {
         if (!current()) return;
-        await desktop.languageServerCall(server, "debugSetBreakpoints", file, breakpoints.map((item) => item.line));
+        await desktop.languagePackCall(server, "debugSetBreakpoints", file, breakpoints.map((item) => item.line));
         for (const breakpoint of breakpoints) {
           if (!current()) return;
           if (breakpoint.enabled && !breakpoint.condition && !breakpoint.hitCondition && !breakpoint.logMessage) continue;
-          await desktop.languageServerCall(server, "debugUpdateBreakpoint", file, breakpoint.line, {
+          await desktop.languagePackCall(server, "debugUpdateBreakpoint", file, breakpoint.line, {
             enabled: breakpoint.enabled,
             ...(breakpoint.condition ? { condition: breakpoint.condition } : {}),
             ...(breakpoint.hitCondition ? { hitCondition: breakpoint.hitCondition } : {}),
@@ -98,13 +98,13 @@ export function DevelopmentDock({ root, onError }: { root?: string; onError(mess
       if (!current()) return;
       const preferred = rankDebugProviders(availableProviders, undefined, saved.providerIdentity)[0];
       if (preferred) {
-        await desktop.languageServerCall(preferred.languageServerId, "debugSetFunctionBreakpoints", saved.functionBreakpoints);
+        await desktop.languagePackCall(preferred.packId, "debugSetFunctionBreakpoints", saved.functionBreakpoints);
         if (!current()) return;
-        await desktop.languageServerCall(preferred.languageServerId, "debugSetExceptionFilters", saved.exceptionFilters);
+        await desktop.languagePackCall(preferred.packId, "debugSetExceptionFilters", saved.exceptionFilters);
       }
       for (const server of servers) {
         if (!current()) return;
-        const snapshot = await desktop.languageServerCall(server, "debugStatus") as DebugSnapshot;
+        const snapshot = await desktop.languagePackCall(server, "debugStatus") as DebugSnapshot;
         debugSnapshots.current.set(server, snapshot);
         window.dispatchEvent(new CustomEvent("agent-k-debug-state", { detail: snapshot }));
       }
@@ -116,10 +116,10 @@ export function DevelopmentDock({ root, onError }: { root?: string; onError(mess
   }, [availableProviders, onError, root]);
   useEffect(() => {
     const stopBackend = desktop.onEvent((event) => {
-      if (event.type !== "debug_session" || typeof event.languageServerId !== "string" || !event.snapshot || typeof event.snapshot !== "object") return;
-      if (!providersRef.current.some((provider) => provider.languageServerId === event.languageServerId)) return;
+      if (event.type !== "debug_session" || typeof event.packId !== "string" || !event.snapshot || typeof event.snapshot !== "object") return;
+      if (!providersRef.current.some((provider) => provider.packId === event.packId)) return;
       const snapshot = event.snapshot as DebugSnapshot;
-      const previous = debugSnapshots.current.get(event.languageServerId);
+      const previous = debugSnapshots.current.get(event.packId);
       const effective = !snapshot.sessionId && previous?.sessionId ? {
         ...previous,
         breakpoints: snapshot.breakpoints,
@@ -127,10 +127,10 @@ export function DevelopmentDock({ root, onError }: { root?: string; onError(mess
         exceptionFilters: snapshot.exceptionFilters,
         functionBreakpoints: snapshot.functionBreakpoints,
       } : snapshot;
-      debugSnapshots.current.set(event.languageServerId, effective);
+      debugSnapshots.current.set(event.packId, effective);
       const currentRoot = debugRoot.current;
       if (currentRoot && restoringBreakpoints.current !== currentRoot) {
-        persistProviderSnapshot(currentRoot, event.languageServerId, snapshot, providersRef.current);
+        persistProviderSnapshot(currentRoot, event.packId, snapshot, providersRef.current);
       }
       window.dispatchEvent(new CustomEvent("agent-k-debug-state", { detail: effective }));
     });
@@ -142,7 +142,7 @@ export function DevelopmentDock({ root, onError }: { root?: string; onError(mess
       if (typeof detail?.file !== "string") return;
       const provider = debugProviderForFile(providersRef.current, detail.file);
       if (!provider) return;
-      const snapshot = debugSnapshots.current.get(provider.languageServerId);
+      const snapshot = debugSnapshots.current.get(provider.packId);
       if (snapshot) window.dispatchEvent(new CustomEvent("agent-k-debug-state", { detail: snapshot }));
     };
     const toggle = (event: Event) => {
@@ -150,18 +150,18 @@ export function DevelopmentDock({ root, onError }: { root?: string; onError(mess
       if (typeof detail?.file !== "string" || typeof detail.line !== "number") return;
       const provider = debugProviderForFile(providersRef.current, detail.file);
       if (!provider) { onError(en ? "No debugger supports this file" : "没有调试器支持此文件"); return; }
-      const snapshot = debugSnapshots.current.get(provider.languageServerId) ?? emptyDebugSnapshot();
+      const snapshot = debugSnapshots.current.get(provider.packId) ?? emptyDebugSnapshot();
       const disabled = snapshot.breakpoints.find((item) => item.file === detail.file && item.line === detail.line && item.enabled === false);
       if (disabled) {
-        void desktop.languageServerCall(provider.languageServerId, "debugUpdateBreakpoint", detail.file, detail.line, { enabled: true })
-          .then((value) => { if (debugRoot.current) persistProviderSnapshot(debugRoot.current, provider.languageServerId, value as DebugSnapshot, providersRef.current); })
+        void desktop.languagePackCall(provider.packId, "debugUpdateBreakpoint", detail.file, detail.line, { enabled: true })
+          .then((value) => { if (debugRoot.current) persistProviderSnapshot(debugRoot.current, provider.packId, value as DebugSnapshot, providersRef.current); })
           .catch((cause) => onError(String(cause)));
         return;
       }
       const existing = snapshot.breakpoints.filter((item) => item.file === detail.file).map((item) => item.line);
       const lines = existing.includes(detail.line) ? existing.filter((line) => line !== detail.line) : [...existing, detail.line];
-      void desktop.languageServerCall(provider.languageServerId, "debugSetBreakpoints", detail.file, lines)
-        .then((value) => { if (debugRoot.current) persistProviderSnapshot(debugRoot.current, provider.languageServerId, value as DebugSnapshot, providersRef.current); })
+      void desktop.languagePackCall(provider.packId, "debugSetBreakpoints", detail.file, lines)
+        .then((value) => { if (debugRoot.current) persistProviderSnapshot(debugRoot.current, provider.packId, value as DebugSnapshot, providersRef.current); })
         .catch((cause) => onError(String(cause)));
     };
     window.addEventListener("agent-k-debug-state-request", replayState);

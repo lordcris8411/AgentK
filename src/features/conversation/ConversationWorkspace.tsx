@@ -14,7 +14,7 @@ import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import type { CodexQuota, CodexQuotaWindow, LanguageServerProject, SessionSummary } from "../../lib/desktop";
+import type { CodexQuota, CodexQuotaWindow, LanguagePackProject, SessionSummary } from "../../lib/desktop";
 import { desktop } from "../../lib/desktop";
 import { stopDampedScrolling } from "../../lib/dampedScrolling";
 import { desktopWindow, platform } from "../../lib/platform";
@@ -37,33 +37,42 @@ import {
   useExtensionUi,
 } from "../extensions/ExtensionUiContext";
 import { AgentKLogo } from "../../components/AgentKLogo";
+import { activeBranchMessages } from "./sessionHistory";
 
 type ToolCall = { id?: string; name: string; args: Record<string, unknown> };
+
+async function runtimeBranchMessages(runtimeId?: string) {
+  const page = await desktop.command(
+    { type: "get_entries" },
+    runtimeId,
+  ) as {
+    entries?: Array<Record<string, unknown>>;
+    leafId?: string | null;
+  };
+  return activeBranchMessages(page.entries ?? [], page.leafId);
+}
 
 function normalizedWorkspacePath(path: string): string {
   return path.replaceAll("\\", "/").replace(/\/+$/u, "").toLocaleLowerCase("en-US");
 }
 
-function projectBelongsToWorkspace(project: LanguageServerProject, cwd: string): boolean {
+function projectBelongsToWorkspace(project: LanguagePackProject, cwd: string): boolean {
   const workspace = normalizedWorkspacePath(cwd);
   const root = normalizedWorkspacePath(project.root);
   return root === workspace || root.startsWith(`${workspace}/`);
 }
 
-function languageServiceContext(projects: LanguageServerProject[], cwd: string): string {
-  const cpp = projects.filter((project) =>
-    project.languageServerId === "cpp-clangd" &&
+function languageServiceContext(projects: LanguagePackProject[], cwd: string): string {
+  const active = projects.filter((project) =>
     (project.status === "ready" || project.status === "indexing") &&
     projectBelongsToWorkspace(project, cwd),
   );
-  if (!cpp.length) return "";
+  if (!active.length) return "";
   return `<agent_k_language_services>
-Authoritative Agent K language-service state for this request:
-${cpp.map((project) => project.status === "ready"
-    ? `- C++ CMake workspace ${JSON.stringify(project.name)} is loaded and clangd is ready.`
-    : `- C++ CMake workspace ${JSON.stringify(project.name)} is loaded and clangd is indexing${project.indexProgress ? ` (${project.indexProgress})` : ""}; Language Skill results are partial until ready.`).join("\n")}
+Authoritative Agent K Language Pack state for this request:
+${active.map((project) => `- ${project.packName} pack ${JSON.stringify(project.packId)} has workspace ${JSON.stringify(project.name)} loaded with status ${project.status}${project.indexProgress ? ` (${project.indexProgress})` : ""}.`).join("\n")}
 
-For a semantic C++ question about a symbol's references, definition, declaration, type, implementation, hover information, diagnostics, call hierarchy, type hierarchy, or indexed symbols, you MUST load the cpp-project-tools Skill and call agent_k with capability "cpp-language-server" before any bash, grep, rg, findstr, compiler-output scraping, or custom Clang command. First call action "status" with the workspace name in arguments, then call the appropriate semantic action. The Skill is usable while indexing, but if a response has partial=true or indexReady=false, explicitly report that indexing is incomplete, do not treat an empty result as "not found", and do not claim the result set is complete. Do not replace a clangd query with text search. Shell remains appropriate for builds, tests, execution, Git operations, and explicitly textual or regular-expression searches.
+For language semantics, build, run, test, or debug work, load the matching pack Skill and call agent_k with capability "language", the listed packId, and a declared standard action. Call project.status before other actions and pass workspace-relative paths only. Do not replace a semantic Language Pack query with text search.
 </agent_k_language_services>`;
 }
 
@@ -617,10 +626,8 @@ function toolLabel(call: ToolCall) {
     if (action === "capture-preview") return "抓取预览图像";
     if (action === "get-preview-console") return "读取网站控制台";
   }
-  if (call.name === "agent_k" && call.args.capability === "cpp-language-server")
-    return `C++ 语义：${String(call.args.action ?? "查询")}`;
-  if (call.name === "agent_k" && call.args.capability === "native-debugger")
-    return `原生调试：${String(call.args.action ?? "操作")}`;
+  if (call.name === "agent_k" && call.args.capability === "language")
+    return `${String(call.args.packId ?? "Language Pack")}：${String(call.args.action ?? "操作")}`;
   if (path && call.name === "read") return `读取 ${path}`;
   if (path && ["write", "edit"].includes(call.name)) return `修改 ${path}`;
   if (path && ["copy", "move", "delete"].includes(call.name))
@@ -1692,7 +1699,7 @@ export function ConversationWorkspace({
   const [thinkingMenu, setThinkingMenu] = useState(false);
   const [switchingThinking, setSwitchingThinking] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
-  const [languageServerPlugins, setLanguageServerPlugins] = useState<Awaited<ReturnType<typeof desktop.listLanguageServerPlugins>>>([]);
+  const [languagePacks, setLanguagePacks] = useState<Awaited<ReturnType<typeof desktop.listLanguagePacks>>>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
   const [commandRevision, setCommandRevision] = useState(0);
   const [commandPicker, setCommandPicker] = useState<CommandPicker>();
@@ -1712,7 +1719,7 @@ export function ConversationWorkspace({
     name: string;
     path: string;
   }>();
-  useEffect(() => { void desktop.listLanguageServerPlugins().then(setLanguageServerPlugins).catch(() => setLanguageServerPlugins([])); }, []);
+  useEffect(() => { void desktop.listLanguagePacks().then(setLanguagePacks).catch(() => setLanguagePacks([])); }, []);
   const streamingId = useRef<string | undefined>(undefined);
   const pendingModelError = useRef<{
     message?: string;
@@ -1916,8 +1923,8 @@ export function ConversationWorkspace({
     { name: "name", description: en ? "Set the session name" : "设置会话名称", source: "builtin" },
     { name: "session", description: en ? "Show session information and statistics" : "显示会话信息与统计", source: "builtin" },
     { name: "reload", description: en ? "Reload Pi resources and configuration" : "重新加载 Pi 资源和配置", source: "builtin" },
-    ...languageServerPlugins.flatMap((plugin) => (plugin.commands ?? []).map((command) => ({ name: command.id, description: command.title, source: "builtin" as const }))),
-  ], [en, languageServerPlugins]);
+    ...languagePacks.flatMap((plugin) => (plugin.commands ?? []).map((command) => ({ name: command.id, description: command.title, source: "builtin" as const }))),
+  ], [en, languagePacks]);
   useEffect(() => {
     let cancelled = false;
     if (!connected || !session?.runtimeId) {
@@ -2010,12 +2017,10 @@ export function ConversationWorkspace({
       };
     }
     setItems([]);
-    // Read the complete JSONL immediately. Once Pi has switched, replace it
-    // with the complete authoritative context (including active tree state).
+    // Render the complete active branch. Pi's get_messages is only the model
+    // context and intentionally drops ancestors after compaction.
     const history = connected
-      ? desktop.command({ type: "get_messages" }, session.runtimeId).then((raw) =>
-          (raw as { messages?: Array<Record<string, unknown>> }).messages ?? [],
-        )
+      ? runtimeBranchMessages(session.runtimeId)
       : desktop.sessionMessages(session.path);
     void history
       .then((messages) => {
@@ -2584,11 +2589,8 @@ export function ConversationWorkspace({
           if (typeof tokensAfter === "number" && Number.isFinite(tokensAfter))
             setReportedContextTokens(Math.max(0, tokensAfter));
           if (result) {
-            void desktop.command({ type: "get_messages" }, activeRuntimeId)
-              .then((page) => {
-                const messages = (page as { messages?: Array<Record<string, unknown>> }).messages;
-                if (messages) setItems(toItems(messages));
-              })
+            void runtimeBranchMessages(activeRuntimeId)
+              .then((messages) => setItems(toItems(messages)))
               .catch((cause) => onError(String(cause)));
           }
           const manual = event.reason === "manual" || manualCompactionRef.current;
@@ -3042,11 +3044,8 @@ export function ConversationWorkspace({
           : {};
         if (typeof result.estimatedTokensAfter === "number")
           setReportedContextTokens(Math.max(0, result.estimatedTokensAfter));
-        const page = await desktop.command(
-          { type: "get_messages" },
-          session?.runtimeId,
-        ) as { messages?: Array<Record<string, unknown>> };
-        if (page.messages) setItems(toItems(page.messages));
+        const messages = await runtimeBranchMessages(session?.runtimeId);
+        setItems(toItems(messages));
         const reduction = typeof result.tokensBefore === "number" &&
             typeof result.estimatedTokensAfter === "number"
           ? `：${formatContextTokens(result.tokensBefore)} → ${formatContextTokens(result.estimatedTokensAfter)}`
@@ -3096,13 +3095,13 @@ export function ConversationWorkspace({
       pushNotification(en ? "Session statistics were added to notifications" : "会话统计已添加到通知中心");
       return true;
     }
-    const languageProjectCommand = languageServerPlugins.flatMap((plugin) => (plugin.commands ?? []).map((command) => ({ command, plugin }))).find(({ command }) => command.id === name);
+    const languageProjectCommand = languagePacks.flatMap((plugin) => (plugin.commands ?? []).map((command) => ({ command, plugin }))).find(({ command }) => command.id === name);
     if (languageProjectCommand?.command.kind === "project-manager") {
       const { plugin } = languageProjectCommand;
       const [operation, ...rootParts] = argumentsText.split(/\s+/);
       const projectRoot = rootParts.join(" ").trim();
       if (operation === "trace") {
-        const trace = await desktop.languageServerCall(plugin.id, "trace") as Array<{ elapsedMs?: number; error?: string; file?: string; method: string; phase: string; timestamp: number; version?: number }>;
+        const trace = await desktop.languagePackCall(plugin.id, "trace") as Array<{ elapsedMs?: number; error?: string; file?: string; method: string; phase: string; timestamp: number; version?: number }>;
         const text = trace.length
           ? trace.slice(-40).map((event) => `${new Date(event.timestamp).toLocaleTimeString()} ${event.phase.toUpperCase()} ${event.method}${event.version === undefined ? "" : ` v${event.version}`}${event.elapsedMs === undefined ? "" : ` ${event.elapsedMs}ms`}${event.error ? ` · ${event.error}` : ""}${event.file ? `\n  ${event.file}` : ""}`).join("\n")
           : (en ? "No language-service trace entries yet." : "尚无语言服务跟踪记录。");
@@ -3111,16 +3110,16 @@ export function ConversationWorkspace({
         return true;
       }
       if (operation === "unload" && projectRoot) {
-        await desktop.languageServerCall(plugin.id, "unload", projectRoot);
+        await desktop.languagePackCall(plugin.id, "unload", projectRoot);
         pushNotification(en ? "Language project unloaded" : "语言工程已卸载");
         return true;
       }
       if (operation === "restart" && projectRoot) {
-        await desktop.languageServerCall(plugin.id, "restart", projectRoot);
+        await desktop.languagePackCall(plugin.id, "restart", projectRoot);
         pushNotification(en ? "Language project restarted" : "语言工程已重启");
         return true;
       }
-      const projects = (await desktop.listLanguageServerProjects()).filter((project) => project.languageServerId === plugin.id);
+      const projects = (await desktop.listLanguagePackProjects()).filter((project) => project.packId === plugin.id);
       window.dispatchEvent(new Event("agent-k-show-cpp-projects"));
       const text = projects.length
         ? `${projects.map((project) => `${project.name}\n${project.root}\n${project.status}${project.error ? ` · ${project.error}` : ""}`).join("\n\n")}\n\n${en ? `Use /${name} restart <root> or unload <root>.` : `使用 /${name} restart <根路径> 或 unload <根路径> 管理工程。`}`
@@ -3214,9 +3213,13 @@ export function ConversationWorkspace({
     const after = await desktop.command(
       { type: "get_entries" },
       session.runtimeId,
-    ) as { leafId?: string | null };
+    ) as {
+      entries?: Array<Record<string, unknown>>;
+      leafId?: string | null;
+    };
     if ((after.leafId ?? null) !== expectedLeafId)
       throw new Error(en ? "Pi did not change the session tree position" : "Pi 未能切换会话树位置");
+    return after;
   };
   const selectCommandBranch = async (entryId: string) => {
     if (!session || running || compaction) return;
@@ -3226,12 +3229,11 @@ export function ConversationWorkspace({
       await cancelExtensionUi();
       clearSessionUi();
       if (kind === "tree") {
-        await navigateSessionTree(entryId);
-        const page = await desktop.command(
-          { type: "get_messages" },
-          session.runtimeId,
-        ) as { messages?: Array<Record<string, unknown>> };
-        const messages = page.messages ?? [];
+        const page = await navigateSessionTree(entryId) as {
+          entries?: Array<Record<string, unknown>>;
+          leafId?: string | null;
+        };
+        const messages = activeBranchMessages(page.entries ?? [], page.leafId);
         setItems(toItems(messages));
         setReportedContextTokens(latestContextTokens(messages));
         pushNotification(en ? "Session tree position changed" : "已切换会话树位置");
@@ -3302,7 +3304,7 @@ export function ConversationWorkspace({
     const filePaths = activeAttachments
       .filter((attachment) => attachment.kind !== "image")
       .map((attachment) => attachment.path);
-    const withFileReferences = (message: string, languageProjects: LanguageServerProject[]) => {
+    const withFileReferences = (message: string, languageProjects: LanguagePackProject[]) => {
       const additions = [
         filePaths.length
           ? `<attached_files>\n${filePaths
@@ -3328,7 +3330,7 @@ export function ConversationWorkspace({
     try {
       const modelMessage = await beforeSend(value);
       if (modelMessage === false) return;
-      const languageProjects = await desktop.listLanguageServerProjects().catch(() => []);
+      const languageProjects = await desktop.listLanguagePackProjects().catch(() => []);
       const outboundMessage = withFileReferences(running ? value : modelMessage, languageProjects);
       commitDraft("");
       setAttachments([]);
@@ -3483,14 +3485,11 @@ export function ConversationWorkspace({
       if (!target) throw new Error("无法定位这条消息的会话树节点");
       await cancelExtensionUi();
       clearSessionUi();
-      await navigateSessionTree(target.entryId);
-      const page = (await desktop.command(
-        { type: "get_messages" },
-        session.runtimeId,
-      )) as {
-        messages?: Array<Record<string, unknown>>;
+      const page = await navigateSessionTree(target.entryId) as {
+        entries?: Array<Record<string, unknown>>;
+        leafId?: string | null;
       };
-      const messages = page.messages ?? [];
+      const messages = activeBranchMessages(page.entries ?? [], page.leafId);
       setItems(toItems(messages));
       setReportedContextTokens(latestContextTokens(messages));
       commitDraft(query);
@@ -3543,12 +3542,11 @@ export function ConversationWorkspace({
 
       await cancelExtensionUi();
       clearSessionUi();
-      await navigateSessionTree(targetEntry.id);
-      const page = await desktop.command(
-        { type: "get_messages" },
-        session.runtimeId,
-      ) as { messages?: Array<Record<string, unknown>> };
-      const messages = page.messages ?? [];
+      const page = await navigateSessionTree(targetEntry.id) as {
+        entries?: Array<Record<string, unknown>>;
+        leafId?: string | null;
+      };
+      const messages = activeBranchMessages(page.entries ?? [], page.leafId);
       setItems(toItems(messages));
       setReportedContextTokens(latestContextTokens(messages));
       commitDraft("");
@@ -4405,7 +4403,37 @@ export function ConversationWorkspace({
           ))}
         {pendingSteer ? (
           <section className="pending-steer-card">
-            <span className="pending-steer-text">{pendingSteer.value || pendingSteer.attachments.map((attachment) => attachment.name).join(", ")}</span>
+            <div className="pending-steer-content">
+              {pendingSteer.value && (
+                <span className="pending-steer-text">{pendingSteer.value}</span>
+              )}
+              {pendingSteer.attachments.length > 0 && (
+                <div
+                  aria-label={en ? "Queued attachments" : "排队消息的附件"}
+                  className="pending-steer-attachments"
+                >
+                  {pendingSteer.attachments.map((attachment) => (
+                    <figure className={`is-${attachment.kind}`} key={attachment.id}>
+                      {attachment.previewUrl ? (
+                        <img alt={attachment.name} src={attachment.previewUrl} />
+                      ) : (
+                        <span className="pending-steer-attachment-icon">
+                          <i
+                            aria-hidden="true"
+                            className={
+                              attachment.kind === "document"
+                                ? "fa-regular fa-file-lines"
+                                : "fa-regular fa-file-code"
+                            }
+                          />
+                        </span>
+                      )}
+                      <figcaption title={attachment.name}>{attachment.name}</figcaption>
+                    </figure>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="pending-steer-actions">
               <button
                 aria-label={en ? "Steer" : "引导"}

@@ -24,9 +24,9 @@ interface AgentKBridge {
     invoke<T>(action: string, payload?: Record<string, unknown>): Promise<T>;
       onDebugRoot(listener: (root: string) => void): () => void;
       onDebugContext(listener: (context: { contextFile?: string; root: string }) => void): () => void;
-      onDebugProviderHit(listener: (languageServerId: string) => void): () => void;
+      onDebugProviderHit(listener: (packId: string) => void): () => void;
       onDebugToolTarget(listener: (target: string) => void): () => void;
-      onDebugToolProvider(listener: (languageServerId: string) => void): () => void;
+      onDebugToolProvider(listener: (packId: string) => void): () => void;
       onDebugToolSession(listener: (sessionId?: string) => void): () => void;
     onOpenEditorLocation(listener: (location: { column: number; line: number; path: string }) => void): () => void;
     onResized(listener: (state: AgentKWindowState) => void): () => void;

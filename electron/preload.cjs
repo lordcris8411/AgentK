@@ -55,7 +55,7 @@ contextBridge.exposeInMainWorld(
         return () => ipcRenderer.removeListener("agent-k:debug-context", wrapped);
       },
       onDebugProviderHit(listener) {
-        const wrapped = (_event, languageServerId) => listener(languageServerId);
+        const wrapped = (_event, packId) => listener(packId);
         ipcRenderer.on("agent-k:debug-provider-hit", wrapped);
         return () => ipcRenderer.removeListener("agent-k:debug-provider-hit", wrapped);
       },
@@ -65,7 +65,7 @@ contextBridge.exposeInMainWorld(
         return () => ipcRenderer.removeListener("agent-k:debug-tool-target", wrapped);
       },
       onDebugToolProvider(listener) {
-        const wrapped = (_event, languageServerId) => listener(languageServerId);
+        const wrapped = (_event, packId) => listener(packId);
         ipcRenderer.on("agent-k:debug-tool-provider", wrapped);
         return () => ipcRenderer.removeListener("agent-k:debug-tool-provider", wrapped);
       },

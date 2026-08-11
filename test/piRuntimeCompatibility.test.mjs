@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -26,6 +26,12 @@ const kPlanExtension = process.env.AGENT_K_TEST_K_PLAN_EXTENSION || join(
   "k-plan",
   "index.ts",
 );
+
+test("desktop startup waits for one Pi runtime instead of the full standby pool", async () => {
+  const source = await readFile(join(projectDirectory, "src", "App.tsx"), "utf8");
+  assert.match(source, /const warmWorkerCount = initialCwd \? 1 : 0;/u);
+  assert.doesNotMatch(source, /const warmWorkerCount = persistedSettings\.workerPoolSize;/u);
+});
 
 test("the pinned Pi runtime serves Agent K's RPC contract and extensions", { timeout: 30_000 }, async () => {
   const temporary = await mkdtemp(join(tmpdir(), "agent-k-pi-contract-"));

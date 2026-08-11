@@ -3,7 +3,6 @@ import "monaco-editor/esm/vs/editor/editor.all.js";
 import "monaco-editor/esm/vs/language/css/monaco.contribution";
 import "monaco-editor/esm/vs/language/html/monaco.contribution";
 import "monaco-editor/esm/vs/language/json/monaco.contribution";
-import "monaco-editor/esm/vs/language/typescript/monaco.contribution";
 import "monaco-editor/esm/vs/basic-languages/bat/bat.contribution";
 import "monaco-editor/esm/vs/basic-languages/cpp/cpp.contribution";
 import "monaco-editor/esm/vs/basic-languages/csharp/csharp.contribution";
@@ -37,7 +36,6 @@ import CssWorkerUrl from "monaco-editor/esm/vs/language/css/css.worker?worker&ur
 import EditorWorkerUrl from "monaco-editor/esm/vs/editor/editor.worker?worker&url";
 import HtmlWorkerUrl from "monaco-editor/esm/vs/language/html/html.worker?worker&url";
 import JsonWorkerUrl from "monaco-editor/esm/vs/language/json/json.worker?worker&url";
-import TypeScriptWorkerUrl from "monaco-editor/esm/vs/language/typescript/ts.worker?worker&url";
 
 // Monaco does not bundle a CMake grammar. Register the small, declarative
 // language here so every text-editor instance can use it for CMakeLists.txt
@@ -83,8 +81,9 @@ self.MonacoEnvironment = {
       return createWorker(CssWorkerUrl, name);
     if (label === "html" || label === "handlebars" || label === "razor")
       return createWorker(HtmlWorkerUrl, name);
-    if (label === "typescript" || label === "javascript")
-      return createWorker(TypeScriptWorkerUrl, name);
+    // JavaScript and TypeScript semantics belong to the hot-pluggable
+    // Language Pack. Their basic-language contributions above provide Monaco
+    // tokenization without starting Monaco's separate TypeScript worker.
     return createWorker(EditorWorkerUrl, name);
   },
 };
