@@ -7,7 +7,6 @@ function wait(delayMs: number, signal?: AbortSignal): Promise<void> {
     const timer = setTimeout(finish, delayMs);
     const abort = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); reject(signal?.reason ?? new Error("Download cancelled")); };
     signal?.addEventListener("abort", abort, { once: true });
-    timer.unref();
   });
 }
 
