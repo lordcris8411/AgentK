@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent K App</title>
+  <style>
+    :root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
+    body { margin: 0; padding: 24px; }
+    main { margin: 0 auto; max-width: 720px; }
+    textarea { box-sizing: border-box; min-height: 110px; width: 100%; }
+    button { margin-top: 10px; padding: 7px 12px; }
+    #status { opacity: .75; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Agent K App</h1>
+    <p>Enter a request for Pi.</p>
+    <textarea id="message" placeholder="Ask Pi to help with this project"></textarea>
+    <br><button id="send" type="button">Send to Pi</button>
+    <p id="status" role="status"></p>
+  </main>
+  <script>
+    const status = document.querySelector('#status');
+    document.querySelector('#send').addEventListener('click', async () => {
+      try {
+        const message = document.querySelector('#message').value.trim();
+        if (!message) return;
+        await AgentK.pi.send(message);
+        status.textContent = 'Request queued.';
+      } catch (error) {
+        status.textContent = String(error);
+      }
+    });
+  </script>
+</body>
+</html>

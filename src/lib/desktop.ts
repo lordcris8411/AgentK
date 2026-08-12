@@ -27,6 +27,31 @@ export type FileEntry = {
   isDir: boolean;
   loaded: boolean;
   children: FileEntry[];
+  iconPath?: string;
+  preview?: {
+    configPath?: string;
+    kind: "k-app" | "index" | "readme";
+    path: string;
+  };
+};
+export type KAppProcess = {
+  args: string[];
+  command: string;
+  cwd: string;
+  exitCode?: number;
+  exitedAt?: number;
+  id: string;
+  pid?: number;
+  signal?: string;
+  startedAt: number;
+  status: "running" | "exited" | "failed";
+  successful?: boolean;
+};
+export type KAppProcessOutput = {
+  stderr: string;
+  stderrCursor: number;
+  stdout: string;
+  stdoutCursor: number;
 };
 export type LanguagePackProject = { packId: string; packName: string; root: string; name: string; status: "preparing" | "configuring" | "starting" | "indexing" | "ready" | "failed" | "stopped"; error?: string; indexProgress?: string; [key: string]: unknown };
 export type LanguagePackTrace = { elapsedMs?: number; error?: string; file?: string; method: string; phase: "rejected" | "request" | "response" | "sent" | "timeout" | "write-error"; timestamp: number; version?: number };
@@ -410,10 +435,24 @@ export const desktop = {
     invoke<ArrayBuffer>("read_binary_file", { root, path }),
   saveTempAttachment: (name: string, data: number[]) =>
     invoke<string>("save_temp_attachment", { name, data }),
-  startPreview: (root: string, path: string, content: string) =>
-    invoke<string>("start_workspace_preview", { root, path, content }),
-  startWebProject: (root: string, path: string) =>
-    invoke<{ id: string; url: string }>("start_web_project", { root, path }),
+  startPreview: (root: string, path: string, content: string, appBridge = false) =>
+    invoke<string>("start_workspace_preview", { root, path, content, appBridge }),
+    startWebProject: (root: string, path: string) =>
+      invoke<{ id: string; url: string }>("start_web_project", { root, path }),
+    kAppProcessStart: (root: string, directory: string, command: string, args: string[], cwd = ".") =>
+      invoke<KAppProcess>("k_app_process_start", { args, command, cwd, directory, root }),
+    kAppProcessList: (root: string, directory: string) =>
+      invoke<KAppProcess[]>("k_app_process_list", { directory, root }),
+    kAppProcessStatus: (root: string, directory: string, id: string) =>
+      invoke<KAppProcess>("k_app_process_status", { directory, id, root }),
+    kAppProcessWait: (root: string, directory: string, id: string) =>
+      invoke<KAppProcess>("k_app_process_wait", { directory, id, root }),
+    kAppProcessOutput: (root: string, directory: string, id: string, stdoutCursor = 0, stderrCursor = 0) =>
+      invoke<KAppProcessOutput>("k_app_process_output", { directory, id, root, stderrCursor, stdoutCursor }),
+    kAppProcessStop: (root: string, directory: string, id: string) =>
+      invoke<KAppProcess>("k_app_process_stop", { directory, id, root }),
+    kAppProcessOpen: (root: string, directory: string, target: string) =>
+      invoke<{ opened: true }>("k_app_process_open", { directory, root, target }),
   listLanguagePacks: () => invoke<LanguagePack[]>("list_language_packs"),
   previewLanguagePack: (sourceDirectory: string) => invoke<LanguagePackPreview>("preview_language_pack", { sourceDirectory }),
   installLanguagePack: (sourceDirectory: string, approvalToken: string) => invoke<LanguagePack>("install_language_pack", { approvalToken, sourceDirectory }),

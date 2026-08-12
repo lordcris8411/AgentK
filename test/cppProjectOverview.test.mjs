@@ -19,7 +19,7 @@ test("Language Pack project folder selection owns Debug and README presentation"
   assert.doesNotMatch(inspectorSource, /languages\.includes\("cpp"\)/);
   assert.match(inspectorSource, /plugin\.projectMarkers\.some/);
   assert.match(inspectorSource, /selectedLanguageProject\?\.root \?\? absoluteWorkspacePath/);
-  assert.match(inspectorSource, /entry\.name\.toLocaleLowerCase\("en-US"\) === "readme\.md"/);
+  assert.match(inspectorSource, /selectedDirectoryPreview\?\.kind === "readme"/);
   assert.match(inspectorSource, /prepareAndOpenDebug\(selectedDebugLanguagePack, selectedProjectOverview\.root\)/);
   assert.match(inspectorSource, /await desktop\.languagePackCall\(plugin\.id, plugin\.debugServer\.prepareMethod\)[\s\S]*?await desktopWindow\.openDebug\(projectRoot\)/);
   assert.match(inspectorSource, /project\?: \{ packId: string; path: string \}/);
@@ -31,7 +31,7 @@ test("Language Pack project folder selection owns Debug and README presentation"
   assert.match(inspectorSource, /tab\.projectOverview\?\.name \?\? tab\.path/);
   assert.doesNotMatch(inspectorSource, /open\(selectedProjectReadmePath\)/);
   assert.match(inspectorSource, /const projectDirectoryEntry = current/);
-  assert.match(inspectorSource, /current\.projectOverview && current\.project \? findTreeEntry\(tree, current\.project\.path\) : undefined/);
+  assert.match(inspectorSource, /current\.projectOverview && current\.project[\s\S]*?findTreeEntry\(tree, current\.project\.path\)[\s\S]*?current\.directoryPath/);
   assert.match(inspectorSource, /current && !current\.unsupported && current\.format\?\.editable/);
   assert.match(inspectorSource, /if \(selectedLanguageProject\) void unloadLanguageProject/);
   assert.match(inspectorSource, /loadLanguageProject\(selectedLanguagePlugin, selectedProjectOverview\.root\)/);
@@ -73,6 +73,9 @@ test("project menu actions use the generic structured Language Pack capability",
 test("missing README action is delivered through the normal Pi prompt path", () => {
   assert.match(inspectorSource, /new CustomEvent\("agent-k-submit-prompt"/);
   assert.match(conversationSource, /submit\("queue", message, \[\]\)/);
+  assert.match(inspectorSource, /`directory:\$\{normalizedTreePath\(selectedDirectoryEntry\.path\)\}`/);
+  assert.match(inspectorSource, /This directory has no preview/);
+  assert.match(inspectorSource, /请分析目录 \$\{JSON\.stringify\(selectedReadmeTarget\.root\)\}/);
 });
 
 test("a staged steering message is submitted after the agent becomes idle", () => {

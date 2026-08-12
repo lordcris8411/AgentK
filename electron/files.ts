@@ -25,6 +25,9 @@ import {
 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { shell } from "electron";
+import { directoryPresentation, previewHtml } from "./directory-preview.js";
+import { loadKAppConfig } from "./k-app-config.js";
+import { canonicalWorkspaceRoot as canonicalRoot, confinedWorkspacePath as workspacePath } from "./workspace-path.js";
 import { activeBranchMessages } from "./session-history.js";
 import type { FileEntry, JsonObject, ProjectSummary, SessionSummary } from "./types.js";
 import {
@@ -44,6 +47,7 @@ const MIME_TYPES: Record<string, string> = {
   ".bmp": "image/bmp",
   ".css": "text/css; charset=utf-8",
   ".gif": "image/gif",
+  ".htm": "text/html; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".ico": "image/x-icon",
   ".jpeg": "image/jpeg",
@@ -59,25 +63,9 @@ const MIME_TYPES: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
-async function canonicalRoot(root: string): Promise<string> {
-  const path = await realpath(root);
-  if (!(await stat(path)).isDirectory()) throw new Error("Project root is not a directory");
-  return path;
-}
-
 function workspaceIdentity(value: string): string {
   const normalized = resolve(value);
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
-async function workspacePath(rootInput: string, requested: string): Promise<string> {
-  const root = await canonicalRoot(rootInput);
-  const candidate = isAbsolute(requested) ? requested : join(root, requested);
-  const parent = await realpath(dirname(candidate));
-  const normalized = join(parent, basename(candidate));
-  if (!isPathInside(root, normalized))
-    throw new Error("Path is outside the active project");
-  return normalized;
 }
 
 async function buildTree(root: string, target: string, depth: number): Promise<FileEntry> {
@@ -86,9 +74,13 @@ async function buildTree(root: string, target: string, depth: number): Promise<F
   const displayPath = relative(root, target);
   if (!metadata.isDirectory())
     return { path: displayPath, name, isDir: false, loaded: true, children: [] };
-  if (depth === 0)
-    return { path: displayPath, name, isDir: true, loaded: false, children: [] };
   const entries = await readdir(target, { withFileTypes: true });
+  const presentation = directoryPresentation(
+    displayPath,
+    entries.filter((entry) => entry.isFile()).map((entry) => entry.name),
+  );
+  if (depth === 0)
+    return { path: displayPath, name, isDir: true, loaded: false, children: [], ...presentation };
   const children = await Promise.all(
     entries
       .filter((entry) => !entry.isDirectory() || entry.name !== "node_modules")
@@ -98,7 +90,7 @@ async function buildTree(root: string, target: string, depth: number): Promise<F
     (left, right) =>
       Number(right.isDir) - Number(left.isDir) || left.name.localeCompare(right.name),
   );
-  return { path: displayPath, name, isDir: true, loaded: true, children };
+  return { path: displayPath, name, isDir: true, loaded: true, children, ...presentation };
 }
 
 function userFacingSessionText(text: string): string {
@@ -185,6 +177,7 @@ async function sessionSummary(path: string): Promise<SessionSummary | undefined>
 }
 
 type PreviewState = {
+  appBridgePaths: Set<string>;
   server: Server;
   port: number;
   token: string;
@@ -217,17 +210,6 @@ function previewRelativePath(
   } catch {
     return undefined;
   }
-}
-
-function previewHtml(body: Buffer, token: string): Buffer {
-  const prefix = `/${token}/`;
-  const rewritten = body.toString("utf8").replace(
-    /(\b(?:src|href|poster)\s*=\s*["'])\/(?!\/)/gi,
-    `$1${prefix}`,
-  );
-  return Buffer.from(
-    `${rewritten}<script>document.addEventListener('contextmenu',event=>event.preventDefault(),{capture:true})</script>`,
-  );
 }
 
 export class FileService {
@@ -486,17 +468,21 @@ export class FileService {
     return target;
   }
 
-  async startPreview(rootInput: string, path: string, content: string): Promise<string> {
+  async startPreview(rootInput: string, path: string, content: string, appBridge = false): Promise<string> {
     const root = await canonicalRoot(rootInput);
     const target = await workspacePath(root, path);
     if (!(await stat(target)).isFile()) throw new Error("预览目标不是文件");
+    if (appBridge) await loadKAppConfig(dirname(target), target);
     if (!this.preview) this.preview = await this.createPreviewServer(root);
     if (this.preview.root !== root) {
       this.preview.root = root;
       this.preview.overrides.clear();
+      this.preview.appBridgePaths.clear();
     }
     const relativePath = relative(root, target);
     this.preview.overrides.set(relativePath, Buffer.from(content));
+    if (appBridge) this.preview.appBridgePaths.add(relativePath);
+    else this.preview.appBridgePaths.delete(relativePath);
     const encoded = relativePath.split(sep).map(encodeURIComponent).join("/");
     return `http://127.0.0.1:${this.preview.port}/${this.preview.token}/${encoded}`;
   }
@@ -630,6 +616,7 @@ export class FileService {
 
   private async createPreviewServer(root: string): Promise<PreviewState> {
     const state: PreviewState = {
+      appBridgePaths: new Set(),
       server: createServer(),
       port: 0,
       token: randomId(),
@@ -658,7 +645,13 @@ export class FileService {
         if (!isPathInside(state.root, canonical)) throw new Error("Forbidden");
         let body = state.overrides.get(relative(state.root, canonical)) ?? await readFile(canonical);
         const contentType = MIME_TYPES[extname(canonical).toLowerCase()] ?? "application/octet-stream";
-        if (contentType.startsWith("text/html")) body = previewHtml(body, state.token);
+        if (contentType.startsWith("text/html")) {
+          body = previewHtml(
+            body,
+            state.token,
+            state.appBridgePaths.has(relative(state.root, canonical)),
+          );
+        }
         response.writeHead(200, {
           "Access-Control-Allow-Origin": "*",
           "Cache-Control": "no-store",

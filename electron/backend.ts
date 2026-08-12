@@ -56,6 +56,7 @@ import {
 import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
 import { mergeWorkspaceWatchKind, type WorkspaceWatchKind } from "./workspace-watch.js";
 import { mountedVolumes } from "./mounted-volumes.js";
+import { KAppProcessManager } from "./k-app-processes.js";
 import {
   LOCAL_MODEL_PROVIDER_ID,
   LocalModelManager,
@@ -80,6 +81,7 @@ export interface DesktopBackendOptions {
   emitProjectConsole(event: JsonObject): void;
   updateSplash(message: string, current: number, total: number, theme: string): void;
   finishSplash(): void;
+  openPath(path: string): Promise<string>;
 }
 
 type ProjectConsoleProcess = {
@@ -101,6 +103,7 @@ export class DesktopBackend {
   private localModels?: LocalModelManager;
   private readonly projectConsoles = new Map<string, ProjectConsoleProcess>();
   private readonly webProjects = new Map<string, ReturnType<typeof spawn>>();
+  private readonly kAppProcesses = new KAppProcessManager();
   private readonly languagePacks: LanguagePackRegistry;
   private workspaceWatcher?: FSWatcher;
   private themeWatcher?: FSWatcher;
@@ -635,9 +638,41 @@ export class DesktopBackend {
           requiredString(args.root, "root"),
           requiredString(args.path, "path"),
           requiredString(args.content, "content"),
+          args.appBridge === true,
         );
       case "start_web_project":
         return this.startWebProject(requiredString(args.root, "root"), requiredString(args.path, "path"));
+      case "k_app_process_start":
+        return this.kAppProcesses.start(
+          requiredString(args.root, "root"),
+          requiredString(args.directory, "directory"),
+          requiredString(args.command, "command"),
+          stringArray(args.args),
+          optionalString(args.cwd) ?? ".",
+        );
+      case "k_app_process_list":
+        return this.kAppProcesses.list(requiredString(args.root, "root"), requiredString(args.directory, "directory"));
+      case "k_app_process_status":
+        return this.kAppProcesses.status(requiredString(args.root, "root"), requiredString(args.directory, "directory"), requiredString(args.id, "id"));
+      case "k_app_process_wait":
+        return this.kAppProcesses.wait(requiredString(args.root, "root"), requiredString(args.directory, "directory"), requiredString(args.id, "id"));
+      case "k_app_process_output":
+        return this.kAppProcesses.output(
+          requiredString(args.root, "root"),
+          requiredString(args.directory, "directory"),
+          requiredString(args.id, "id"),
+          optionalNumber(args.stdoutCursor) ?? 0,
+          optionalNumber(args.stderrCursor) ?? 0,
+        );
+      case "k_app_process_stop":
+        return this.kAppProcesses.stop(requiredString(args.root, "root"), requiredString(args.directory, "directory"), requiredString(args.id, "id"));
+      case "k_app_process_open":
+        return this.kAppProcesses.open(
+          requiredString(args.root, "root"),
+          requiredString(args.directory, "directory"),
+          requiredString(args.target, "target"),
+          this.options.openPath,
+        );
       case "list_language_packs":
         return this.languagePacks.list();
       case "preview_language_pack":
@@ -728,6 +763,7 @@ export class DesktopBackend {
     for (const id of this.projectConsoles.keys()) this.stopProjectConsole(id);
     for (const child of this.webProjects.values()) child.kill();
     this.webProjects.clear();
+    this.kAppProcesses.shutdown();
     this.pool?.shutdown();
     await this.localModels?.shutdown();
     await this.languagePacks.shutdown();
@@ -970,6 +1006,10 @@ function requiredString(value: unknown, name: string): string {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function requiredLocalModelHub(value: unknown): Exclude<LocalModelSource, "import"> {

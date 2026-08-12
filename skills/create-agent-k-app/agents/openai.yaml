@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Agent K App"
+  short_description: "Create and validate secure Agent K k-apps"
+  default_prompt: "Use $create-agent-k-app to create a k-app in the current project."

@@ -32,6 +32,7 @@ import {
   type PluginEditorHandle,
 } from "../../features/file-formats/PluginEditorFrame";
 import { matchesProjectMarker } from "../../features/extensions/projectMarkers";
+import { directoryAppWorkspacePath } from "../../features/file-formats/directoryPreview";
 
 type Tab = {
   binary?: ArrayBuffer;
@@ -52,6 +53,15 @@ type Tab = {
   loadError?: string;
   webPreviewUrl?: string;
   webPreviewReloadToken?: number;
+  directoryPreview?: {
+    appBridge: boolean;
+    kApp: boolean;
+    developmentServer?: boolean;
+    directoryPath: string;
+    name: string;
+    sourcePath: string;
+  };
+  directoryPath?: string;
 };
 type WorkspaceEditorState = {
   active?: string;
@@ -250,10 +260,24 @@ function mergeFileTree(fresh: FileEntry, previous?: FileEntry): FileEntry {
     return fresh.name === previous.name && fresh.loaded === previous.loaded
       ? previous
       : fresh;
-  if (!fresh.loaded && previous.loaded) return previous;
+  const samePresentation =
+    fresh.iconPath === previous.iconPath &&
+    fresh.preview?.configPath === previous.preview?.configPath &&
+    fresh.preview?.kind === previous.preview?.kind &&
+    fresh.preview?.path === previous.preview?.path;
+  if (!fresh.loaded && previous.loaded) {
+    if (fresh.name === previous.name && samePresentation) return previous;
+    return {
+      ...previous,
+      iconPath: fresh.iconPath,
+      name: fresh.name,
+      preview: fresh.preview,
+    };
+  }
   if (!fresh.loaded || !previous.loaded)
     return fresh.name === previous.name &&
       fresh.loaded === previous.loaded &&
+      samePresentation &&
       fresh.children.length === previous.children.length
       ? previous
       : fresh;
@@ -266,6 +290,7 @@ function mergeFileTree(fresh: FileEntry, previous?: FileEntry): FileEntry {
   if (
     fresh.name === previous.name &&
     fresh.loaded === previous.loaded &&
+    samePresentation &&
     children.length === previous.children.length &&
     children.every((entry, index) => entry === previous.children[index])
   ) return previous;
@@ -294,6 +319,13 @@ function findTreeEntry(tree: FileEntry | undefined, path: string): FileEntry | u
     if (found) return found;
   }
   return undefined;
+}
+function treePathForTab(tab: Tab): string {
+  return tab.directoryPath ?? (tab.projectOverview ? tab.project?.path ?? tab.path : tab.path);
+}
+function treePathPrefixes(path: string): string[] {
+  const parts = path.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+  return ["", ...parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join("/"))];
 }
 function parentDirectoryPath(path: string): string {
   const normalized = path.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
@@ -467,7 +499,7 @@ function isWebProjectDirectory(entry: FileEntry): boolean {
   if (!entry.isDir) return false;
   const names = new Set(entry.children.filter((child) => !child.isDir).map((child) => child.name.toLowerCase()));
   return ["vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"].some((name) => names.has(name))
-    || names.has("package.json") && names.has("index.html");
+    || names.has("package.json") && (names.has("index.html") || names.has("index.htm"));
 }
 
 function normalizedTreePath(path: string): string {
@@ -504,6 +536,7 @@ function detectedLanguageProjectPlugins(
 
 const Tree = memo(function Tree({
   entry,
+  root,
   languageProjectsByPath,
   loadDirectory,
   open,
@@ -514,6 +547,7 @@ const Tree = memo(function Tree({
   startPointerDrag,
 }: {
   entry: FileEntry;
+  root?: string;
   languageProjectsByPath: ReadonlyMap<string, TreeLanguageProjectStatus>;
   loadDirectory(path: string): void;
   open(path: string): void;
@@ -582,10 +616,16 @@ const Tree = memo(function Tree({
           />
           <span
             aria-hidden="true"
-            className={`tree-folder-icons${cmakeSolution ? " cmake-solution-icon" : webProject ? " web-project-icon" : ""}`}
-            title={cmakeSolution ? "CMake C++ project" : webProject ? "Web project" : undefined}
+            className={`tree-folder-icons${entry.iconPath ? " custom-folder-icon" : cmakeSolution ? " cmake-solution-icon" : webProject ? " web-project-icon" : ""}`}
+            title={entry.iconPath ? entry.iconPath : cmakeSolution ? "CMake C++ project" : webProject ? "Web project" : undefined}
           >
-            {cmakeSolution ? (
+            {entry.iconPath && root ? (
+              <img
+                alt=""
+                className="tree-folder-custom-icon"
+                src={platform.fileUrl(absoluteWorkspacePath(root, entry.iconPath))}
+              />
+            ) : cmakeSolution ? (
               <span className="cmake-cpp-badge">C++</span>
             ) : webProject ? (
               <i className="fa-solid fa-globe" />
@@ -601,6 +641,7 @@ const Tree = memo(function Tree({
         <Tree
           entry={child}
           key={child.path}
+          root={root}
           languageProjectsByPath={languageProjectsByPath}
           loadDirectory={loadDirectory}
           open={open}
@@ -747,6 +788,7 @@ export function InspectorPanel({
   const inspectorRef = useRef<HTMLElement>(null);
   const fileTreeRef = useRef<HTMLDivElement>(null);
   const editorBodyRef = useRef<HTMLDivElement>(null);
+  const directoryAppFrameRef = useRef<HTMLIFrameElement>(null);
   const pluginEditorRef = useRef<PluginEditorHandle | null>(null);
   const activePathRef = useRef<string | undefined>(undefined);
   const tabsRef = useRef<Tab[]>([]);
@@ -940,11 +982,18 @@ export function InspectorPanel({
     const restored = root
       ? workspaceEditorStates.current.get(root)
       : undefined;
+    // Directory preview URLs are capabilities owned by the preview server's
+    // current workspace. Reopen them from the tree instead of restoring a URL
+    // that may now point at another workspace.
+    const restoredTabs = restored?.tabs.filter((tab) => !tab.directoryPreview) ?? [];
+    const restoredActive = restored?.active && restoredTabs.some((tab) => tab.path === restored.active)
+      ? restored.active
+      : restoredTabs.at(-1)?.path;
     tabsRoot.current = root;
     activationRequest.current += 1;
-    setTabs(restored?.tabs ?? []);
-    setActive(restored?.active);
-    activePathRef.current = restored?.active;
+    setTabs(restoredTabs);
+    setActive(restoredActive);
+    activePathRef.current = restoredActive;
     setResults([]);
     setTree(undefined);
     treeRef.current = undefined;
@@ -1218,6 +1267,42 @@ export function InspectorPanel({
   useLayoutEffect(() => {
     paintTreeSelection(selectedEntryRef.current?.path);
   }, [paintTreeSelection, query, tree]);
+  useLayoutEffect(() => {
+    if (!active || tabsRoot.current !== root) return;
+    const tab = tabsRef.current.find((candidate) => candidate.path === active);
+    if (!tab) return;
+    const targetPath = treePathForTab(tab);
+    const entry = findTreeEntry(treeRef.current, targetPath);
+    if (!entry) {
+      // Agent-opened and restored tabs can point below a directory which has
+      // not been expanded yet. Load the first missing level; this effect runs
+      // again with the merged tree until the target becomes visible.
+      for (const prefix of treePathPrefixes(targetPath)) {
+        const ancestor = findTreeEntry(treeRef.current, prefix);
+        if (!ancestor?.isDir || ancestor.loaded) continue;
+        const details = fileTreeRef.current?.querySelector<HTMLDetailsElement>(
+          `details[data-directory-path="${CSS.escape(ancestor.path)}"]`,
+        );
+        if (details) details.open = true;
+        void loadDirectory(ancestor.path);
+        break;
+      }
+      return;
+    }
+    selectedEntryRef.current = entry;
+    setSelectedEntry((current) => current?.path === entry.path ? current : entry);
+    const container = fileTreeRef.current;
+    if (!container) return;
+    for (const prefix of treePathPrefixes(targetPath)) {
+      const details = container.querySelector<HTMLDetailsElement>(
+        `details[data-directory-path="${CSS.escape(prefix)}"]`,
+      );
+      if (details) details.open = true;
+    }
+    paintTreeSelection(entry.path);
+    container.querySelector<HTMLElement>(`[data-tree-path="${CSS.escape(entry.path)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [active, loadDirectory, paintTreeSelection, root, tree]);
   const activateTab = (path: string) => {
     const pathKey = path.replaceAll("\\", "/").toLocaleLowerCase("en-US");
     const liveTabs = tabsRef.current;
@@ -1538,6 +1623,113 @@ export function InspectorPanel({
   useEffect(() => {
     if (current?.webPreviewUrl) styleWebPreviewScrollbars(current.webPreviewUrl);
   }, [current?.webPreviewUrl, styleWebPreviewScrollbars]);
+  useEffect(() => {
+    const preview = current?.directoryPreview;
+    const previewUrl = current?.webPreviewUrl;
+    const frame = directoryAppFrameRef.current;
+    if (!root || !preview?.appBridge || !frame || !previewUrl) return;
+    const receive = (event: MessageEvent) => {
+      const request = event.data as {
+        arguments?: Record<string, unknown>;
+        method?: unknown;
+        requestId?: unknown;
+        type?: unknown;
+      };
+      if (
+        event.source !== frame.contentWindow ||
+        request?.type !== "agent-k-directory-app-request" ||
+        typeof request.requestId !== "string" ||
+        typeof request.method !== "string"
+      ) return;
+      const respond = (response: { error?: string; ok: boolean; result?: unknown }) =>
+        frame.contentWindow?.postMessage({
+          type: "agent-k-directory-app-response",
+          requestId: request.requestId,
+          ...response,
+        }, "*");
+      const args = request.arguments ?? {};
+      void (async () => {
+        if (request.method === "files.read") {
+          if (typeof args.path !== "string") throw new Error("files.read requires a path");
+          return desktop.read(root, directoryAppWorkspacePath(preview.directoryPath, args.path));
+        }
+        if (request.method === "files.write") {
+          if (typeof args.path !== "string" || typeof args.content !== "string")
+            throw new Error("files.write requires path and content strings");
+          await desktop.write(
+            root,
+            directoryAppWorkspacePath(preview.directoryPath, args.path),
+            args.content,
+          );
+          refresh(true);
+          return { ok: true };
+        }
+        if (request.method === "files.list") {
+          const requestedPath = typeof args.path === "string" ? args.path : ".";
+          const directory = directoryAppWorkspacePath(preview.directoryPath, requestedPath);
+          const entry = await desktop.directory(root, directory, 1);
+          const appRelativeDirectory = requestedPath
+            .replaceAll("\\", "/")
+            .replace(/^\.\/?|\/+$/g, "");
+          return entry.children.map((child) => ({
+            isDirectory: child.isDir,
+            name: child.name,
+            path: [appRelativeDirectory, child.name].filter(Boolean).join("/"),
+          }));
+        }
+        if (request.method === "pi.send") {
+          if (typeof args.message !== "string" || !args.message.trim())
+            throw new Error("pi.send requires a non-empty message");
+          window.dispatchEvent(new CustomEvent("agent-k-submit-prompt", {
+            detail: { message: args.message },
+          }));
+          return { queued: true };
+        }
+        if (request.method === "processes.start") {
+          if (typeof args.command !== "string" || !Array.isArray(args.args) ||
+              args.args.some((argument) => typeof argument !== "string"))
+            throw new Error("processes.start requires command and a string arguments array");
+          return desktop.kAppProcessStart(
+            root,
+            preview.directoryPath,
+            args.command,
+            args.args as string[],
+            typeof args.cwd === "string" ? args.cwd : ".",
+          );
+        }
+        if (request.method === "processes.list")
+          return desktop.kAppProcessList(root, preview.directoryPath);
+        if (request.method === "processes.open") {
+          if (typeof args.target !== "string") throw new Error("processes.open requires a target");
+          return desktop.kAppProcessOpen(root, preview.directoryPath, args.target);
+        }
+        if (request.method === "processes.status" || request.method === "processes.wait" || request.method === "processes.stop") {
+          if (typeof args.id !== "string") throw new Error(`${request.method} requires an id`);
+          if (request.method === "processes.status")
+            return desktop.kAppProcessStatus(root, preview.directoryPath, args.id);
+          return request.method === "processes.wait"
+            ? desktop.kAppProcessWait(root, preview.directoryPath, args.id)
+            : desktop.kAppProcessStop(root, preview.directoryPath, args.id);
+        }
+        if (request.method === "processes.output") {
+          if (typeof args.id !== "string") throw new Error("processes.output requires an id");
+          return desktop.kAppProcessOutput(
+            root,
+            preview.directoryPath,
+            args.id,
+            typeof args.stdoutCursor === "number" ? args.stdoutCursor : 0,
+            typeof args.stderrCursor === "number" ? args.stderrCursor : 0,
+          );
+        }
+        throw new Error(`Unsupported Agent K app method: ${request.method}`);
+      })().then(
+        (result) => respond({ ok: true, result }),
+        (cause) => respond({ ok: false, error: String(cause) }),
+      );
+    };
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, [current?.directoryPreview, current?.webPreviewUrl, root]);
   const currentLanguageProject = root && current
     ? languageProjects.filter((project) => {
       const file = absoluteWorkspacePath(root, current.path).replaceAll("\\", "/").toLowerCase(); const projectRoot = project.root.replaceAll("\\", "/").toLowerCase(); return file.startsWith(`${projectRoot}/`) || file === projectRoot;
@@ -1564,7 +1756,11 @@ export function InspectorPanel({
   // The floating toolbar belongs to the active editor tab. Tree selection is
   // used only when no tab is open, so actions cannot remain from another project.
   const projectDirectoryEntry = current
-    ? current.projectOverview && current.project ? findTreeEntry(tree, current.project.path) : undefined
+    ? current.projectOverview && current.project
+      ? findTreeEntry(tree, current.project.path)
+      : current.directoryPath !== undefined
+        ? findTreeEntry(tree, current.directoryPath)
+        : undefined
     : selectedDirectoryEntry;
   const selectedLanguageProject = root && projectDirectoryEntry
     ? languageProjects.find((project) =>
@@ -1613,25 +1809,44 @@ export function InspectorPanel({
       },
     }));
   };
-  const selectedProjectReadme = selectedTreeLanguageProject && selectedDirectoryEntry
-    ? selectedDirectoryEntry.children.find((entry) =>
-        !entry.isDir && entry.name.toLocaleLowerCase("en-US") === "readme.md",
-      )
+  const selectedDirectoryPreview = selectedDirectoryEntry?.preview;
+  const selectedDirectoryWebProject = Boolean(
+    selectedDirectoryEntry && isWebProjectDirectory(selectedDirectoryEntry),
+  );
+  const selectedReadmeTarget = root && current?.projectOverview && projectDirectoryEntry
+    ? {
+        isLanguageProject: Boolean(selectedLanguagePlugin),
+        name: projectDirectoryEntry.name,
+        root: absoluteWorkspacePath(root, projectDirectoryEntry.path),
+      }
     : undefined;
-  const selectedProjectReadmePath = selectedProjectReadme?.path;
-  const showCreateProjectReadme = Boolean(current?.projectOverview && !current.projectOverview.readmePath);
+  const showCreateProjectReadme = Boolean(
+    current?.projectOverview &&
+    !current.directoryPreview &&
+    !current.projectOverview.readmePath,
+  );
   useEffect(() => {
-    if (!root || !selectedTreeLanguageProject || !selectedDirectoryEntry || !selectedTreeLanguagePlugin) return;
+    if (!root || !selectedDirectoryEntry) return;
+    // An unloaded entry already carries its direct-child preview metadata, but
+    // needs one directory load before we can tell whether index.html belongs
+    // to a Vite/npm application that requires its development server.
+    if (selectedDirectoryPreview?.kind === "index" && !selectedDirectoryEntry.loaded) return;
     let disposed = false;
-    const projectTabPath = `project-overview:${selectedTreeLanguagePlugin.id}:${normalizedTreePath(selectedDirectoryEntry.path)}`;
+    const projectTabPath = selectedTreeLanguagePlugin
+      ? `project-overview:${selectedTreeLanguagePlugin.id}:${normalizedTreePath(selectedDirectoryEntry.path)}`
+      : `directory:${normalizedTreePath(selectedDirectoryEntry.path)}`;
     void (async () => {
       let content = "";
       let format: FileFormatPlugin | undefined;
       let mimeType: string | undefined;
-      if (selectedProjectReadmePath) {
-        content = await desktop.read(root, selectedProjectReadmePath);
-        const absoluteReadmePath = absoluteWorkspacePath(root, selectedProjectReadmePath);
-        const match = fileMatchContext(selectedProjectReadmePath, absoluteReadmePath);
+      let webPreviewUrl: string | undefined;
+      let developmentServer = false;
+      if (selectedDirectoryPreview) {
+        content = await desktop.read(root, selectedDirectoryPreview.path);
+      }
+      if (selectedDirectoryPreview?.kind === "readme") {
+        const absoluteReadmePath = absoluteWorkspacePath(root, selectedDirectoryPreview.path);
+        const match = fileMatchContext(selectedDirectoryPreview.path, absoluteReadmePath);
         let plugins = fileFormatPlugins;
         if (!plugins.length) {
           plugins = (await desktop.fileFormatPlugins(root)) as FileFormatPlugin[];
@@ -1640,18 +1855,66 @@ export function InspectorPanel({
         }
         format = resolveFileFormat(match, plugins, settings.disabledFileEditors);
         mimeType = match.mimeType;
+      } else if (selectedDirectoryPreview) {
+        const existing = tabsRef.current.find((tab) => tab.path === projectTabPath);
+        if (
+          selectedDirectoryPreview.kind === "index" &&
+          selectedDirectoryWebProject
+        ) {
+          if (existing?.directoryPreview?.developmentServer && existing.webPreviewUrl) {
+            webPreviewUrl = existing.webPreviewUrl;
+            developmentServer = true;
+          } else {
+            try {
+              webPreviewUrl = (await desktop.startWebProject(
+                root,
+                selectedDirectoryEntry.path,
+              )).url;
+              developmentServer = true;
+            } catch {
+              // A static index remains useful when dependencies are absent or
+              // the declared development server cannot start.
+              webPreviewUrl = await desktop.startPreview(
+                root,
+                selectedDirectoryPreview.path,
+                content,
+              );
+            }
+          }
+        } else {
+          webPreviewUrl = await desktop.startPreview(
+            root,
+            selectedDirectoryPreview.path,
+            content,
+          selectedDirectoryPreview.kind === "k-app",
+          );
+        }
       }
       if (disposed) return;
-      const project = { packId: selectedTreeLanguagePlugin.id, path: selectedDirectoryEntry.path };
+      const project = selectedTreeLanguagePlugin
+        ? { packId: selectedTreeLanguagePlugin.id, path: selectedDirectoryEntry.path }
+        : undefined;
       const projectOverview = {
         name: selectedDirectoryEntry.name,
-        ...(selectedProjectReadmePath ? { readmePath: selectedProjectReadmePath } : {}),
+        ...(selectedDirectoryPreview?.kind === "readme"
+          ? { readmePath: selectedDirectoryPreview.path }
+          : {}),
       };
+      const directoryPreview = selectedDirectoryPreview ? {
+        appBridge: selectedDirectoryPreview.kind === "k-app",
+        kApp: selectedDirectoryPreview.kind === "k-app",
+        ...(developmentServer ? { developmentServer: true } : {}),
+        directoryPath: selectedDirectoryEntry.path,
+        name: selectedDirectoryEntry.name,
+        sourcePath: selectedDirectoryPreview.path,
+      } : undefined;
       setTabs((currentTabs) => {
         const existing = currentTabs.find((tab) => tab.path === projectTabPath);
         const projectTab: Tab = {
           ...(existing ?? {}),
           content,
+          directoryPath: selectedDirectoryEntry.path,
+          directoryPreview,
           format,
           mimeType,
           path: projectTabPath,
@@ -1659,20 +1922,33 @@ export function InspectorPanel({
           project,
           projectOverview,
           saved: content,
+          webPreviewUrl,
         };
         return existing
           ? currentTabs.map((tab) => tab.path === projectTabPath ? projectTab : tab)
           : [...currentTabs, projectTab];
       });
       activateTab(projectTabPath);
+      const selectedRoot = absoluteWorkspacePath(root, selectedDirectoryEntry.path);
       setReadmeRequestedProject((requested) =>
-        requested === selectedTreeLanguageProject.root ? undefined : requested,
+        requested === selectedRoot
+          ? undefined
+          : requested,
       );
     })().catch((cause) => {
       if (!disposed) onError(`无法预览工程：${String(cause)}`);
     });
     return () => { disposed = true; };
-  }, [selectedProjectReadmePath, selectedTreeLanguageProject?.root, treeSelectionRevision]);
+  }, [
+    selectedDirectoryPreview?.kind,
+    selectedDirectoryPreview?.path,
+    selectedDirectoryEntry?.path,
+    selectedDirectoryEntry?.loaded,
+    selectedDirectoryWebProject,
+    selectedTreeLanguagePlugin?.id,
+    selectedTreeLanguageProject?.root,
+    treeSelectionRevision,
+  ]);
   const contextLanguagePlugin = contextMenu?.entry.isDir
     ? detectedLanguageProjects.get(normalizedTreePath(contextMenu.entry.path))
     : undefined;
@@ -2379,6 +2655,7 @@ export function InspectorPanel({
             {!query.trim() && tree ? (
               <Tree
                 entry={tree}
+                root={root}
                 languageProjectsByPath={languageProjectsByTreePath}
                 loadDirectory={treeLoadDirectory}
                 open={treeOpen}
@@ -2698,35 +2975,41 @@ export function InspectorPanel({
               <i aria-hidden="true" className="fa-solid fa-triangle-exclamation" />
               <span>{current.loadError}</span>
             </div>
-          ) : showCreateProjectReadme && selectedProjectOverview ? (
+          ) : showCreateProjectReadme && selectedReadmeTarget ? (
             <div className="cpp-project-readme-empty">
               <i aria-hidden="true" className="fa-regular fa-file-lines" />
-              <strong>{en ? "This C++ project has no README.md" : "这个 C++ 工程还没有 README.md"}</strong>
-              <p>{en ? "Ask Pi to inspect the project and create an introductory README." : "可以让 Pi 分析工程结构并创建项目说明。"}</p>
+              <strong>{selectedReadmeTarget.isLanguageProject
+                ? en ? "This project has no README.md" : "这个代码项目还没有 README.md"
+                : en ? "This directory has no preview" : "这个目录没有可预览内容"}</strong>
+              <p>{selectedReadmeTarget.isLanguageProject
+                ? en ? "Ask Pi to inspect the project and create an introductory README." : "可以让 Pi 分析工程结构并创建项目说明。"
+                : en ? "Ask Pi to inspect the directory and create a README.md preview." : "可以让 Pi 分析目录内容并创建 README.md 预览。"}</p>
               <button
-                disabled={readmeRequestedProject === selectedProjectOverview.root}
+                disabled={readmeRequestedProject === selectedReadmeTarget.root}
                 onClick={() => {
-                  setReadmeRequestedProject(selectedProjectOverview.root);
+                  setReadmeRequestedProject(selectedReadmeTarget.root);
                   window.dispatchEvent(new CustomEvent("agent-k-submit-prompt", {
                     detail: {
-                      message: `请分析语言工程 ${JSON.stringify(selectedProjectOverview.root)}，并在该工程根目录创建 README.md。README 应准确说明项目用途、主要目录结构、依赖、构建和运行方法。请使用可用的文件工具实际创建文件，不要只在回复中给出内容。`,
+                      message: selectedReadmeTarget.isLanguageProject
+                        ? `请分析语言工程 ${JSON.stringify(selectedReadmeTarget.root)}，并在该工程根目录创建 README.md。README 应准确说明项目用途、主要目录结构、依赖、构建和运行方法。请使用可用的文件工具实际创建文件，不要只在回复中给出内容。`
+                        : `请分析目录 ${JSON.stringify(selectedReadmeTarget.root)} 中的内容，并在该目录创建 README.md，准确说明目录用途、主要文件和使用方法。请使用可用的文件工具实际创建文件，不要只在回复中给出内容。`,
                     },
                   }));
                 }}
                 type="button"
               >
-                <i aria-hidden="true" className={readmeRequestedProject === selectedProjectOverview.root ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-wand-magic-sparkles"} />
-                {readmeRequestedProject === selectedProjectOverview.root
+                <i aria-hidden="true" className={readmeRequestedProject === selectedReadmeTarget.root ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-wand-magic-sparkles"} />
+                {readmeRequestedProject === selectedReadmeTarget.root
                   ? en ? "Pi is creating README.md…" : "Pi 正在创建 README.md…"
                   : en ? "Create README.md with Pi" : "使用 Pi 创建 README.md"}
               </button>
             </div>
           ) : current?.webPreviewUrl ? (
             <>
-              <div className="web-project-preview-actions">
+              {!current.directoryPreview?.kApp ? <div className="web-project-preview-actions">
                 <span>{en ? "Web Preview" : "网站预览"}</span>
                 <div className="web-project-preview-left-actions">
-                  <button
+                  {!current.directoryPreview?.appBridge ? <button
                     onClick={() => void desktop.openExternalUrl(current.webPreviewUrl!, settings.browserId)
                       .catch((cause) => onError(`无法在外部浏览器中打开：${String(cause)}`))}
                     title={en ? "Open in external browser" : "在外部浏览器中打开"}
@@ -2734,7 +3017,7 @@ export function InspectorPanel({
                   >
                     <i aria-hidden="true" className="fa-solid fa-arrow-up-right-from-square" />
                     {en ? "Browser" : "外部浏览器"}
-                  </button>
+                  </button> : null}
                   <button
                     onClick={() => setTabs((currentTabs) => currentTabs.map((tab) =>
                       tab.path === current.path
@@ -2756,14 +3039,20 @@ export function InspectorPanel({
                     {en ? "Capture" : "抓图"}
                   </button>
                 </div>
-              </div>
+              </div> : null}
               <iframe
                 allow="autoplay; fullscreen"
                 className="web-project-preview"
                 key={current.webPreviewReloadToken ?? 0}
                 onLoad={() => styleWebPreviewScrollbars(current.webPreviewUrl!)}
+                ref={current.directoryPreview ? directoryAppFrameRef : undefined}
+                sandbox={current.directoryPreview?.appBridge
+                  ? "allow-downloads allow-forms allow-modals allow-scripts"
+                  : undefined}
                 src={current.webPreviewUrl}
-                title={en ? "Web project preview" : "Web 项目预览"}
+                title={current.directoryPreview
+                  ? `${current.directoryPreview.name} · ${en ? "Directory preview" : "目录预览"}`
+                  : en ? "Web project preview" : "Web 项目预览"}
               />
             </>
           ) : current?.unsupported ? (

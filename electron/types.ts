@@ -61,6 +61,12 @@ export interface FileEntry {
   isDir: boolean;
   loaded: boolean;
   children: FileEntry[];
+  iconPath?: string;
+  preview?: {
+    configPath?: string;
+    kind: "k-app" | "index" | "readme";
+    path: string;
+  };
 }
 
 export interface PiResource {

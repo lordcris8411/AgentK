@@ -989,6 +989,7 @@ async function start(): Promise<void> {
     emitProjectConsole: sendProjectConsoleEvent,
     updateSplash,
     finishSplash,
+    openPath: (path) => shell.openPath(path),
   });
   backendReady = backend.initialize();
   try {
