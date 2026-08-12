@@ -98,6 +98,7 @@ let backendReady: Promise<void> | undefined;
 let quitting = false;
 let shutdownComplete = false;
 let shutdownStarted = false;
+const ASSISTANT_STREAM_FRAME_MS = 16;
 const pendingAssistantEvents = new Map<string, {
   event: JsonObject;
   timer: NodeJS.Timeout;
@@ -169,7 +170,10 @@ function emitBackendEvent(event: JsonObject): void {
     }
     pendingAssistantEvents.set(runtimeKey, {
       event,
-      timer: setTimeout(() => flushAssistantEvent(runtimeKey), 50),
+      timer: setTimeout(
+        () => flushAssistantEvent(runtimeKey),
+        ASSISTANT_STREAM_FRAME_MS,
+      ),
     });
     return;
   }

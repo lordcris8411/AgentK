@@ -40,6 +40,7 @@ import { AgentKLogo } from "../../components/AgentKLogo";
 import { activeBranchMessages } from "./sessionHistory";
 
 type ToolCall = { id?: string; name: string; args: Record<string, unknown> };
+const ASSISTANT_STREAM_FRAME_MS = 16;
 
 async function runtimeBranchMessages(runtimeId?: string) {
   const page = await desktop.command(
@@ -1819,7 +1820,7 @@ export function ConversationWorkspace({
     if (assistantUpdateTimer.current === undefined)
       assistantUpdateTimer.current = window.setTimeout(
         () => flushAssistantUpdate(),
-        50,
+        ASSISTANT_STREAM_FRAME_MS,
       );
   }, [flushAssistantUpdate]);
   const openMessageContextMenu = useCallback((event: React.MouseEvent, item: Item) => {

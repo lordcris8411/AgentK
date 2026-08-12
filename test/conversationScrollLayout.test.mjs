@@ -10,6 +10,23 @@ const themeSource = await readFile(
   new URL("../src/styles/theme.css", import.meta.url),
   "utf8",
 );
+const electronMainSource = await readFile(
+  new URL("../electron/main.ts", import.meta.url),
+  "utf8",
+);
+
+test("assistant streaming updates use a 16 ms frame window end to end", () => {
+  assert.match(workspaceSource, /const ASSISTANT_STREAM_FRAME_MS = 16;/);
+  assert.match(
+    workspaceSource,
+    /window\.setTimeout\(\s*\(\) => flushAssistantUpdate\(\),\s*ASSISTANT_STREAM_FRAME_MS,/s,
+  );
+  assert.match(electronMainSource, /const ASSISTANT_STREAM_FRAME_MS = 16;/);
+  assert.match(
+    electronMainSource,
+    /setTimeout\(\s*\(\) => flushAssistantEvent\(runtimeKey\),\s*ASSISTANT_STREAM_FRAME_MS,/s,
+  );
+});
 
 test("conversation scroll height includes a real composer clearance element", () => {
   assert.match(
