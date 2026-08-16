@@ -575,6 +575,7 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
           onDoubleClick={() => void toggleMaximize()}
         />
         <div className="window-controls">
+          <span className="window-editor-placement-control" id="window-editor-placement-control" />
           <button
             aria-label={en ? "Minimize" : "最小化"}
             onClick={() => void appWindow.minimize()}

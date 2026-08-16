@@ -237,7 +237,7 @@ export type ProviderCatalogItem = {
   source: "builtin" | "custom" | "extension";
   configured: boolean;
   authMethods: Array<"api_key" | "oauth">;
-  models: Array<{ id: string; name?: string; contextWindow?: number; reasoning?: boolean }>;
+  models: ProviderModelDraft[];
   agentKManaged?: boolean;
 };
 
@@ -249,8 +249,17 @@ export type ProviderDraft = {
   baseUrl: string;
   api: string;
   apiKey: string;
-  models: Array<{ id: string; name?: string; contextWindow?: number; reasoning?: boolean }>;
+  models: ProviderModelDraft[];
   local: boolean;
+};
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ProviderModelDraft = {
+  id: string;
+  name?: string;
+  contextWindow?: number;
+  reasoning?: boolean;
+  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+  assessment?: { source: "rules" | "default-model" | "unverified"; repository?: string; evidence?: string };
 };
 export type ProviderBalance = {
   available: boolean;
@@ -363,7 +372,9 @@ export const desktop = {
   detectLocalService: (baseUrl: string) =>
     invoke<LocalServiceInfo>("detect_local_service", { baseUrl }),
   discoverModels: (baseUrl: string, ollama = false) =>
-    invoke<Array<{ id: string; contextWindow?: number; reasoning?: boolean }>>("discover_local_models", { baseUrl, ollama }),
+    invoke<ProviderModelDraft[]>("discover_local_models", { baseUrl, ollama }),
+  inferModelReasoning: (modelIds: string[]) =>
+    invoke<ProviderModelDraft[]>("infer_model_reasoning", { modelIds }),
   localModels: () => invoke<LocalModelSnapshot>("local_models_list"),
   searchLocalModels: (source: Exclude<LocalModelSource, "import">, query: string) => invoke<HubModelResult[]>("local_models_search", { source, query }),
   inspectLocalModelRepository: (source: Exclude<LocalModelSource, "import">, repository: string) => invoke<{ repository: string; revision: string; files: HubGgufFile[]; downloadable: boolean; reason?: string }>("local_models_inspect", { source, repository }),

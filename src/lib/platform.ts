@@ -47,8 +47,19 @@ export const desktopWindow = {
   minimize: () => window.agentK.window.invoke<void>("minimize"),
   close: () => window.agentK.window.invoke<void>("close"),
   openDevTools: () => window.agentK.window.invoke<void>("open-devtools"),
-  capturePreview: (bounds: { x: number; y: number; width: number; height: number }, outputPath: string) =>
-    window.agentK.window.invoke<string>("capture-preview", { ...bounds, outputPath }),
+  controlFloatingEditor: (
+    id: string,
+    action: "close" | "is-maximized" | "maximize" | "minimize" | "unmaximize",
+  ) => window.agentK.window.invoke<boolean | void>("floating-editor-window", { action, id }),
+  capturePreview: (
+    bounds: { x: number; y: number; width: number; height: number },
+    outputPath: string,
+    floatingEditorId?: string,
+  ) => window.agentK.window.invoke<string>("capture-preview", {
+    ...bounds,
+    outputPath,
+    ...(floatingEditorId ? { floatingEditorId } : {}),
+  }),
   getPreviewConsole: (url: string, limit = 80) =>
     window.agentK.window.invoke<Array<{
       column?: number;
@@ -58,8 +69,12 @@ export const desktopWindow = {
       text: string;
       timestamp: number;
     }>>("get-preview-console", { limit, url }),
-  stylePreviewScrollbars: (url: string, css: string) =>
-    window.agentK.window.invoke<number>("style-preview-scrollbars", { css, url }),
+  stylePreviewScrollbars: (url: string, css: string, floatingEditorId?: string) =>
+    window.agentK.window.invoke<number>("style-preview-scrollbars", {
+      css,
+      url,
+      ...(floatingEditorId ? { floatingEditorId } : {}),
+    }),
   resizeMode: () =>
     window.agentK.window.invoke<"manual" | "native">("resize-mode"),
   beginResize: (

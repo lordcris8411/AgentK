@@ -55,6 +55,7 @@ import {
 } from "./terminal-profile.js";
 import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
 import { mergeWorkspaceWatchKind, type WorkspaceWatchKind } from "./workspace-watch.js";
+import { inferModelReasoning } from "./model-reasoning.js";
 import { mountedVolumes } from "./mounted-volumes.js";
 import { KAppProcessManager } from "./k-app-processes.js";
 import {
@@ -468,6 +469,16 @@ export class DesktopBackend {
         return detectLocalService(requiredString(args.baseUrl, "baseUrl"));
       case "discover_local_models":
         return discoverLocalModels(requiredString(args.baseUrl, "baseUrl"), args.ollama === true);
+      case "infer_model_reasoning": {
+        const settings = await loadClientSettings(this.options.appDataPath);
+        const modelIds = asArray(args.modelIds)
+          .map(asString)
+          .filter((id): id is string => Boolean(id));
+        return inferModelReasoning(modelIds, {
+          defaultModel: settings.defaultModel,
+          launch: this.requirePiLaunch(),
+        });
+      }
       case "local_models_list":
         await this.pool?.hasActiveAgentTasksVerified();
         return this.requireLocalModels().snapshot();

@@ -6,11 +6,13 @@ import {
   type LanguagePack,
   type ProviderCatalogItem,
   type ProviderDraft,
+  type ProviderModelDraft,
   type PiResource,
   type PiResourceChange,
   type RuntimeInfo,
   type SkillHubPreview,
   type SkillHubScope,
+  type ThinkingLevel,
 } from "../../lib/desktop";
 import { useSettings } from "./SettingsContext";
 import { platform } from "../../lib/platform";
@@ -32,6 +34,20 @@ const featuredSkills = [
     sourceUrl: "https://github.com/vercel-labs/skills/tree/main/skills/find-skills",
   },
 ];
+
+const configurableThinkingLevels: ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+function enabledThinkingLevels(map: Partial<Record<ThinkingLevel, string | null>> | undefined): ThinkingLevel[] {
+  return configurableThinkingLevels.filter((level) => typeof map?.[level] === "string");
+}
+
+function configuredThinkingLevelMap(levels: ThinkingLevel[]): Partial<Record<ThinkingLevel, string | null>> {
+  const selected = new Set(levels);
+  return Object.fromEntries(["off", ...configurableThinkingLevels].map((level) => [
+    level,
+    level === "off" || selected.has(level as ThinkingLevel) ? level : null,
+  ])) as Partial<Record<ThinkingLevel, string | null>>;
+}
 
 function previewStyle(theme: ThemeDefinition): CSSProperties {
   return {
@@ -156,6 +172,7 @@ export function SettingsDialog({
   const [manualModel, setManualModel] = useState("");
   const [manualContextWindow, setManualContextWindow] = useState("");
   const [manualReasoning, setManualReasoning] = useState(false);
+  const [manualThinkingLevels, setManualThinkingLevels] = useState<ThinkingLevel[]>([]);
   const [pendingDelete, setPendingDelete] = useState<ProviderCatalogItem>();
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(
     () => new Set(),
@@ -255,23 +272,37 @@ export function SettingsDialog({
     try {
       const service = await desktop.detectLocalService(draft.baseUrl);
       const found = await desktop.discoverModels(draft.baseUrl, service.kind === "ollama");
+      const assessed = await desktop.inferModelReasoning(found.map((model) => model.id));
+      const assessmentByModel = new Map(assessed.map((model) => [model.id, model]));
+      const enriched = found.map((model) => ({ ...model, ...assessmentByModel.get(model.id) }));
       setDraft((current) => ({
         ...current,
         id: editedProviderIdRef.current ? current.id : service.kind === "openai-compatible" ? current.id : service.kind,
         name: editedProviderIdRef.current ? current.name : service.kind === "openai-compatible" ? current.name : service.displayName,
         apiKey: service.kind === "ollama" ? "ollama" : current.apiKey || "local",
-        models: found,
+        models: enriched,
       }));
-      if (found[0]) {
-        setManualModel(found[0].id);
-        setManualContextWindow(found[0].contextWindow?.toString() ?? "");
-        setManualReasoning(found[0].reasoning === true);
+      if (enriched[0]) {
+        setManualModel(enriched[0].id);
+        setManualContextWindow(enriched[0].contextWindow?.toString() ?? "");
+        setManualReasoning(enriched[0].reasoning === true);
+        setManualThinkingLevels(enabledThinkingLevels(enriched[0].thinkingLevelMap));
       }
+      const verified = enriched.filter((model) => model.reasoning).length;
+      setNotice(settings.locale === "en-US"
+        ? `Reasoning capability checked for ${enriched.length} model(s); ${verified} verified.`
+        : `已检查 ${enriched.length} 个模型的推理能力，确认支持 ${verified} 个。`);
     } catch (cause) {
       setError(String(cause));
     } finally {
       setBusy(false);
     }
+  };
+  const selectManualModel = (model: ProviderModelDraft) => {
+    setManualModel(model.id);
+    setManualContextWindow(model.contextWindow?.toString() ?? "");
+    setManualReasoning(model.reasoning === true);
+    setManualThinkingLevels(enabledThinkingLevels(model.thinkingLevelMap));
   };
   const applyProviderCatalog = (catalog: ProviderCatalogItem[]) => {
     providersRef.current = catalog;
@@ -664,9 +695,11 @@ export function SettingsDialog({
     const models = new Map(draft.models.map((model) => [model.id, model]));
     const contextWindow = manualContextWindow.trim() ? Number(manualContextWindow) : undefined;
     if (manualModel.trim()) models.set(manualModel.trim(), {
+      ...models.get(manualModel.trim()),
       id: manualModel.trim(),
       ...(contextWindow === undefined ? {} : { contextWindow }),
-      ...(manualReasoning ? { reasoning: true } : {}),
+      reasoning: manualReasoning,
+      ...(manualReasoning ? { thinkingLevelMap: configuredThinkingLevelMap(manualThinkingLevels) } : {}),
     });
     if (!draft.id.trim() || !draft.baseUrl.trim() || models.size === 0) {
       setError("Provider ID、Base URL 和至少一个模型 ID 为必填项");
@@ -674,6 +707,14 @@ export function SettingsDialog({
     }
     setBusy(true);
     try {
+      const unchecked = [...models.values()].filter((model) =>
+        !model.thinkingLevelMap && model.assessment?.source !== "unverified");
+      if (unchecked.length) {
+        const assessed = await desktop.inferModelReasoning(unchecked.map((model) => model.id));
+        const assessmentByModel = new Map(assessed.map((model) => [model.id, model]));
+        for (const model of unchecked)
+          models.set(model.id, { ...model, ...assessmentByModel.get(model.id) });
+      }
       await desktop.saveProvider({ ...draft, previousId: editedProviderIdRef.current, models: [...models.values()] });
       if (draft.apiKey) {
         await desktop.saveProviderApiKey(draft.id, draft.apiKey);
@@ -683,6 +724,7 @@ export function SettingsDialog({
       setManualModel("");
       setManualContextWindow("");
       setManualReasoning(false);
+      setManualThinkingLevels([]);
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -1343,7 +1385,7 @@ export function SettingsDialog({
                   <label>{t("defaultModel")}<select value={settings.defaultModel} onChange={(event) => void update({ defaultModel: event.target.value })}><option value="">—</option>{enabledModels.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name ?? model.id} · {model.provider === "ollama" ? "Ollama" : model.provider === "vllm" ? "vLLM" : model.provider}</option>)}</select></label>
                 </div>
                 <LocalModelsSettings />
-                {providers.length > 0 && <div className="provider-actions"><button onClick={() => { setDraft({ id: "", name: "", baseUrl: "https://", api: "openai-completions", apiKey: "", models: [], local: false }); setManualModel(""); setManualContextWindow(""); setManualReasoning(false); setEditor("provider"); }} type="button"><i className="fa-solid fa-plus" /> {t("providerAdd")}</button><button onClick={() => { setDraft({ id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKey: "ollama", models: [], local: true }); setManualModel(""); setManualContextWindow(""); setManualReasoning(false); setEditor("local"); }} type="button"><i className="fa-solid fa-desktop" /> {t("localAdd")}</button></div>}
+                {providers.length > 0 && <div className="provider-actions"><button onClick={() => { setDraft({ id: "", name: "", baseUrl: "https://", api: "openai-completions", apiKey: "", models: [], local: false }); setManualModel(""); setManualContextWindow(""); setManualReasoning(false); setManualThinkingLevels([]); setEditor("provider"); }} type="button"><i className="fa-solid fa-plus" /> {t("providerAdd")}</button><button onClick={() => { setDraft({ id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKey: "ollama", models: [], local: true }); setManualModel(""); setManualContextWindow(""); setManualReasoning(false); setManualThinkingLevels([]); setEditor("local"); }} type="button"><i className="fa-solid fa-desktop" /> {t("localAdd")}</button></div>}
                 {[...grouped.custom, ...grouped.builtIn].map((provider) => {
                   const providerEnabled = !settings.disabledModelProviders.includes(provider.id);
                   const expanded = expandedProviders.has(provider.id);
@@ -1368,7 +1410,7 @@ export function SettingsDialog({
                             <i className={`fa-solid fa-chevron-${expanded ? "up" : "down"}`} />
                           </button>
                         )}
-                        {provider.source === "custom" && <button aria-label="Edit" onClick={() => { setDraft({ id: provider.id, name: providerDisplayName(provider), baseUrl: provider.baseUrl ?? "", api: provider.api ?? "openai-completions", apiKey: "", models: provider.models, local: provider.baseUrl?.includes("localhost") ?? false }); setManualModel(provider.models[0]?.id ?? ""); setManualContextWindow(provider.models[0]?.contextWindow?.toString() ?? ""); setManualReasoning(provider.models[0]?.reasoning === true); setEditor("provider"); }} type="button"><i className="fa-regular fa-pen-to-square" /></button>}
+                        {provider.source === "custom" && <button aria-label="Edit" onClick={() => { setDraft({ id: provider.id, name: providerDisplayName(provider), baseUrl: provider.baseUrl ?? "", api: provider.api ?? "openai-completions", apiKey: "", models: provider.models, local: provider.baseUrl?.includes("localhost") ?? false }); const first = provider.models[0]; if (first) selectManualModel(first); else { setManualModel(""); setManualContextWindow(""); setManualReasoning(false); setManualThinkingLevels([]); } setEditor("provider"); }} type="button"><i className="fa-regular fa-pen-to-square" /></button>}
                         {provider.authMethods.includes("api_key") && <button disabled={busy} onClick={() => void authenticate(provider, "api_key")} type="button">{t("apiKey")}</button>}
                         {provider.authMethods.includes("oauth") && <button disabled={busy} onClick={() => void authenticate(provider, "oauth")} type="button">{t("oauth")}</button>}
                         {provider.configured && <button disabled={busy} onClick={() => void logout(provider)} type="button">{t("logout")}</button>}
@@ -1421,7 +1463,31 @@ export function SettingsDialog({
             )}
           </main>
         </div>
-        {editor && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{editor === "local" ? t("localAdd") : t("providerAdd")}</h3><label>{t("providerId")}<input value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} /></label><label>{t("displayName")}<input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label><label>{t("baseUrl")}<input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} /></label><label>{t("apiProtocol")}<select value={draft.api} onChange={(e) => setDraft({ ...draft, api: e.target.value })}><option value="openai-completions">OpenAI Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option></select></label><label>{t("apiKey")}<input autoComplete="off" type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} /></label><label>{t("modelId")}<div className="inline-field"><input value={manualModel} onChange={(e) => setManualModel(e.target.value)} /><button disabled={!draft.baseUrl || busy} onClick={() => void discoverLocal()} type="button">{t("discover")}</button></div></label><label>{t("contextWindow")}<input min="1" onChange={(e) => setManualContextWindow(e.target.value)} placeholder="e.g. 524288" step="1" type="number" value={manualContextWindow} /><small>{t("contextWindowDetected")}</small></label><label><span>{t("reasoning")}</span><span className="local-model-check"><input checked={manualReasoning} onChange={(event) => setManualReasoning(event.target.checked)} type="checkbox" /> {t("enabled")}</span><small>{t("reasoningDescription")}</small></label>{draft.models.length > 0 && <div className="discovered-models">{draft.models.map((model) => <button key={model.id} onClick={() => { setManualModel(model.id); setManualContextWindow(model.contextWindow?.toString() ?? ""); setManualReasoning(model.reasoning === true); }} type="button">{model.id}{model.contextWindow ? ` · ${(model.contextWindow / 1024).toLocaleString()}K` : ""}</button>)}</div>}<footer><button onClick={() => setEditor(undefined)} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy} onClick={() => void saveDraft()} type="button">{t("save")}</button></footer></div></div>}
+        {editor && <div className="settings-subdialog"><div className="settings-subdialog-card">
+          <h3>{editor === "local" ? t("localAdd") : t("providerAdd")}</h3>
+          <label>{t("providerId")}<input value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value })} /></label>
+          <label>{t("displayName")}<input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
+          <label>{t("baseUrl")}<input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} /></label>
+          <label>{t("apiProtocol")}<select value={draft.api} onChange={(e) => setDraft({ ...draft, api: e.target.value })}><option value="openai-completions">OpenAI Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option></select></label>
+          <label>{t("apiKey")}<input autoComplete="off" type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} /></label>
+          <label>{t("modelId")}<div className="inline-field"><input value={manualModel} onChange={(e) => {
+            const value = e.target.value;
+            setManualModel(value);
+            const known = draft.models.find((model) => model.id === value);
+            if (known) selectManualModel(known);
+            else { setManualReasoning(false); setManualThinkingLevels([]); }
+          }} /><button disabled={!draft.baseUrl || busy} onClick={() => void discoverLocal()} type="button">{t("discover")}</button></div></label>
+          <label>{t("contextWindow")}<input min="1" onChange={(e) => setManualContextWindow(e.target.value)} placeholder="e.g. 524288" step="1" type="number" value={manualContextWindow} /><small>{t("contextWindowDetected")}</small></label>
+          <label><span>{t("reasoning")}</span><span className="local-model-check"><input checked={manualReasoning} onChange={(event) => setManualReasoning(event.target.checked)} type="checkbox" /> {t("enabled")}</span><small>{t("reasoningDescription")}</small></label>
+          <div aria-label={settings.locale === "en-US" ? "Supported reasoning levels" : "支持的推理等级"} className="discovered-models">
+            {configurableThinkingLevels.map((level) => <button className={manualThinkingLevels.includes(level) ? "is-active" : undefined} key={level} onClick={() => {
+              setManualThinkingLevels((current) => current.includes(level) ? current.filter((item) => item !== level) : [...current, level]);
+              setManualReasoning(true);
+            }} type="button">{level}</button>)}
+          </div>
+          {draft.models.length > 0 && <div className="discovered-models">{draft.models.map((model) => <button key={model.id} onClick={() => selectManualModel(model)} type="button">{model.id}{model.contextWindow ? ` · ${(model.contextWindow / 1024).toLocaleString()}K` : ""}</button>)}</div>}
+          <footer><button onClick={() => setEditor(undefined)} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy} onClick={() => void saveDraft()} type="button">{t("save")}</button></footer>
+        </div></div>}
         {authTarget && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{providerDisplayName(authTarget)} · {t("apiKey")}</h3><label>{t("apiKey")}<input autoComplete="off" autoFocus type="password" value={authKey} onChange={(event) => setAuthKey(event.target.value)} /></label><footer><button onClick={() => { setAuthTarget(undefined); setAuthKey(""); }} type="button">{t("cancel")}</button><button className="primary-button" disabled={busy || !authKey.trim()} onClick={() => void saveAuthKey()} type="button">{t("save")}</button></footer></div></div>}
         {pendingDelete && <div className="settings-subdialog"><div className="settings-subdialog-card"><h3>{t("delete")} {pendingDelete.name}?</h3><p className="settings-description">{pendingDelete.id} will be removed from models.json.</p><footer><button onClick={() => setPendingDelete(undefined)} type="button">{t("cancel")}</button><button className="danger-button" disabled={busy} onClick={() => void deleteProvider(pendingDelete)} type="button">{t("delete")}</button></footer></div></div>}
         {selectedSkill && <div className="settings-subdialog"><div className="settings-subdialog-card skill-details"><h3>{t("skillDetails")}</h3><dl><div><dt>{t("displayName")}</dt><dd>{selectedSkill.name}</dd></div><div><dt>{t("skillDescriptionLabel")}</dt><dd>{selectedSkill.description || t("noSkillDescription")}</dd></div><div><dt>{t("skillScopeLabel")}</dt><dd>{selectedSkill.scope === "project" ? t("projectScope") : t("userScope")}</dd></div><div><dt>{t("skillPathLabel")}</dt><dd>{selectedSkill.path}</dd></div></dl><footer><button className="primary-button" onClick={() => setSelectedSkill(undefined)} type="button">{t("close")}</button></footer></div></div>}

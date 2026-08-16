@@ -20,6 +20,8 @@ const completion = await AgentK.processes.wait(task.id);
 const output = await AgentK.processes.output(task.id);
 await AgentK.processes.stop(task.id);
 await AgentK.processes.open("taskmgr.exe");
+const theme = await AgentK.theme.get();
+const unsubscribe = AgentK.theme.onChange((nextTheme) => applyTheme(nextTheme));
 ```
 
 File paths are relative to the selected directory. Absolute paths and `..`
@@ -27,6 +29,13 @@ segments are rejected. `files.read` and `files.write` handle UTF-8 text;
 ordinary relative image, stylesheet, script, and media URLs are served by the
 workspace preview server. `pi.send` queues a visible message in the active
 Agent K conversation and resolves after the message is accepted.
+
+`theme.get()` returns the complete normalized definition of the currently
+resolved Agent K theme, including UI colors, component colors, fonts, Monaco
+colors, and terminal colors. `theme.onChange(listener)` reports later theme
+changes and returns an unsubscribe function. A k-app should read once at startup
+and subscribe so it follows both explicit theme changes and system light/dark
+changes without reloading.
 
 `processes.start(command, args, { cwd })` starts a shell-free child process;
 `cwd` must stay inside the k-app. `processes.list()`, `status(id)`,

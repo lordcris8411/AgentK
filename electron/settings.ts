@@ -7,6 +7,7 @@ import { configuredProviderModels } from "./model-provider.js";
 import type { PiLaunch } from "./pi-runtime.js";
 import type { ClientSettings, JsonObject } from "./types.js";
 import { discoveredModels, localModelsEndpoint, type ProviderModelDraft } from "./model-discovery.js";
+import { THINKING_LEVELS, type ThinkingLevelMap } from "./model-reasoning.js";
 import { macTerminalLoginArguments } from "./provider-login.js";
 import {
   asArray,
@@ -30,6 +31,16 @@ export interface ProviderDraft {
 }
 
 export type { ProviderModelDraft } from "./model-discovery.js";
+
+function validatedThinkingLevelMap(value: unknown): ThinkingLevelMap | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const source = asObject(value);
+  const entries = THINKING_LEVELS.flatMap((level) => {
+    const mapped = source[level];
+    return typeof mapped === "string" || mapped === null ? [[level, mapped] as const] : [];
+  });
+  return entries.length ? Object.fromEntries(entries) as ThinkingLevelMap : undefined;
+}
 
 const DEFAULT_SETTINGS: ClientSettings = {
   version: 15,
@@ -376,7 +387,10 @@ export async function saveModelProvider(provider: ProviderDraft): Promise<void> 
       id: model.id.trim(),
       name: model.name?.trim() || model.id.trim(),
       ...(model.contextWindow === undefined ? {} : { contextWindow }),
-      ...(model.reasoning === true ? { reasoning: true } : {}),
+      reasoning: model.reasoning === true,
+      ...(validatedThinkingLevelMap(model.thinkingLevelMap)
+        ? { thinkingLevelMap: validatedThinkingLevelMap(model.thinkingLevelMap) }
+        : {}),
     };
   });
   const directory = piAgentDirectory();

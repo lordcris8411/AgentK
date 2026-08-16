@@ -39,6 +39,7 @@ test("only k-app HTML receives the Agent K JavaScript bridge before app scripts"
   assert.match(app, /files:Object\.freeze/);
   assert.match(app, /pi:Object\.freeze/);
   assert.match(app, /processes:Object\.freeze/);
+  assert.match(app, /theme:Object\.freeze/);
   assert.ok(app.indexOf("Object.defineProperty(window,'AgentK'") < app.indexOf("startApp()"));
   assert.doesNotMatch(index, /agent-k-directory-app-request/);
 });
@@ -58,10 +59,11 @@ test("the injected k-app API emits exact asynchronous host requests", async () =
   assert.ok(Object.isFrozen(sandbox.AgentK));
   assert.ok(Object.isFrozen(sandbox.AgentK.files));
   assert.ok(Object.isFrozen(sandbox.AgentK.processes));
+  assert.ok(Object.isFrozen(sandbox.AgentK.theme));
   const request = (promise, expected) => {
     const message = posted.shift();
     assert.deepEqual(JSON.parse(JSON.stringify(message)), expected(message.requestId));
-    listeners.get("message")({ data: { type: "agent-k-directory-app-response", requestId: message.requestId, ok: true, result: "ok" } });
+    listeners.get("message")({ data: { type: "agent-k-directory-app-response", requestId: message.requestId, ok: true, result: "ok" }, source: sandbox.parent });
     return promise;
   };
   await request(sandbox.AgentK.files.read("a.txt"), (requestId) => ({ type: "agent-k-directory-app-request", requestId, method: "files.read", arguments: { path: "a.txt" } }));
@@ -73,9 +75,18 @@ test("the injected k-app API emits exact asynchronous host requests", async () =
   await request(sandbox.AgentK.processes.output("p1", { stdoutCursor: 4, stderrCursor: 2 }), (requestId) => ({ type: "agent-k-directory-app-request", requestId, method: "processes.output", arguments: { id: "p1", stdoutCursor: 4, stderrCursor: 2 } }));
   await request(sandbox.AgentK.processes.stop("p1"), (requestId) => ({ type: "agent-k-directory-app-request", requestId, method: "processes.stop", arguments: { id: "p1" } }));
   await request(sandbox.AgentK.processes.open("chrome.exe"), (requestId) => ({ type: "agent-k-directory-app-request", requestId, method: "processes.open", arguments: { target: "chrome.exe" } }));
+  await request(sandbox.AgentK.theme.get(), (requestId) => ({ type: "agent-k-directory-app-request", requestId, method: "theme.get", arguments: {} }));
+  const observedThemes = [];
+  const stopObserving = sandbox.AgentK.theme.onChange((theme) => observedThemes.push(theme));
+  listeners.get("message")({ data: { type: "agent-k-theme-changed", theme: { id: "dark" } }, source: sandbox.parent });
+  assert.deepEqual(JSON.parse(JSON.stringify(observedThemes)), [{ id: "dark" }]);
+  assert.equal(stopObserving(), true);
+  listeners.get("message")({ data: { type: "agent-k-theme-changed", theme: { id: "light" } }, source: sandbox.parent });
+  assert.equal(observedThemes.length, 1);
+  assert.throws(() => sandbox.AgentK.theme.onChange("invalid"), /requires a function/);
   const rejected = sandbox.AgentK.files.read("denied.txt");
   const denied = posted.shift();
-  listeners.get("message")({ data: { type: "agent-k-directory-app-response", requestId: denied.requestId, ok: false, error: "denied" } });
+  listeners.get("message")({ data: { type: "agent-k-directory-app-response", requestId: denied.requestId, ok: false, error: "denied" }, source: sandbox.parent });
   await assert.rejects(rejected, /denied/);
 });
 
@@ -88,11 +99,13 @@ test("the Agent K bridge and toolbarless preview are enabled only for a k-app", 
   assert.match(files, /if \(appBridge\) this\.preview\.appBridgePaths\.add\(relativePath\)/);
   assert.match(files, /"\.htm": "text\/html; charset=utf-8"/);
   assert.match(inspector, /selectedDirectoryPreview\.kind === "k-app"/);
-  assert.match(inspector, /!current\.directoryPreview\?\.kApp \? <div className="web-project-preview-actions">/);
+  assert.match(inspector, /!preview\.kApp \? <div className="web-project-preview-actions">/);
   assert.match(inspector, /desktop\.kAppProcessStart/);
   assert.match(inspector, /desktop\.kAppProcessOutput/);
   assert.match(inspector, /desktop\.kAppProcessOpen/);
   assert.match(inspector, /desktop\.kAppProcessWait/);
+  assert.match(inspector, /request\.method === "theme\.get"/);
+  assert.match(inspector, /type: "agent-k-theme-changed"/);
 });
 
 test("a module-based index directory preview uses its web development server", async () => {
@@ -101,7 +114,7 @@ test("a module-based index directory preview uses its web development server", a
   assert.match(inspector, /selectedDirectoryPreview\?\.kind === "index" && !selectedDirectoryEntry\.loaded/);
   assert.match(inspector, /selectedDirectoryPreview\.kind === "index" &&[\s\S]*?selectedDirectoryWebProject[\s\S]*?desktop\.startWebProject/u);
   assert.match(inspector, /catch \{[\s\S]*?webPreviewUrl = await desktop\.startPreview/u);
-  assert.match(inspector, /sandbox=\{current\.directoryPreview\?\.appBridge/);
+  assert.match(inspector, /sandbox=\{preview\.appBridge \? "allow-downloads allow-forms allow-modals allow-scripts"/);
 });
 
 test("the directory README action follows the active system text color", async () => {

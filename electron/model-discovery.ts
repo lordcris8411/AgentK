@@ -1,10 +1,13 @@
 import { asArray, asObject, asString } from "./utils.js";
+import type { ModelReasoningProfile, ThinkingLevelMap } from "./model-reasoning.js";
 
 export interface ProviderModelDraft {
   id: string;
   name?: string;
   contextWindow?: number;
   reasoning?: boolean;
+  thinkingLevelMap?: ThinkingLevelMap;
+  assessment?: ModelReasoningProfile["assessment"];
 }
 
 /**

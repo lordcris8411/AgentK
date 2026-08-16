@@ -10,18 +10,18 @@ import { getPiResources } from "../.electron-dist/resources.js";
 const run = promisify(execFile);
 const skill = resolve(import.meta.dirname, "..", "skills", "create-agent-k-app");
 
-test("create-agent-k-app metadata covers creation, repair, validation, Pi, files, and processes", async () => {
+test("create-agent-k-app metadata covers creation, repair, validation, Pi, files, theme, and processes", async () => {
   const [markdown, reference, metadata] = await Promise.all([
     readFile(join(skill, "SKILL.md"), "utf8"),
     readFile(join(skill, "references", "k-app.md"), "utf8"),
     readFile(join(skill, "agents", "openai.yaml"), "utf8"),
   ]);
   assert.doesNotMatch(markdown, /TODO/);
-  for (const phrase of ["Create, update, repair, or validate", "project files", "Pi requests", "managed shell-free processes"])
+  for (const phrase of ["Create, update, repair, or validate", "project files", "Pi requests", "current theme", "managed shell-free processes"])
     assert.match(markdown, new RegExp(phrase, "i"));
-  for (const method of ["files.list", "files.read", "files.write", "pi.send", "processes.start", "processes.wait", "processes.output", "processes.stop", "processes.open"])
+  for (const method of ["files.list", "files.read", "files.write", "pi.send", "processes.start", "processes.wait", "processes.output", "processes.stop", "processes.open", "theme.get", "theme.onChange"])
     assert.match(reference, new RegExp(method.replace(".", "\\.")));
-  assert.match(metadata, /Create and validate secure Agent K k-apps/);
+  assert.match(metadata, /Create secure, theme-aware Agent K k-apps/);
   assert.match(metadata, /\$create-agent-k-app/);
 });
 
@@ -70,7 +70,10 @@ test("create-agent-k-app scaffolds and validates a portable k-app", async () => 
       reserved: {},
       settings: {},
     });
-    assert.match(await readFile(join(target, "app.html"), "utf8"), /AgentK\.pi\.send/);
+    const app = await readFile(join(target, "app.html"), "utf8");
+    assert.match(app, /AgentK\.pi\.send/);
+    assert.match(app, /AgentK\.theme\.get/);
+    assert.match(app, /AgentK\.theme\.onChange/);
     const validation = await run(process.execPath, [
       join(skill, "scripts", "validate-k-app.mjs"),
       target,

@@ -51,3 +51,59 @@ test("file selection creates a visible pending tab before storage finishes", asy
   assert.match(inspector, /current\?\.loading[\s\S]*Opening file…/);
   assert.match(inspector, /const liveTabs = tabsRef\.current/);
 });
+
+test("multiple Editors can float into independent windows and dock separately", async () => {
+  const [inspector, main, pluginFrame, theme] = await Promise.all([
+    source("src/components/layout/InspectorPanel.tsx"),
+    source("electron/main.ts"),
+    source("src/features/file-formats/PluginEditorFrame.tsx"),
+    source("src/styles/theme.css"),
+  ]);
+  assert.match(inspector, /`agent-k-floating-editor-\$\{id\}`/);
+  assert.match(inspector, /return createPortal\([\s\S]*?floatingWindow\.document\.body/);
+  assert.match(inspector, /floating\.addEventListener\("pagehide"/);
+  assert.match(inspector, /new Map<string, FloatingEditorSession>/);
+  assert.match(inspector, /nextFloatingEditors\.set\(editorPath, session\)/);
+  assert.match(inspector, /kind: directoryPreview \? "directory" : "plugin"/);
+  assert.match(inspector, /activePluginEditorProps \|\| \(current\?\.directoryPreview && current\.webPreviewUrl\)/);
+  assert.match(inspector, /function DirectoryPreviewSurface/);
+  assert.match(inspector, /session\.kind === "directory"/);
+  assert.match(inspector, /floatingEditor=\{floatingEditor\}/);
+  assert.match(inspector, /tabs\.filter\(\(tab\) => !floatingEditors\.has\(tab\.path\)\)/);
+  assert.match(inspector, /const remainingTabs = liveTabs\.filter\(\(tab\) => !nextFloatingEditors\.has\(tab\.path\)\)/);
+  assert.match(inspector, /aria-label=\{en \? "Dock Editor" : "吸附 Editor"\}/);
+  assert.match(inspector, /aria-label=\{en \? "Float Editor" : "浮动 Editor"\}/);
+  assert.match(inspector, /window-icon-dock-editor/);
+  assert.match(inspector, /window-icon-float-editor/);
+  assert.match(inspector, /window-editor-placement-control/);
+  assert.match(inspector, /renderEditorToolbar\(floatingTab, floatingEditor, true\)/);
+  assert.match(inspector, /controlFloatingEditor\(floatingId, "minimize"\)/);
+  assert.match(inspector, /floatingWindow=\{floatingEditor\?\.window\}/);
+  assert.match(inspector, /floatingId=\{floatingEditor\?\.id\}/);
+  assert.match(inspector, /key=\{floatingWindow \? "floating" : "docked"\}/);
+  assert.doesNotMatch(inspector, /当前 Editor 已浮动/);
+  assert.match(inspector, /floatingShortcuts = \[\.\.\.floatingEditors\.values\(\)\]\.map\(\(\{ path, window: floating \}\)/);
+  assert.match(inspector, /void saveTab\(tab\)/);
+  assert.match(inspector, /agent-k-floating-editor-message/);
+  assert.match(inspector, /agent-k-floating-editor-send/);
+  assert.match(inspector, /const hostWindow = frame\.ownerDocument\.defaultView \?\? window/);
+  assert.match(pluginFrame, /frameRef\.current\?\.ownerDocument\.defaultView \?\? window/);
+  assert.match(pluginFrame, /hostWindow \? window : frameRef\.current\?\.ownerDocument\.defaultView \?\? window/);
+  assert.match(pluginFrame, /agent-k-floating-editor-message/);
+  assert.match(pluginFrame, /hostWindow\.document\.createEvent\("CustomEvent"\)/);
+  assert.match(pluginFrame, /if \(!hostWindow && event\.source !== frameRef\.current\?\.contentWindow\) return/);
+  assert.match(pluginFrame, /send\("host-ready"\)/);
+  assert.match(pluginFrame, /if \(initializedDocumentRef\.current !== documentIdentity\) initialize\(\)/);
+  assert.match(pluginFrame, /!ready \|\| initializedDocumentRef\.current !== documentIdentity/);
+  assert.match(pluginFrame, /if \(!frameUrl \|\| !frameRef\.current\) return/);
+  assert.match(main, /\^agent-k-floating-editor-\[0-9a-f-\]\{36\}\$/);
+  assert.match(main, /outlivesOpener: false/);
+  assert.match(main, /frame: false/);
+  assert.match(main, /floatingEditorWindows\.set\(id, child\)/);
+  assert.match(main, /const previewWindow = floatingEditorId[\s\S]*?floatingEditorWindows\.get\(floatingEditorId\)/);
+  assert.match(main, /child\.setParentWindow\(mainWindow\)/);
+  assert.match(main, /child\.webContents\.setWindowOpenHandler\(\(\) => \(\{ action: "deny" \}\)\)/);
+  assert.match(theme, /body\.is-floating-editor-window/);
+  assert.match(theme, /\.editor-content-surface\.is-floating/);
+  assert.match(theme, /\.floating-editor-window-titlebar/);
+});

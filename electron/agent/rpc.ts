@@ -18,7 +18,7 @@ import {
 
 const BASH_ENVIRONMENT = `# Written by Agent K. Loaded by Pi's non-interactive Git Bash.\nif [[ -n "\${AGENT_K_ORIGINAL_BASH_ENV:-}" && -f "\${AGENT_K_ORIGINAL_BASH_ENV}" ]]; then\n  source "\${AGENT_K_ORIGINAL_BASH_ENV}"\nfi\nif command -v iconv >/dev/null 2>&1; then\n  cmd() {\n    command cmd.exe "\$@" 2>&1 | iconv -f GB18030 -t UTF-8\n    local command_status=\${PIPESTATUS[0]}\n    return "\$command_status"\n  }\n  cmd.exe() { cmd "\$@"; }\nfi\n`;
 
-function piEnvironment(
+export function piEnvironment(
   environment: NodeJS.ProcessEnv | undefined,
   bashEnvironment?: string,
 ): NodeJS.ProcessEnv {

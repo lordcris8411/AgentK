@@ -36,12 +36,26 @@ const completion = await AgentK.processes.wait(task.id);
 const output = await AgentK.processes.output(task.id);
 await AgentK.processes.stop(task.id);
 await AgentK.processes.open("taskmgr.exe");
+const theme = await AgentK.theme.get();
+const unsubscribe = AgentK.theme.onChange((nextTheme) => applyTheme(nextTheme));
 ```
 
 Every file path is relative to the k-app directory. Absolute paths and `..`
 segments are rejected. File methods operate on UTF-8 text. `pi.send` queues a
 visible message in the current conversation. Handle rejected promises and show
 errors in the app UI.
+
+Theme API:
+
+- `theme.get()` returns the complete normalized current theme definition. It
+  contains `id`, `name`, `base`, `colors`, `components`, optional `fonts`,
+  `monaco`, optional `monacoSyntax`, and `terminal`, matching the active Agent K
+  theme file. When Agent K follows the operating system, it returns the resolved
+  built-in light or dark theme rather than the literal `system` setting.
+- `theme.onChange(listener)` calls `listener(theme)` after the active theme
+  changes and returns an unsubscribe function. Call `theme.get()` once during
+  startup, then subscribe for later changes. Theme definitions are data only;
+  copy the colors you use into CSS custom properties instead of modifying them.
 
 Process API:
 

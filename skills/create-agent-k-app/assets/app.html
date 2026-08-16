@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agent K App</title>
   <style>
-    :root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
-    body { margin: 0; padding: 24px; }
+    :root { color-scheme: light dark; font: 14px/1.5 var(--font-ui, system-ui, sans-serif); }
+    body { background: var(--surface-app); color: var(--text-primary); margin: 0; padding: 24px; }
     main { margin: 0 auto; max-width: 720px; }
     textarea { box-sizing: border-box; min-height: 110px; width: 100%; }
     button { margin-top: 10px; padding: 7px 12px; }
@@ -23,6 +23,18 @@
   </main>
   <script>
     const status = document.querySelector('#status');
+    const applyTheme = (theme) => {
+      document.documentElement.dataset.theme = theme.base;
+      document.documentElement.style.colorScheme = theme.base === 'dark' ? 'dark' : 'light';
+      for (const [name, value] of Object.entries(theme.colors))
+        document.documentElement.style.setProperty(`--${name}`, value);
+      if (theme.fonts) {
+        document.documentElement.style.setProperty('--font-ui', theme.fonts.ui);
+        document.documentElement.style.setProperty('--font-code', theme.fonts.code);
+      }
+    };
+    AgentK.theme.onChange(applyTheme);
+    AgentK.theme.get().then(applyTheme).catch((error) => { status.textContent = String(error); });
     document.querySelector('#send').addEventListener('click', async () => {
       try {
         const message = document.querySelector('#message').value.trim();

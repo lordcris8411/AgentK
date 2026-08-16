@@ -52,6 +52,8 @@ type PluginEditorFrameProps = {
   byteSize?: number;
   codec?: string;
   content: string;
+  floatingId?: string;
+  hostWindow?: Window;
   language: string;
   locale: "en-US" | "zh-CN";
   mimeType: string;
@@ -143,6 +145,8 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
       binary,
       byteSize,
       codec,
+      floatingId,
+      hostWindow,
       language,
       locale,
       mimeType,
@@ -183,14 +187,22 @@ export const PluginEditorFrame = forwardRef<PluginEditorHandle, PluginEditorFram
     const serializedActions = JSON.stringify(actions);
 
     const send = (type: string, value?: unknown, requestId?: string) => {
-      frameRef.current?.contentWindow?.postMessage({
+      const message = {
         apiVersion: EDITOR_API_VERSION,
         channel: EDITOR_CHANNEL,
         nonce: nonceRef.current,
         requestId,
         type,
         value,
-      }, "*");
+      };
+      if (hostWindow) {
+        if (!floatingId) return;
+        const event = hostWindow.document.createEvent("CustomEvent");
+        event.initCustomEvent(`agent-k-floating-editor-send:${floatingId}`, false, false, message);
+        hostWindow.dispatchEvent(event);
+        return;
+      }
+      frameRef.current?.contentWindow?.postMessage(message, "*");
     };
 
     const documentIdentity = `${plugin.id}\0${absolutePath}`;
@@ -321,8 +333,15 @@ void (async () => {
     }, [frameUrl, loadError, locale, onError, plugin.name, ready]);
 
     useEffect(() => {
+      if (!frameUrl || !frameRef.current) return;
       const receive = (event: MessageEvent<PluginMessage>) => {
-        if (event.source !== frameRef.current?.contentWindow) return;
+        // Electron wraps a cross-window iframe's WindowProxy separately for
+        // callbacks created in the opener realm. Object identity therefore
+        // remains reliable in the docked document, but not after the Editor
+        // is portaled into its dedicated BrowserWindow. That window contains
+        // only this Editor frame; the per-instance nonce authenticates every
+        // message after the boot handshake.
+        if (!hostWindow && event.source !== frameRef.current?.contentWindow) return;
         const message = event.data;
         if (
           !message ||
@@ -330,7 +349,12 @@ void (async () => {
           message.apiVersion !== EDITOR_API_VERSION
         ) return;
         if (message.type === "booted") {
-          initialize();
+          // host-ready is deliberately repeatable so a portaled Editor can
+          // recover from a missed first handshake. An already initialized
+          // iframe answers every retry with booted as well; reinitializing it
+          // here would race a toolbar action and discard that action while
+          // the runtime is being recreated.
+          if (initializedDocumentRef.current !== documentIdentity) initialize();
           return;
         }
         if (message.type === "load-error") {
@@ -437,9 +461,28 @@ void (async () => {
             break;
         }
       };
-      window.addEventListener("message", receive);
-      return () => window.removeEventListener("message", receive);
-    }, [absolutePath, binary, byteSize, codec, content, language, locale, mimeType, onContentChange, onDirtyChange, onError, onLanguageRequest, onOpenFile, onReferenceLine, onSaveRequest, path, plugin.mediaKind, readOnly, theme, wordWrap]);
+      const messageWindow = hostWindow ? window : frameRef.current?.ownerDocument.defaultView ?? window;
+      const receiveRelayed = (event: Event) => receive({
+        data: (event as CustomEvent<PluginMessage>).detail,
+      } as MessageEvent<PluginMessage>);
+      const relayEvent = floatingId ? `agent-k-floating-editor-message:${floatingId}` : undefined;
+      if (hostWindow && relayEvent)
+        messageWindow.addEventListener(relayEvent, receiveRelayed);
+      else
+        messageWindow.addEventListener("message", receive);
+      const announceHost = messageWindow.setInterval(() => {
+        if (readyRef.current) return;
+        send("host-ready");
+      }, 250);
+      send("host-ready");
+      return () => {
+        messageWindow.clearInterval(announceHost);
+        if (hostWindow && relayEvent)
+          messageWindow.removeEventListener(relayEvent, receiveRelayed);
+        else
+          messageWindow.removeEventListener("message", receive);
+      };
+    }, [absolutePath, binary, byteSize, codec, content, floatingId, frameUrl, hostWindow, language, locale, mimeType, onContentChange, onDirtyChange, onError, onLanguageRequest, onOpenFile, onReferenceLine, onSaveRequest, path, plugin.mediaKind, readOnly, theme, wordWrap]);
 
     useEffect(() => {
       if (
@@ -556,10 +599,10 @@ void (async () => {
       send("navigate", target);
     }, [ready]);
     useEffect(() => {
-      if (!ready) return;
+      if (!ready || initializedDocumentRef.current !== documentIdentity) return;
       for (const action of actions)
         send("action", { id: action.id, parameters: action.parameters ?? {} });
-    }, [ready, serializedActions]);
+    }, [documentIdentity, ready, serializedActions]);
 
     useImperativeHandle(forwardedRef, () => ({
       executeAction(action, parameters = {}) {

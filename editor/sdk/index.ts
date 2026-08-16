@@ -130,7 +130,7 @@ type HostMessage = {
   channel: typeof EDITOR_CHANNEL;
   nonce: string;
   requestId?: string;
-  type: "action" | "focus" | "initialize" | "language-response" | "mark-saved" | "navigate" | "read-content" | "read-selection" | "set-content" | "set-debug-state" | "set-layout-suspended" | "set-theme" | "set-theme-config" | "set-word-wrap";
+  type: "action" | "focus" | "host-ready" | "initialize" | "language-response" | "mark-saved" | "navigate" | "read-content" | "read-selection" | "set-content" | "set-debug-state" | "set-layout-suspended" | "set-theme" | "set-theme-config" | "set-word-wrap";
   value?: unknown;
 };
 
@@ -210,6 +210,15 @@ export function defineEditor(factory: EditorFactory): void {
       message.channel !== EDITOR_CHANNEL ||
       message.apiVersion !== EDITOR_API_VERSION
     ) return;
+
+    if (message.type === "host-ready") {
+      window.parent.postMessage({
+        apiVersion: EDITOR_API_VERSION,
+        channel: EDITOR_CHANNEL,
+        type: "booted",
+      }, "*");
+      return;
+    }
 
     if (message.type === "initialize") {
       if (typeof message.nonce !== "string") return;

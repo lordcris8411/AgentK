@@ -88,6 +88,7 @@ let mainWindowReady = false;
 let startupFinished = false;
 type DebugToolKind = "disassembly" | "memory" | "registers";
 const debugToolWindows = new Map<DebugToolKind, BrowserWindow>();
+const floatingEditorWindows = new Map<string, BrowserWindow>();
 let debugToolWindowBoundsState: Partial<Record<DebugToolKind, Rectangle>> | undefined;
 let debugToolWindowBoundsTimer: ReturnType<typeof setTimeout> | undefined;
 let debugRoot: string | undefined;
@@ -323,9 +324,39 @@ function createWindows(theme: ClientSettings["theme"], resolvedTheme?: ThemeDefi
   splashWindow.once("ready-to-show", () => splashWindow?.show());
   splashWindow.webContents.on("did-finish-load", applySplashState);
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  const floatingEditorFrame = /^agent-k-floating-editor-[0-9a-f-]{36}$/i;
+  mainWindow.webContents.setWindowOpenHandler(({ frameName, url }) => {
+    if (url === "about:blank" && floatingEditorFrame.test(frameName)) {
+      return {
+        action: "allow",
+        outlivesOpener: false,
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          backgroundColor: debugWindowBackground,
+          frame: false,
+          icon: projectPath("assets", "icons", "icon.png"),
+          minHeight: 360,
+          minWidth: 560,
+          title: "Agent K · Editor",
+        },
+      };
+    }
     if (/^https?:/i.test(url)) void shell.openExternal(url);
     return { action: "deny" };
+  });
+  mainWindow.webContents.on("did-create-window", (child, details) => {
+    if (!floatingEditorFrame.test(details.frameName)) return;
+    const id = details.frameName.slice("agent-k-floating-editor-".length).toLowerCase();
+    floatingEditorWindows.set(id, child);
+    if (mainWindow && !mainWindow.isDestroyed()) child.setParentWindow(mainWindow);
+    child.once("closed", () => {
+      if (floatingEditorWindows.get(id) === child) floatingEditorWindows.delete(id);
+    });
+    child.setMenuBarVisibility(false);
+    child.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    child.webContents.on("will-navigate", (event, url) => {
+      if (url !== "about:blank") event.preventDefault();
+    });
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
     const current = mainWindow?.webContents.getURL();
@@ -785,6 +816,21 @@ function registerIpc(): void {
       case "close":
         window.close();
         break;
+      case "floating-editor-window": {
+        if (event.sender !== mainWindow?.webContents) throw new Error("Only the main window can control floating Editors");
+        const id = typeof data.id === "string" ? data.id.toLowerCase() : "";
+        const target = /^[0-9a-f-]{36}$/i.test(id) ? floatingEditorWindows.get(id) : undefined;
+        if (!target || target.isDestroyed()) throw new Error("Floating Editor window is unavailable");
+        switch (data.action) {
+          case "is-maximized": return target.isMaximized();
+          case "maximize": target.maximize(); break;
+          case "unmaximize": target.unmaximize(); break;
+          case "minimize": target.minimize(); break;
+          case "close": target.close(); break;
+          default: throw new Error("Unknown floating Editor window action");
+        }
+        break;
+      }
       case "open-devtools":
         window.webContents.openDevTools({ mode: "detach" });
         break;
@@ -804,7 +850,14 @@ function registerIpc(): void {
         const outputPath = typeof data.outputPath === "string" ? data.outputPath : "";
         if (!outputPath || !isAbsolute(outputPath) || !outputPath.toLowerCase().endsWith(".png"))
           throw new Error("A PNG output path is required");
-        const image = await window.webContents.capturePage({ height, width, x, y });
+        const floatingEditorId = typeof data.floatingEditorId === "string"
+          ? data.floatingEditorId.toLowerCase()
+          : undefined;
+        const captureWindow = floatingEditorId && event.sender === mainWindow?.webContents
+          ? floatingEditorWindows.get(floatingEditorId)
+          : window;
+        if (!captureWindow || captureWindow.isDestroyed()) throw new Error("Preview window is unavailable");
+        const image = await captureWindow.webContents.capturePage({ height, width, x, y });
         await mkdir(dirname(outputPath), { recursive: true });
         await writeFile(outputPath, image.toPNG());
         return outputPath;
@@ -818,6 +871,13 @@ function registerIpc(): void {
       }
       case "style-preview-scrollbars": {
         if (event.sender !== mainWindow?.webContents) throw new Error("Only the main window can style previews");
+        const floatingEditorId = typeof data.floatingEditorId === "string"
+          ? data.floatingEditorId.toLowerCase()
+          : undefined;
+        const previewWindow = floatingEditorId
+          ? floatingEditorWindows.get(floatingEditorId)
+          : mainWindow;
+        if (!previewWindow || previewWindow.isDestroyed()) throw new Error("Preview window is unavailable");
         const previewUrl = typeof data.url === "string" ? data.url : "";
         const css = typeof data.css === "string" ? data.css : "";
         if (!css || css.length > 12_000) throw new Error("Invalid preview scrollbar CSS");
@@ -830,8 +890,9 @@ function registerIpc(): void {
           throw new Error("Invalid preview URL");
         }
         const script = `(() => { const id = "agent-k-preview-scrollbars"; let style = document.getElementById(id); if (!style) { style = document.createElement("style"); style.id = id; (document.head || document.documentElement).append(style); } style.textContent = ${JSON.stringify(css)}; })()`;
-        const targets = event.sender.mainFrame.framesInSubtree.filter((frame) => {
-          if (frame === event.sender.mainFrame || frame.detached) return false;
+        const previewMainFrame = previewWindow.webContents.mainFrame;
+        const targets = previewMainFrame.framesInSubtree.filter((frame) => {
+          if (frame === previewMainFrame || frame.detached) return false;
           try { return new URL(frame.url).origin === origin; } catch { return false; }
         });
         const results = await Promise.allSettled(targets.map((frame) => frame.executeJavaScript(script)));
