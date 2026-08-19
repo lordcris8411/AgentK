@@ -6,9 +6,9 @@ import { shell } from "electron";
 import { configuredProviderModels } from "./model-provider.js";
 import type { PiLaunch } from "./pi-runtime.js";
 import type { ClientSettings, JsonObject } from "./types.js";
-import { discoveredModels, localModelsEndpoint, type ProviderModelDraft } from "./model-discovery.js";
-import { THINKING_LEVELS, type ThinkingLevelMap } from "./model-reasoning.js";
-import { macTerminalLoginArguments } from "./provider-login.js";
+import { discoveredModels, enrichOllamaModelCapabilities, localModelsEndpoint, type ProviderModelDraft } from "./model-discovery.js";
+import { normalizedThinkingLevelMap, THINKING_LEVELS, type ThinkingLevel, type ThinkingLevelMap } from "./model-reasoning.js";
+import { loginOpenAICodex, macTerminalLoginArguments } from "./provider-login.js";
 import {
   asArray,
   asObject,
@@ -32,18 +32,20 @@ export interface ProviderDraft {
 
 export type { ProviderModelDraft } from "./model-discovery.js";
 
-function validatedThinkingLevelMap(value: unknown): ThinkingLevelMap | undefined {
+function validatedThinkingLevelMap(value: unknown, modelId = ""): ThinkingLevelMap | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const source = asObject(value);
   const entries = THINKING_LEVELS.flatMap((level) => {
     const mapped = source[level];
     return typeof mapped === "string" || mapped === null ? [[level, mapped] as const] : [];
   });
-  return entries.length ? Object.fromEntries(entries) as ThinkingLevelMap : undefined;
+  return entries.length
+    ? normalizedThinkingLevelMap(modelId, Object.fromEntries(entries) as ThinkingLevelMap)
+    : undefined;
 }
 
 const DEFAULT_SETTINGS: ClientSettings = {
-  version: 15,
+  version: 17,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
@@ -65,7 +67,9 @@ const DEFAULT_SETTINGS: ClientSettings = {
   disabledModels: [],
   pinnedWorkspaces: [],
   defaultModel: "",
+  defaultThinkingLevel: "off",
   sessionModels: {},
+  sessionThinkingLevels: {},
   leftPanelWidth: 304,
   rightPanelWidth: 420,
   fileExplorerWidth: 190,
@@ -193,10 +197,18 @@ export function parseClientSettings(value: unknown): ClientSettings {
   ];
   if (typeof source.defaultModel === "string" && source.defaultModel.length <= 256)
     settings.defaultModel = source.defaultModel;
+  if (typeof source.defaultThinkingLevel === "string" && THINKING_LEVELS.includes(source.defaultThinkingLevel as ThinkingLevel))
+    settings.defaultThinkingLevel = source.defaultThinkingLevel as ThinkingLevel;
   settings.sessionModels = Object.fromEntries(
     Object.entries(asObject(source.sessionModels)).flatMap(([path, model]) =>
       path.length <= 4096 && typeof model === "string" && model.length <= 256
         ? [[path, model]] : [],
+    ),
+  );
+  settings.sessionThinkingLevels = Object.fromEntries(
+    Object.entries(asObject(source.sessionThinkingLevels)).flatMap(([path, level]) =>
+      path.length <= 4096 && typeof level === "string" && THINKING_LEVELS.includes(level as ThinkingLevel)
+        ? [[path, level as ThinkingLevel]] : [],
     ),
   );
   if (Number(source.leftPanelWidth) >= 240 && Number(source.leftPanelWidth) <= 2400)
@@ -221,7 +233,7 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.windowHeight = Number(source.windowHeight);
   if (typeof source.windowMaximized === "boolean")
     settings.windowMaximized = source.windowMaximized;
-  settings.version = Math.max(15, Number(source.version) || 15);
+  settings.version = Math.max(17, Number(source.version) || 17);
   return settings;
 }
 
@@ -259,7 +271,9 @@ export async function saveClientSettings(
     sameStringArray(original.disabledModels, settings.disabledModels) &&
     sameStringArray(original.pinnedWorkspaces, settings.pinnedWorkspaces) &&
     settings.defaultModel === original.defaultModel &&
+    settings.defaultThinkingLevel === original.defaultThinkingLevel &&
     JSON.stringify(settings.sessionModels) === JSON.stringify(original.sessionModels) &&
+    JSON.stringify(settings.sessionThinkingLevels) === JSON.stringify(original.sessionThinkingLevels) &&
     settings.leftPanelWidth === original.leftPanelWidth &&
     settings.rightPanelWidth === original.rightPanelWidth &&
     settings.fileExplorerWidth === original.fileExplorerWidth &&
@@ -380,16 +394,19 @@ export async function saveModelProvider(provider: ProviderDraft): Promise<void> 
   if (!provider.models.length || provider.models.some((model) => !model.id.trim()))
     throw new Error("At least one model ID is required");
   const models = provider.models.map((model) => {
+    const modelId = model.id.trim();
     const contextWindow = Number(model.contextWindow);
     if (model.contextWindow !== undefined && (!Number.isInteger(contextWindow) || contextWindow <= 0))
       throw new Error("Model context window must be a positive integer");
+    const input: Array<"text" | "image"> = model.input?.includes("image") ? ["text", "image"] : ["text"];
     return {
-      id: model.id.trim(),
-      name: model.name?.trim() || model.id.trim(),
+      id: modelId,
+      name: model.name?.trim() || modelId,
       ...(model.contextWindow === undefined ? {} : { contextWindow }),
       reasoning: model.reasoning === true,
-      ...(validatedThinkingLevelMap(model.thinkingLevelMap)
-        ? { thinkingLevelMap: validatedThinkingLevelMap(model.thinkingLevelMap) }
+      input,
+      ...(validatedThinkingLevelMap(model.thinkingLevelMap, modelId)
+        ? { thinkingLevelMap: validatedThinkingLevelMap(model.thinkingLevelMap, modelId) }
         : {}),
     };
   });
@@ -678,6 +695,25 @@ export async function migrateMisclassifiedVllm(): Promise<void> {
   }
 }
 
+export async function migrateReasoningOffValues(): Promise<void> {
+  const modelsPath = join(piAgentDirectory(), "models.json");
+  const root = await jsonObject(modelsPath);
+  let changed = false;
+  for (const provider of Object.values(asObject(root.providers)).map(asObject)) {
+    for (const model of asArray(provider.models).map(asObject)) {
+      const modelId = asString(model.id);
+      if (!modelId) continue;
+      const current = validatedThinkingLevelMap(model.thinkingLevelMap);
+      const normalized = normalizedThinkingLevelMap(modelId, current);
+      if (current?.off !== normalized?.off) {
+        model.thinkingLevelMap = normalized;
+        changed = true;
+      }
+    }
+  }
+  if (changed) await atomicWrite(modelsPath, JSON.stringify(root, null, 2));
+}
+
 const BUILTIN_PROVIDERS: Array<[string, string, boolean, boolean]> = [
   ["amazon-bedrock", "Amazon Bedrock", true, false], ["ant-ling", "Ant Ling", true, false],
   ["anthropic", "Anthropic", true, true], ["azure-openai-responses", "Azure OpenAI", true, false],
@@ -708,7 +744,19 @@ export async function providerCatalog(available: unknown): Promise<JsonObject[]>
     const id = asString(model.id);
     if (!provider || !id) continue;
     const models = modelsByProvider.get(provider) ?? [];
-    models.push({ id, ...(typeof model.name === "string" ? { name: model.name } : {}) });
+    const input = asArray(model.input).filter((value): value is "text" | "image" =>
+      value === "text" || value === "image",
+    );
+    models.push({
+      id,
+      ...(typeof model.name === "string" ? { name: model.name } : {}),
+      ...(typeof model.contextWindow === "number" ? { contextWindow: model.contextWindow } : {}),
+      ...(typeof model.reasoning === "boolean" ? { reasoning: model.reasoning } : {}),
+      ...(input.length ? { input } : {}),
+      ...(validatedThinkingLevelMap(model.thinkingLevelMap, id)
+        ? { thinkingLevelMap: validatedThinkingLevelMap(model.thinkingLevelMap, id) }
+        : {}),
+    });
     modelsByProvider.set(provider, models);
   }
   const directory = piAgentDirectory();
@@ -792,22 +840,30 @@ export async function discoverLocalModels(baseUrl: string, ollama: boolean): Pro
   try {
     const body = asObject(await fetchJson(modelsUrl, 8_000));
     const models = discoveredModels(body);
-    if (models.length) return [...new Map(models.map((model) => [model.id, model])).values()]
-      .sort((left, right) => left.id.localeCompare(right.id));
+    if (models.length) {
+      const sorted = [...new Map(models.map((model) => [model.id, model])).values()]
+        .sort((left, right) => left.id.localeCompare(right.id));
+      return isOllama ? enrichOllamaModelCapabilities(base, sorted) : sorted;
+    }
   } catch {
     // Ollama has a separate model-list endpoint.
   }
   if (!isOllama) throw new Error("No models were returned by the local service");
   const body = asObject(await fetchJson(new URL("/api/tags", base), 8_000));
-  return [...new Set(asArray(body.models)
+  const models = [...new Set(asArray(body.models)
     .map((item) => asString(asObject(item).name))
     .filter((item): item is string => Boolean(item)))].sort()
     .map((id) => ({ id }));
+  return enrichOllamaModelCapabilities(base, models);
 }
 
-export function openProviderLogin(providerId: string, launch: PiLaunch): void {
+export async function openProviderLogin(providerId: string, launch: PiLaunch): Promise<void> {
   const id = providerId.trim();
   if (!validProviderId(id)) throw new Error("Invalid provider ID");
+  if (id === "openai-codex") {
+    await loginOpenAICodex(launch, (url) => shell.openExternal(url));
+    return;
+  }
   const cwd = piAgentDirectory();
   const command = process.platform === "win32"
     ? { executable: launch.executable, args: [...launch.args] }

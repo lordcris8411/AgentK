@@ -23,7 +23,9 @@ export interface ClientSettings {
   disabledModels: string[];
   pinnedWorkspaces: string[];
   defaultModel: string;
+  defaultThinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   sessionModels: Record<string, string>;
+  sessionThinkingLevels: Record<string, "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max">;
   leftPanelWidth: number;
   rightPanelWidth: number;
   fileExplorerWidth: number;

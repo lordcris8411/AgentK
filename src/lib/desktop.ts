@@ -116,7 +116,9 @@ export type ClientSettings = {
   disabledModels: string[];
   pinnedWorkspaces: string[];
   defaultModel: string;
+  defaultThinkingLevel: ThinkingLevel;
   sessionModels: Record<string, string>;
+  sessionThinkingLevels: Record<string, ThinkingLevel>;
   leftPanelWidth: number;
   rightPanelWidth: number;
   fileExplorerWidth: number;
@@ -258,6 +260,7 @@ export type ProviderModelDraft = {
   name?: string;
   contextWindow?: number;
   reasoning?: boolean;
+  input?: Array<"text" | "image">;
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
   assessment?: { source: "rules" | "default-model" | "unverified"; repository?: string; evidence?: string };
 };
@@ -306,15 +309,15 @@ export type LocalModelStatus = "queued" | "downloading" | "paused" | "verifying-
 export type LocalModelRuntimeConfig = { backend: LocalModelBackend; contextSize: number; gpuLayers: number; threads: number; cacheTypeK: LocalModelKvCacheType; cacheTypeV: LocalModelKvCacheType; maxOutputTokens: number; reasoning: boolean };
 export type LocalModelRecord = {
   id: string; name: string; source: LocalModelSource; repository?: string; revision?: string;
-  files: Array<{ name: string; path: string; size: number; sha256: string }>;
+  files: Array<{ name: string; path: string; size: number; sha256: string; kind: "model" | "mmproj" }>;
   size: number; sha256: string; architecture?: string; quantization?: string; parameterCount?: number; trainingContext?: number; blockCount?: number;
   compatibility: LocalModelCompatibility; compatibilityError?: string; verifiedAt?: number; config: LocalModelRuntimeConfig; status: LocalModelStatus; error?: string; createdAt: number; updatedAt: number;
 };
-export type LocalModelDownloadTask = { id: string; source: Exclude<LocalModelSource, "import">; repository: string; revision: string; files: Array<{ name: string; url: string; size: number; sha256?: string; etag?: string }>; completedBytes: number; totalBytes: number; bytesPerSecond?: number; status: "queued" | "downloading" | "paused" | "verifying-download" | "failed"; error?: string; createdAt: number; updatedAt: number };
+export type LocalModelDownloadTask = { id: string; source: Exclude<LocalModelSource, "import">; repository: string; revision: string; files: Array<{ name: string; url: string; size: number; sha256?: string; etag?: string; kind: "model" | "mmproj" }>; completedBytes: number; totalBytes: number; bytesPerSecond?: number; status: "queued" | "downloading" | "paused" | "verifying-download" | "failed"; error?: string; createdAt: number; updatedAt: number };
 export type RuntimeDownloadProgress = { modelId: string; backend: Exclude<LocalModelBackend, "auto">; source: string; fileName: string; phase: "downloading" | "verifying" | "extracting"; completedBytes: number; totalBytes: number; bytesPerSecond: number };
-export type LocalModelSnapshot = { enabled: boolean; activeModelId?: string; runningModelId?: string; models: LocalModelRecord[]; downloads: LocalModelDownloadTask[]; hardware: { platform: string; architecture: string; totalMemory: number; availableBackends: LocalModelBackend[]; gpu?: string; vram?: number }; proxyUrl: string; storagePath: string; defaultStoragePath: string; piBusy: boolean; runtimeDownload?: RuntimeDownloadProgress; verificationStage?: { modelId: string; phase: "preparing-runtime" | "loading-model" | "checking-template" | "requesting-tool-call" | "checking-tool-result" }; providerConflict?: string };
+export type LocalModelSnapshot = { enabled: boolean; activeModelId?: string; runningModelId?: string; models: LocalModelRecord[]; downloads: LocalModelDownloadTask[]; hardware: { platform: string; architecture: string; totalMemory: number; availableBackends: LocalModelBackend[]; gpu?: string; vram?: number }; proxyUrl: string; storagePath: string; defaultStoragePath: string; piBusy: boolean; runtimeDownload?: RuntimeDownloadProgress; verificationStage?: { modelId: string; phase: "preparing-runtime" | "loading-model" | "checking-template" | "requesting-tool-call" | "checking-tool-result" | "checking-vision" }; providerConflict?: string };
 export type HubModelResult = { source: Exclude<LocalModelSource, "import">; repository: string; name: string; description?: string; downloads?: number; gated: boolean; private: boolean };
-export type HubGgufFile = { name: string; size: number; sha256?: string; group: string; shardIndex: number; shardCount: number };
+export type HubGgufFile = { name: string; size: number; sha256?: string; group: string; shardIndex: number; shardCount: number; kind: "model" | "mmproj" };
 
 export const desktop = {
   runtimeInfo: () => invoke<RuntimeInfo>("get_runtime_info"),

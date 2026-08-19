@@ -2314,19 +2314,27 @@ export function ConversationWorkspace({
   }, [connected, en, session?.runtimeId, settings.disabledModelProviders, settings.disabledModels]);
   useEffect(() => {
     const saved = session?.path ? settings.sessionModels[session.path] : undefined;
+    const savedThinkingLevel = session?.path
+      ? settings.sessionThinkingLevels[session.path]
+      : undefined;
     const [provider, ...modelParts] = saved?.split("/") ?? [];
     const modelId = modelParts.join("/");
-    if (
-      !connected ||
-      !session?.runtimeId ||
-      !provider ||
-      !modelId ||
-      !modelIsEnabled(settings, provider, modelId)
-    ) return;
-    void desktop.command({ type: "set_model", provider, modelId }, session.runtimeId)
-      .then(() => window.dispatchEvent(new Event("agent-k-model-changed")))
-      .catch((cause) => onError(String(cause)));
-  }, [connected, onError, session?.path, session?.runtimeId, settings.disabledModelProviders, settings.disabledModels, settings.sessionModels]);
+    if (!connected || !session?.runtimeId) return;
+    let cancelled = false;
+    void (async () => {
+      if (provider && modelId && modelIsEnabled(settings, provider, modelId))
+        await desktop.command({ type: "set_model", provider, modelId }, session.runtimeId);
+      if (savedThinkingLevel)
+        await desktop.command(
+          { type: "set_thinking_level", level: savedThinkingLevel },
+          session.runtimeId,
+        );
+      if (!cancelled) window.dispatchEvent(new Event("agent-k-model-changed"));
+    })().catch((cause) => {
+      if (!cancelled) onError(String(cause));
+    });
+    return () => { cancelled = true; };
+  }, [connected, onError, session?.path, session?.runtimeId, settings.disabledModelProviders, settings.disabledModels, settings.sessionModels, settings.sessionThinkingLevels]);
   useEffect(() => {
     if (!modelMenu) return;
     const closeOnOutsideClick = (event: PointerEvent) => {
@@ -2361,14 +2369,30 @@ export function ConversationWorkspace({
         },
         session?.runtimeId,
       );
+      const state = await desktop.command(
+        { type: "get_state" },
+        session?.runtimeId,
+      ) as { thinkingLevel?: unknown };
+      const actualThinkingLevel = isThinkingLevel(state.thinkingLevel)
+        ? state.thinkingLevel
+        : undefined;
       setCurrentModelKey(modelKey(model.provider, model.id));
       setModelName(model.name ?? model.id);
+      if (actualThinkingLevel) setThinkingLevel(actualThinkingLevel);
       if (session?.path && session.path !== "__new__")
-        void updateSettings({
+        await updateSettings({
           sessionModels: {
             ...settings.sessionModels,
             [session.path]: modelKey(model.provider, model.id),
           },
+          ...(actualThinkingLevel
+            ? {
+                sessionThinkingLevels: {
+                  ...settings.sessionThinkingLevels,
+                  [session.path]: actualThinkingLevel,
+                },
+              }
+            : {}),
         });
       setModelMenu(false);
       window.dispatchEvent(new Event("agent-k-model-changed"));
@@ -2394,6 +2418,14 @@ export function ConversationWorkspace({
         session.runtimeId,
       );
       setThinkingLevel(level);
+      if (session.path) {
+        await updateSettings({
+          sessionThinkingLevels: {
+            ...settings.sessionThinkingLevels,
+            [session.path]: level,
+          },
+        });
+      }
       setThinkingMenu(false);
     } catch (cause) {
       onError(String(cause));

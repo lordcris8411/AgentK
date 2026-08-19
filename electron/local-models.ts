@@ -59,7 +59,7 @@ export interface LocalModelRecord {
   source: LocalModelSource;
   repository?: string;
   revision?: string;
-  files: Array<{ name: string; path: string; size: number; sha256: string }>;
+  files: Array<{ name: string; path: string; size: number; sha256: string; kind: "model" | "mmproj" }>;
   size: number;
   sha256: string;
   architecture?: string;
@@ -83,7 +83,7 @@ export interface LocalModelDownloadTask {
   source: Exclude<LocalModelSource, "import">;
   repository: string;
   revision: string;
-  files: Array<{ name: string; url: string; size: number; sha256?: string; etag?: string }>;
+  files: Array<{ name: string; url: string; size: number; sha256?: string; etag?: string; kind: "model" | "mmproj" }>;
   completedBytes: number;
   totalBytes: number;
   bytesPerSecond?: number;
@@ -117,6 +117,7 @@ export interface HubGgufFile {
   group: string;
   shardIndex: number;
   shardCount: number;
+  kind: "model" | "mmproj";
 }
 
 export interface LocalModelManagerSnapshot {
@@ -137,8 +138,10 @@ export interface LocalModelManagerSnapshot {
 
 export interface LocalModelVerificationStage {
   modelId: string;
-  phase: "preparing-runtime" | "loading-model" | "checking-template" | "requesting-tool-call" | "checking-tool-result";
+  phase: "preparing-runtime" | "loading-model" | "checking-template" | "requesting-tool-call" | "checking-tool-result" | "checking-vision";
 }
+
+const VISION_PROBE_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlB8T8AAAAASUVORK5CYII=";
 
 export interface RuntimeDownloadProgress {
   modelId: string;
@@ -262,10 +265,17 @@ export function parseGgufShard(name: string): { group: string; index: number; co
 
 export function completeShardGroup(files: HubGgufFile[], selected: string): HubGgufFile[] {
   const picked = files.find((file) => file.name === selected);
-  if (!picked) throw new Error("Selected GGUF file was not found");
+  if (!picked || picked.kind !== "model") throw new Error("Selected GGUF model file was not found");
   const group = files.filter((file) => file.group === picked.group).sort((left, right) => left.shardIndex - right.shardIndex);
   if (group.length !== picked.shardCount || group.some((file, index) => file.shardIndex !== index + 1)) throw new Error("The repository does not contain the complete GGUF shard group");
   return group;
+}
+
+export function recommendedMmproj(files: HubGgufFile[]): HubGgufFile | undefined {
+  const projectors = files.filter((file) => file.kind === "mmproj");
+  const rank = (file: HubGgufFile) => /(?:^|[-_.])(?:f16|bf16)(?:[-_.]|$)/i.test(file.name) ? 3
+    : /(?:^|[-_.])q8(?:[-_.]|$)/i.test(file.name) ? 2 : 1;
+  return projectors.sort((left, right) => rank(right) - rank(left) || right.size - left.size || left.name.localeCompare(right.name))[0];
 }
 
 function clone<T>(value: T): T { return structuredClone(value); }
@@ -515,8 +525,8 @@ export class LocalModelManager {
     await Promise.all([mkdir(this.modelsDirectory, { recursive: true }), mkdir(this.downloadsDirectory, { recursive: true }), mkdir(this.runtimeDirectory, { recursive: true })]);
     this.registry = await readJson<LocalModelRegistry>(this.registryPath, { version: 1, models: [], downloads: [] });
     this.registry.version = 1;
-    this.registry.models = Array.isArray(this.registry.models) ? this.registry.models.map((model) => ({ ...model, config: validateConfig(model.config), status: model.status === "running" || model.status === "loading" ? "ready" : model.status })) : [];
-    this.registry.downloads = Array.isArray(this.registry.downloads) ? this.registry.downloads.filter((task) => /^download-[a-f0-9]{16}$/.test(task.id) && (task.source === "huggingface" || task.source === "modelscope") && Array.isArray(task.files)).map((task) => ({ ...task, bytesPerSecond: 0, status: task.status === "downloading" || task.status === "verifying-download" ? "queued" : task.status })) : [];
+    this.registry.models = Array.isArray(this.registry.models) ? this.registry.models.map((model) => ({ ...model, files: model.files.map((file) => ({ ...file, kind: file.kind === "mmproj" || /mmproj/i.test(file.name) ? "mmproj" as const : "model" as const })), config: validateConfig(model.config), status: model.status === "running" || model.status === "loading" ? "ready" : model.status })) : [];
+    this.registry.downloads = Array.isArray(this.registry.downloads) ? this.registry.downloads.filter((task) => /^download-[a-f0-9]{16}$/.test(task.id) && (task.source === "huggingface" || task.source === "modelscope") && Array.isArray(task.files)).map((task) => ({ ...task, files: task.files.map((file) => ({ ...file, kind: file.kind === "mmproj" || /mmproj/i.test(file.name) ? "mmproj" as const : "model" as const })), bytesPerSecond: 0, status: task.status === "downloading" || task.status === "verifying-download" ? "queued" : task.status })) : [];
     const previouslyActive = this.registry.activeModelId;
     for (const model of this.registry.models) {
       if (!validModelId(model.id)) { model.status = "missing"; model.error = "The persisted local model ID is invalid"; if (this.registry.activeModelId === model.id) this.registry.activeModelId = undefined; continue; }
@@ -586,7 +596,7 @@ export class LocalModelManager {
   private async confirmGgufSearchResults(source: Exclude<LocalModelSource, "import">, candidates: HubModelResult[]): Promise<HubModelResult[]> {
     const checked = await Promise.all(candidates.map(async (candidate) => {
       if (candidate.gated || candidate.private) return candidate;
-      try { return (await this.inspectRepository(source, candidate.repository)).files.length > 0 ? candidate : undefined; }
+      try { return (await this.inspectRepository(source, candidate.repository)).files.some((file) => file.kind === "model") ? candidate : undefined; }
       catch { return undefined; }
     }));
     return checked.filter((candidate): candidate is HubModelResult => Boolean(candidate)).slice(0, 30);
@@ -601,7 +611,7 @@ export class LocalModelManager {
       if (!response.ok) throw new Error(`Hugging Face repository check failed: ${response.status}`);
       const body = asObject(await response.json());
       const revision = asString(body.sha) ?? "main";
-      const files = asArray(body.siblings).flatMap((raw) => { const file = asObject(raw); const name = asString(file.rfilename); if (!name || extname(name).toLowerCase() !== ".gguf" || /mmproj/i.test(name)) return []; const shard = parseGgufShard(name); const lfs = asObject(file.lfs); return [{ name, size: Number(file.size ?? lfs.size) || 0, sha256: asString(lfs.sha256), group: shard.group, shardIndex: shard.index, shardCount: shard.count }]; });
+      const files = asArray(body.siblings).flatMap((raw) => { const file = asObject(raw); const name = asString(file.rfilename); if (!name || extname(name).toLowerCase() !== ".gguf") return []; const kind = /mmproj/i.test(name) ? "mmproj" as const : "model" as const; const shard = kind === "model" ? parseGgufShard(name) : { group: name, index: 1, count: 1 }; const lfs = asObject(file.lfs); return [{ name, size: Number(file.size ?? lfs.size) || 0, sha256: asString(lfs.sha256), group: shard.group, shardIndex: shard.index, shardCount: shard.count, kind }]; });
       const blocked = body.private === true || Boolean(body.gated);
       return { repository, revision, files, downloadable: !blocked, ...(blocked ? { reason: "Private and gated repositories require a token and are not supported" } : {}) };
     }
@@ -619,7 +629,7 @@ export class LocalModelManager {
     const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!response.ok) throw new Error(`ModelScope repository check failed: ${response.status}`);
     const body = asObject(await response.json()); if (body.Success === false || body.success === false || (typeof body.Code === "number" && body.Code !== 200)) throw new Error(asString(body.Message) ?? asString(body.message) ?? "ModelScope repository check failed"); const data = asObject(body.Data ?? body.data);
-    const files = asArray(data.Files ?? data.files ?? body.files).flatMap((raw) => { const file = asObject(raw); const name = asString(file.Path) ?? asString(file.Name) ?? asString(file.path); if (!name || extname(name).toLowerCase() !== ".gguf" || /mmproj/i.test(name)) return []; const shard = parseGgufShard(name); return [{ name, size: Number(file.Size ?? file.size) || 0, sha256: asString(file.Sha256 ?? file.sha256), group: shard.group, shardIndex: shard.index, shardCount: shard.count }]; });
+    const files = asArray(data.Files ?? data.files ?? body.files).flatMap((raw) => { const file = asObject(raw); const name = asString(file.Path) ?? asString(file.Name) ?? asString(file.path); if (!name || extname(name).toLowerCase() !== ".gguf") return []; const kind = /mmproj/i.test(name) ? "mmproj" as const : "model" as const; const shard = kind === "model" ? parseGgufShard(name) : { group: name, index: 1, count: 1 }; return [{ name, size: Number(file.Size ?? file.size) || 0, sha256: asString(file.Sha256 ?? file.sha256), group: shard.group, shardIndex: shard.index, shardCount: shard.count, kind }]; });
     return { repository, revision, files, downloadable: true };
   }
 
@@ -627,8 +637,9 @@ export class LocalModelManager {
     const inspected = await this.inspectRepository(source, input);
     if (!inspected.downloadable) throw new Error(inspected.reason ?? "Repository cannot be downloaded");
     const group = completeShardGroup(inspected.files, selected);
+    const projector = recommendedMmproj(inspected.files);
     const base = source === "huggingface" ? this.options.endpoints?.huggingface ?? "https://huggingface.co" : this.options.endpoints?.modelscope ?? "https://modelscope.cn";
-    const files = group.map((file) => ({ name: file.name, size: file.size, sha256: file.sha256, url: source === "huggingface" ? new URL(`${inspected.repository}/resolve/${encodeURIComponent(inspected.revision)}/${file.name.split("/").map(encodeURIComponent).join("/")}?download=true`, `${base}/`).toString() : new URL(`models/${inspected.repository}/resolve/${encodeURIComponent(inspected.revision)}/${file.name.split("/").map(encodeURIComponent).join("/")}`, `${base}/`).toString() }));
+    const files = [...group, ...(projector ? [projector] : [])].map((file) => ({ name: file.name, size: file.size, sha256: file.sha256, kind: file.kind, url: source === "huggingface" ? new URL(`${inspected.repository}/resolve/${encodeURIComponent(inspected.revision)}/${file.name.split("/").map(encodeURIComponent).join("/")}?download=true`, `${base}/`).toString() : new URL(`models/${inspected.repository}/resolve/${encodeURIComponent(inspected.revision)}/${file.name.split("/").map(encodeURIComponent).join("/")}`, `${base}/`).toString() }));
     for (const file of files) if (!(file.size > 0)) file.size = await remoteFileSize(file.url);
     const totalBytes = files.reduce((total, file) => total + file.size, 0);
     await this.ensureDiskSpace(totalBytes);
@@ -671,14 +682,17 @@ export class LocalModelManager {
     const siblings = await readdir(dirname(source));
     const names = siblings.filter((name) => extname(name).toLowerCase() === ".gguf" && parseGgufShard(name).group === shard.group).sort((left, right) => parseGgufShard(left).index - parseGgufShard(right).index);
     if (names.length !== shard.count) throw new Error("The complete GGUF shard group is required");
-    const sourceSizes = await Promise.all(names.map(async (name) => (await stat(join(dirname(source), name))).size));
+    const projectorCandidates = await Promise.all(siblings.filter((name) => extname(name).toLowerCase() === ".gguf" && /mmproj/i.test(name)).map(async (name): Promise<HubGgufFile> => ({ name, size: (await stat(join(dirname(source), name))).size, group: name, shardIndex: 1, shardCount: 1, kind: "mmproj" })));
+    const projector = recommendedMmproj(projectorCandidates);
+    const importNames = [...names, ...(projector ? [projector.name] : [])];
+    const sourceSizes = await Promise.all(importNames.map(async (name) => (await stat(join(dirname(source), name))).size));
     await this.ensureDiskSpace(sourceSizes.reduce((sum, size) => sum + size, 0));
     const id = this.uniqueModelId(safeId(shard.group.replace(/\.gguf$/i, "")));
     const target = join(this.modelsDirectory, id); await mkdir(target, { recursive: true });
     const files: LocalModelRecord["files"] = [];
     try {
-      for (const name of names) { const input = join(dirname(source), name); const output = join(target, name); await copyFile(input, output); const metadata = await stat(output); files.push({ name, path: output, size: metadata.size, sha256: await sha256File(output) }); }
-      const primary = files[0]; if (!primary) throw new Error("No GGUF files were imported");
+      for (const name of importNames) { const input = join(dirname(source), name); const output = join(target, name); await copyFile(input, output); const metadata = await stat(output); files.push({ name, path: output, size: metadata.size, sha256: await sha256File(output), kind: /mmproj/i.test(name) ? "mmproj" : "model" }); }
+      const primary = files.find((file) => file.kind === "model"); if (!primary) throw new Error("No GGUF model files were imported");
       const gguf = await readGgufMetadata(primary.path);
       const model: LocalModelRecord = { id, name: shard.group.replace(/\.gguf$/i, ""), source: "import", files, size: files.reduce((sum, file) => sum + file.size, 0), sha256: createHash("sha256").update(files.map((file) => file.sha256).join(":"), "utf8").digest("hex"), ...gguf, quantization: quantizationFromName(primary.name), compatibility: "unverified", config: this.recommendedConfig(gguf.trainingContext), status: "ready", createdAt: Date.now(), updatedAt: Date.now() };
       this.registry.models.push(model); await this.saveAndEmit(); return id;
@@ -872,8 +886,8 @@ export class LocalModelManager {
   private async finishDownload(task: LocalModelDownloadTask, signal: AbortSignal): Promise<void> {
     const id = this.uniqueModelId(safeId(parseGgufShard(basename(task.files[0]?.name ?? task.repository)).group.replace(/\.gguf$/i, ""))); const directory = join(this.modelsDirectory, id); await mkdir(directory, { recursive: true }); const files: LocalModelRecord["files"] = [];
     try {
-      for (const remote of task.files) { signal.throwIfAborted(); const partial = join(this.downloadsDirectory, task.id, `${basename(remote.name)}.partial`); const digest = await sha256File(partial, signal); if (remote.sha256 && digest.toLowerCase() !== remote.sha256.toLowerCase()) throw new Error(`SHA-256 mismatch for ${remote.name}`); signal.throwIfAborted(); const output = join(directory, basename(remote.name)); await rename(partial, output); const metadata = await stat(output); files.push({ name: remote.name, path: output, size: metadata.size, sha256: digest }); }
-      const first = files[0]; if (!first) throw new Error("Download did not contain a GGUF file"); signal.throwIfAborted(); const gguf = await readGgufMetadata(first.path); signal.throwIfAborted(); this.registry.models.push({ id, name: parseGgufShard(basename(first.name)).group.replace(/\.gguf$/i, ""), source: task.source, repository: task.repository, revision: task.revision, files, size: files.reduce((sum, file) => sum + file.size, 0), sha256: createHash("sha256").update(files.map((file) => file.sha256).join(":"), "utf8").digest("hex"), ...gguf, quantization: quantizationFromName(first.name), compatibility: "unverified", config: this.recommendedConfig(gguf.trainingContext), status: "ready", createdAt: Date.now(), updatedAt: Date.now() });
+      for (const remote of task.files) { signal.throwIfAborted(); const partial = join(this.downloadsDirectory, task.id, `${basename(remote.name)}.partial`); const digest = await sha256File(partial, signal); if (remote.sha256 && digest.toLowerCase() !== remote.sha256.toLowerCase()) throw new Error(`SHA-256 mismatch for ${remote.name}`); signal.throwIfAborted(); const output = join(directory, basename(remote.name)); await rename(partial, output); const metadata = await stat(output); files.push({ name: remote.name, path: output, size: metadata.size, sha256: digest, kind: remote.kind }); }
+      const first = files.find((file) => file.kind === "model"); if (!first) throw new Error("Download did not contain a GGUF model file"); signal.throwIfAborted(); const gguf = await readGgufMetadata(first.path); signal.throwIfAborted(); this.registry.models.push({ id, name: parseGgufShard(basename(first.name)).group.replace(/\.gguf$/i, ""), source: task.source, repository: task.repository, revision: task.revision, files, size: files.reduce((sum, file) => sum + file.size, 0), sha256: createHash("sha256").update(files.map((file) => file.sha256).join(":"), "utf8").digest("hex"), ...gguf, quantization: quantizationFromName(first.name), compatibility: "unverified", config: this.recommendedConfig(gguf.trainingContext), status: "ready", createdAt: Date.now(), updatedAt: Date.now() });
     } catch (cause) { await rm(directory, { recursive: true, force: true }); throw cause; }
   }
 
@@ -1010,7 +1024,10 @@ export class LocalModelManager {
     signal.throwIfAborted();
     if (!temporary) this.emitRunProgress("starting-server", 1, 4);
     const deadline = Date.now() + timeout;
-    const port = await randomPort(); const token = randomBytes(32).toString("hex"); const args = [...(runtime?.args ?? []), "--model", model.files[0]?.path ?? "", "--host", "127.0.0.1", "--port", String(port), "--api-key", token, "--alias", model.id, "--ctx-size", String(model.config.contextSize), "--n-gpu-layers", String(backend === "cpu" ? 0 : model.config.gpuLayers), "--cache-type-k", model.config.cacheTypeK, "--cache-type-v", model.config.cacheTypeV, "--jinja", "--cache-prompt"];
+    const modelFile = model.files.find((file) => file.kind === "model");
+    const projector = model.files.find((file) => file.kind === "mmproj");
+    if (!modelFile) throw new Error("The managed model has no GGUF language-model file");
+    const port = await randomPort(); const token = randomBytes(32).toString("hex"); const args = [...(runtime?.args ?? []), "--model", modelFile.path, ...(projector ? ["--mmproj", projector.path] : []), "--host", "127.0.0.1", "--port", String(port), "--api-key", token, "--alias", model.id, "--ctx-size", String(model.config.contextSize), "--n-gpu-layers", String(backend === "cpu" ? 0 : model.config.gpuLayers), "--cache-type-k", model.config.cacheTypeK, "--cache-type-v", model.config.cacheTypeV, "--jinja", "--cache-prompt"];
     args[args.indexOf("--n-gpu-layers") + 1] = String(this.resolvedGpuLayers(model, backend));
     if (model.config.threads > 0) args.push("--threads", String(model.config.threads));
     const environment = { ...process.env };
@@ -1052,6 +1069,14 @@ export class LocalModelManager {
     const secondRequest = { ...firstRequest, tool_choice: "none", messages: [...firstRequest.messages, parsed.assistant, { role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ ok: true, value: 37 }) }] };
     this.setVerificationStage({ modelId: model.id, phase: "checking-tool-result" });
     const secondResponse = await this.internalFetch("/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(secondRequest), signal: verificationSignal() }); if (!secondResponse.ok) throw new Error(`Tool-result continuation failed: HTTP ${secondResponse.status} ${await secondResponse.text()}`); const secondMessage = asObject(asObject(asArray(asObject(await secondResponse.json()).choices)[0]).message); if (typeof secondMessage.content !== "string" || !secondMessage.content.trim() || asArray(secondMessage.tool_calls).length) throw new Error("Model could not continue with a normal answer after receiving a tool result");
+    if (model.files.some((file) => file.kind === "mmproj")) {
+      this.setVerificationStage({ modelId: model.id, phase: "checking-vision" });
+      const visionRequest = { model: model.id, messages: [{ role: "user", content: [{ type: "text", text: "Reply with OK after inspecting this image." }, { type: "image_url", image_url: { url: VISION_PROBE_DATA_URL } }] }], temperature: 0, max_tokens: 64, stream: false, chat_template_kwargs: { enable_thinking: false } };
+      const visionResponse = await this.internalFetch("/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(visionRequest), signal: verificationSignal() });
+      if (!visionResponse.ok) throw new Error(`Vision input failed: HTTP ${visionResponse.status} ${await visionResponse.text()}`);
+      const visionMessage = asObject(asObject(asArray(asObject(await visionResponse.json()).choices)[0]).message);
+      if (typeof visionMessage.content !== "string" || !visionMessage.content.trim()) throw new Error("Vision model returned no answer for an image input");
+    }
   }
 
   private setVerificationStage(stage?: LocalModelVerificationStage): void { this.verificationStage = stage; this.options.emit({ type: "local_models_changed", phase: "tool-verification" }); }
@@ -1070,7 +1095,7 @@ export class LocalModelManager {
   private reply(response: ServerResponse, status: number, body: JsonObject): void { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(body)); }
 
   private async assertProviderOwnership(): Promise<void> { const path = join(piAgentDirectory(), "models.json"); const root = asObject(await readJson(path, {})); const existing = asObject(asObject(root.providers)[LOCAL_MODEL_PROVIDER_ID]); if (Object.keys(existing).length && existing.agentKManaged !== true) { this.providerConflict = `Provider ${LOCAL_MODEL_PROVIDER_ID} already exists and is not managed by Agent K`; throw new Error(this.providerConflict); } this.providerConflict = undefined; }
-  private async syncProvider(): Promise<void> { const directory = piAgentDirectory(); await mkdir(directory, { recursive: true }); const path = join(directory, "models.json"); const root = asObject(await readJson(path, {})); const providers = asObject(root.providers); const existing = asObject(providers[LOCAL_MODEL_PROVIDER_ID]); if (Object.keys(existing).length && existing.agentKManaged !== true) { this.providerConflict = `Provider ${LOCAL_MODEL_PROVIDER_ID} already exists and is not managed by Agent K`; if (this.registry.activeModelId) throw new Error(this.providerConflict); return; } this.providerConflict = undefined; const active = this.registry.activeModelId ? this.registry.models.find((model) => model.id === this.registry.activeModelId) : undefined; if (this.enabled && active && active.compatibility === "tool-compatible" && active.compatibilityKey === this.compatibilityKey(active)) providers[LOCAL_MODEL_PROVIDER_ID] = { name: "Agent K llama.cpp", baseUrl: `http://127.0.0.1:${this.proxyPort}/v1`, api: "openai-completions", apiKey: this.proxyToken, agentKManaged: true, models: [{ id: active.id, name: active.name, contextWindow: active.config.contextSize, maxTokens: active.config.maxOutputTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, input: ["text"], reasoning: active.config.reasoning, ...(active.config.reasoning ? { thinkingLevelMap: { off: "off", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null } } : {}), compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, thinkingFormat: "qwen-chat-template" } }] }; else delete providers[LOCAL_MODEL_PROVIDER_ID]; root.providers = providers; await atomicWrite(path, JSON.stringify(root, null, 2), true); }
+  private async syncProvider(): Promise<void> { const directory = piAgentDirectory(); await mkdir(directory, { recursive: true }); const path = join(directory, "models.json"); const root = asObject(await readJson(path, {})); const providers = asObject(root.providers); const existing = asObject(providers[LOCAL_MODEL_PROVIDER_ID]); if (Object.keys(existing).length && existing.agentKManaged !== true) { this.providerConflict = `Provider ${LOCAL_MODEL_PROVIDER_ID} already exists and is not managed by Agent K`; if (this.registry.activeModelId) throw new Error(this.providerConflict); return; } this.providerConflict = undefined; const active = this.registry.activeModelId ? this.registry.models.find((model) => model.id === this.registry.activeModelId) : undefined; if (this.enabled && active && active.compatibility === "tool-compatible" && active.compatibilityKey === this.compatibilityKey(active)) providers[LOCAL_MODEL_PROVIDER_ID] = { name: "Agent K llama.cpp", baseUrl: `http://127.0.0.1:${this.proxyPort}/v1`, api: "openai-completions", apiKey: this.proxyToken, agentKManaged: true, models: [{ id: active.id, name: active.name, contextWindow: active.config.contextSize, maxTokens: active.config.maxOutputTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, input: active.files.some((file) => file.kind === "mmproj") ? ["text", "image"] : ["text"], reasoning: active.config.reasoning, ...(active.config.reasoning ? { thinkingLevelMap: { off: "off", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null } } : {}), compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, thinkingFormat: "qwen-chat-template" } }] }; else delete providers[LOCAL_MODEL_PROVIDER_ID]; root.providers = providers; await atomicWrite(path, JSON.stringify(root, null, 2), true); }
 }
 
 async function randomPort(): Promise<number> { const server = createServer(); await new Promise<void>((resolveListen, rejectListen) => { server.once("error", rejectListen); server.listen(0, "127.0.0.1", () => resolveListen()); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Unable to allocate a local port"); const port = address.port; await new Promise<void>((resolveClose) => server.close(() => resolveClose())); return port; }

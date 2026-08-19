@@ -18,6 +18,7 @@ import {
   parseGgufShard,
   parseHubRepository,
   readGgufMetadata,
+  recommendedMmproj,
   resolveGpuLayers,
   selectAutomaticBackend,
   validateToolCallResponse,
@@ -102,9 +103,19 @@ test("parses only official hub repository inputs and complete GGUF shards", () =
   assert.equal(parseHubRepository("modelscope", "https://www.modelscope.cn/models/OpenBMB/MiniCPM5-1B-GGUF"), "OpenBMB/MiniCPM5-1B-GGUF");
   assert.throws(() => parseHubRepository("huggingface", "https://example.com/model.gguf"));
   assert.deepEqual(parseGgufShard("model-00002-of-00003.gguf"), { group: "model.gguf", index: 2, count: 3 });
-  const files = [1, 2, 3].map((index) => ({ name: `model-${String(index).padStart(5, "0")}-of-00003.gguf`, group: "model.gguf", shardIndex: index, shardCount: 3, size: 1 }));
+  const files = [1, 2, 3].map((index) => ({ name: `model-${String(index).padStart(5, "0")}-of-00003.gguf`, group: "model.gguf", shardIndex: index, shardCount: 3, size: 1, kind: "model" }));
   assert.equal(completeShardGroup(files, files[1].name).length, 3);
   assert.throws(() => completeShardGroup(files.slice(0, 2), files[0].name), /complete/);
+});
+
+test("chooses the highest-quality vision projector", () => {
+  const files = [
+    { name: "model-q4.gguf", group: "model-q4.gguf", shardIndex: 1, shardCount: 1, size: 20, kind: "model" },
+    { name: "mmproj-q5_0.gguf", group: "mmproj-q5_0.gguf", shardIndex: 1, shardCount: 1, size: 8, kind: "mmproj" },
+    { name: "mmproj-f16.gguf", group: "mmproj-f16.gguf", shardIndex: 1, shardCount: 1, size: 12, kind: "mmproj" },
+    { name: "mmproj-q8_0.gguf", group: "mmproj-q8_0.gguf", shardIndex: 1, shardCount: 1, size: 10, kind: "mmproj" },
+  ];
+  assert.equal(recommendedMmproj(files)?.name, "mmproj-f16.gguf");
 });
 
 test("reads GGUF architecture, parameter count, and training context", async () => {
@@ -631,13 +642,15 @@ test("copies a complete imported GGUF shard group into the private model library
   const source = join(root, "source"); await mkdir(source, { recursive: true });
   const first = join(source, "fixture-00001-of-00002.gguf");
   const second = join(source, "fixture-00002-of-00002.gguf");
-  await writeFile(first, ggufFixture()); await writeFile(second, Buffer.from("shard-two"));
+  const projector = join(source, "mmproj-f16.gguf");
+  await writeFile(first, ggufFixture()); await writeFile(second, Buffer.from("shard-two")); await writeFile(projector, Buffer.from("vision-projector"));
   const manager = new LocalModelManager({ cachePath: join(root, "cache"), emit() {}, piBusy: () => false, reloadPi: async () => undefined, migrateModelReferences: async () => undefined });
   try {
     await manager.initialize();
     const id = await manager.importGguf(second);
     const model = manager.snapshot().models.find((item) => item.id === id);
-    assert.deepEqual(model.files.map((file) => file.name), ["fixture-00001-of-00002.gguf", "fixture-00002-of-00002.gguf"]);
+    assert.deepEqual(model.files.map((file) => file.name), ["fixture-00001-of-00002.gguf", "fixture-00002-of-00002.gguf", "mmproj-f16.gguf"]);
+    assert.deepEqual(model.files.map((file) => file.kind), ["model", "model", "mmproj"]);
     assert.ok(model.files.every((file) => file.path.includes(join("local-models", "models", id))));
     const missing = join(source, "missing-00001-of-00002.gguf"); await writeFile(missing, ggufFixture());
     await assert.rejects(manager.importGguf(missing), /complete GGUF shard group/);

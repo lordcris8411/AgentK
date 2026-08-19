@@ -36,6 +36,7 @@ const featuredSkills = [
 ];
 
 const configurableThinkingLevels: ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+const allThinkingLevels: ThinkingLevel[] = ["off", ...configurableThinkingLevels];
 
 function enabledThinkingLevels(map: Partial<Record<ThinkingLevel, string | null>> | undefined): ThinkingLevel[] {
   return configurableThinkingLevels.filter((level) => typeof map?.[level] === "string");
@@ -47,6 +48,16 @@ function configuredThinkingLevelMap(levels: ThinkingLevel[]): Partial<Record<Thi
     level,
     level === "off" || selected.has(level as ThinkingLevel) ? level : null,
   ])) as Partial<Record<ThinkingLevel, string | null>>;
+}
+
+function supportedThinkingLevels(model: ProviderModelDraft | undefined): ThinkingLevel[] {
+  if (!model?.reasoning) return ["off"];
+  return allThinkingLevels.filter((level) => {
+    const mapped = model.thinkingLevelMap?.[level];
+    if (mapped === null) return false;
+    if (level === "xhigh" || level === "max") return mapped !== undefined;
+    return true;
+  });
 }
 
 function previewStyle(theme: ThemeDefinition): CSSProperties {
@@ -155,7 +166,7 @@ export function SettingsDialog({
   >([]);
   const [languagePacks, setLanguagePacks] = useState<LanguagePack[]>([]);
   const [providers, setProviders] = useState<ProviderCatalogItem[]>([]);
-  const [models, setModels] = useState<Array<{ provider: string; id: string; name?: string }>>([]);
+  const [models, setModels] = useState<Array<ProviderModelDraft & { provider: string }>>([]);
   const [busy, setBusy] = useState(false);
   const [poolBusy, setPoolBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -172,6 +183,7 @@ export function SettingsDialog({
   const [manualModel, setManualModel] = useState("");
   const [manualContextWindow, setManualContextWindow] = useState("");
   const [manualReasoning, setManualReasoning] = useState(false);
+  const [manualVision, setManualVision] = useState(false);
   const [manualThinkingLevels, setManualThinkingLevels] = useState<ThinkingLevel[]>([]);
   const [pendingDelete, setPendingDelete] = useState<ProviderCatalogItem>();
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(
@@ -274,7 +286,16 @@ export function SettingsDialog({
       const found = await desktop.discoverModels(draft.baseUrl, service.kind === "ollama");
       const assessed = await desktop.inferModelReasoning(found.map((model) => model.id));
       const assessmentByModel = new Map(assessed.map((model) => [model.id, model]));
-      const enriched = found.map((model) => ({ ...model, ...assessmentByModel.get(model.id) }));
+      const enriched = found.map((model) => {
+        const assessment = assessmentByModel.get(model.id);
+        return {
+          ...model,
+          ...assessment,
+          input: model.input?.includes("image") || assessment?.input?.includes("image")
+            ? ["text", "image"] as Array<"text" | "image">
+            : ["text"] as Array<"text" | "image">,
+        };
+      });
       setDraft((current) => ({
         ...current,
         id: editedProviderIdRef.current ? current.id : service.kind === "openai-compatible" ? current.id : service.kind,
@@ -286,12 +307,14 @@ export function SettingsDialog({
         setManualModel(enriched[0].id);
         setManualContextWindow(enriched[0].contextWindow?.toString() ?? "");
         setManualReasoning(enriched[0].reasoning === true);
+        setManualVision(enriched[0].input?.includes("image") === true);
         setManualThinkingLevels(enabledThinkingLevels(enriched[0].thinkingLevelMap));
       }
       const verified = enriched.filter((model) => model.reasoning).length;
+      const visual = enriched.filter((model) => model.input?.includes("image")).length;
       setNotice(settings.locale === "en-US"
-        ? `Reasoning capability checked for ${enriched.length} model(s); ${verified} verified.`
-        : `已检查 ${enriched.length} 个模型的推理能力，确认支持 ${verified} 个。`);
+        ? `Checked ${enriched.length} model(s): ${verified} with reasoning controls, ${visual} with image input.`
+        : `已检查 ${enriched.length} 个模型：${verified} 个支持推理控制，${visual} 个支持图片输入。`);
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -302,6 +325,7 @@ export function SettingsDialog({
     setManualModel(model.id);
     setManualContextWindow(model.contextWindow?.toString() ?? "");
     setManualReasoning(model.reasoning === true);
+    setManualVision(model.input?.includes("image") === true);
     setManualThinkingLevels(enabledThinkingLevels(model.thinkingLevelMap));
   };
   const applyProviderCatalog = (catalog: ProviderCatalogItem[]) => {
@@ -624,6 +648,28 @@ export function SettingsDialog({
     () => models.filter((model) => modelIsEnabled(settings, model.provider, model.id)),
     [models, settings.disabledModelProviders, settings.disabledModels],
   );
+  const selectedDefaultModel = enabledModels.find(
+    (model) => modelKey(model.provider, model.id) === settings.defaultModel,
+  );
+  const defaultThinkingLevels = supportedThinkingLevels(selectedDefaultModel);
+  useEffect(() => {
+    if (
+      selectedDefaultModel &&
+      !defaultThinkingLevels.includes(settings.defaultThinkingLevel)
+    ) void update({ defaultThinkingLevel: "off" });
+  }, [selectedDefaultModel, settings.defaultThinkingLevel]);
+  const selectDefaultModel = (key: string) => {
+    const selected = enabledModels.find(
+      (model) => modelKey(model.provider, model.id) === key,
+    );
+    const supported = supportedThinkingLevels(selected);
+    void update({
+      defaultModel: key,
+      defaultThinkingLevel: supported.includes(settings.defaultThinkingLevel)
+        ? settings.defaultThinkingLevel
+        : "off",
+    });
+  };
   if (!open) return null;
 
   const authenticate = async (provider: ProviderCatalogItem, authType: "api_key" | "oauth") => {
@@ -645,6 +691,12 @@ export function SettingsDialog({
     setBusy(true);
     try {
       await desktop.openProviderLogin(provider.id);
+      if (provider.id === "openai-codex") {
+        await reloadModelConfiguration();
+        setPendingProviderLogin(undefined);
+        setNotice(settings.locale === "en-US" ? "OpenAI OAuth login completed." : "OpenAI OAuth 登录完成。");
+        return;
+      }
       lastCatalogRefreshRef.current = 0;
       setPendingProviderLogin(provider.id);
       setNotice(`${t("loginTerminalOpened")} /login ${provider.id}`);
@@ -699,6 +751,7 @@ export function SettingsDialog({
       id: manualModel.trim(),
       ...(contextWindow === undefined ? {} : { contextWindow }),
       reasoning: manualReasoning,
+      input: manualVision ? ["text", "image"] : ["text"],
       ...(manualReasoning ? { thinkingLevelMap: configuredThinkingLevelMap(manualThinkingLevels) } : {}),
     });
     if (!draft.id.trim() || !draft.baseUrl.trim() || models.size === 0) {
@@ -712,8 +765,16 @@ export function SettingsDialog({
       if (unchecked.length) {
         const assessed = await desktop.inferModelReasoning(unchecked.map((model) => model.id));
         const assessmentByModel = new Map(assessed.map((model) => [model.id, model]));
-        for (const model of unchecked)
-          models.set(model.id, { ...model, ...assessmentByModel.get(model.id) });
+        for (const model of unchecked) {
+          const assessment = assessmentByModel.get(model.id);
+          models.set(model.id, {
+            ...model,
+            ...assessment,
+            input: model.input?.includes("image") || assessment?.input?.includes("image")
+              ? ["text", "image"]
+              : ["text"],
+          });
+        }
       }
       await desktop.saveProvider({ ...draft, previousId: editedProviderIdRef.current, models: [...models.values()] });
       if (draft.apiKey) {
@@ -724,6 +785,7 @@ export function SettingsDialog({
       setManualModel("");
       setManualContextWindow("");
       setManualReasoning(false);
+      setManualVision(false);
       setManualThinkingLevels([]);
     } catch (cause) {
       setError(String(cause));
@@ -744,6 +806,9 @@ export function SettingsDialog({
           (key) => !key.startsWith(`${provider.id}/`),
         ),
         defaultModel: settings.defaultModel.startsWith(`${provider.id}/`) ? "" : settings.defaultModel,
+        ...(settings.defaultModel.startsWith(`${provider.id}/`)
+          ? { defaultThinkingLevel: "off" as const }
+          : {}),
         sessionModels: Object.fromEntries(
           Object.entries(settings.sessionModels).filter(([, model]) =>
             !model.startsWith(`${provider.id}/`),
@@ -768,7 +833,16 @@ export function SettingsDialog({
           ? [...settings.disabledModelProviders, providerId]
           : settings.disabledModelProviders.filter((id) => id !== providerId),
         ...(disabling && settings.defaultModel.startsWith(`${providerId}/`)
-          ? { defaultModel: "" }
+          ? { defaultModel: "", defaultThinkingLevel: "off" as const }
+          : {}),
+        ...(disabling
+          ? {
+              sessionModels: Object.fromEntries(
+                Object.entries(settings.sessionModels).filter(([, model]) =>
+                  !model.startsWith(`${providerId}/`),
+                ),
+              ),
+            }
           : {}),
       });
       window.dispatchEvent(new Event("agent-k-model-changed"));
@@ -787,7 +861,16 @@ export function SettingsDialog({
         disabledModels: disabling
           ? [...settings.disabledModels, key]
           : settings.disabledModels.filter((entry) => entry !== key),
-        ...(disabling && settings.defaultModel === key ? { defaultModel: "" } : {}),
+        ...(disabling && settings.defaultModel === key
+          ? { defaultModel: "", defaultThinkingLevel: "off" as const }
+          : {}),
+        ...(disabling
+          ? {
+              sessionModels: Object.fromEntries(
+                Object.entries(settings.sessionModels).filter(([, model]) => model !== key),
+              ),
+            }
+          : {}),
       });
       window.dispatchEvent(new Event("agent-k-model-changed"));
     } catch (cause) {
@@ -1382,10 +1465,11 @@ export function SettingsDialog({
               <>
                 <div className="settings-title-row"><h2>{t("models")}</h2><button disabled={busy} onClick={() => void reloadProviders()} type="button"><i className="fa-solid fa-rotate" /> {t("refresh")}</button></div>
                 <div className="model-current-row">
-                  <label>{t("defaultModel")}<select value={settings.defaultModel} onChange={(event) => void update({ defaultModel: event.target.value })}><option value="">—</option>{enabledModels.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name ?? model.id} · {model.provider === "ollama" ? "Ollama" : model.provider === "vllm" ? "vLLM" : model.provider}</option>)}</select></label>
+                  <label>{t("defaultModel")}<select value={settings.defaultModel} onChange={(event) => selectDefaultModel(event.target.value)}><option value="">—</option>{enabledModels.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name ?? model.id} · {model.provider === "ollama" ? "Ollama" : model.provider === "vllm" ? "vLLM" : model.provider}</option>)}</select></label>
+                  <label>{settings.locale === "en-US" ? "Default reasoning level" : "默认推理等级"}<select disabled={!selectedDefaultModel} value={defaultThinkingLevels.includes(settings.defaultThinkingLevel) ? settings.defaultThinkingLevel : "off"} onChange={(event) => void update({ defaultThinkingLevel: event.target.value as ThinkingLevel })}>{defaultThinkingLevels.map((level) => <option key={level} value={level}>{level}</option>)}</select></label>
                 </div>
                 <LocalModelsSettings />
-                {providers.length > 0 && <div className="provider-actions"><button onClick={() => { setDraft({ id: "", name: "", baseUrl: "https://", api: "openai-completions", apiKey: "", models: [], local: false }); setManualModel(""); setManualContextWindow(""); setManualReasoning(false); setManualThinkingLevels([]); setEditor("provider"); }} type="button"><i className="fa-solid fa-plus" /> {t("providerAdd")}</button><button onClick={() => { setDraft({ id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKey: "ollama", models: [], local: true }); setManualModel(""); setManualContextWindow(""); setManualReasoning(false); setManualThinkingLevels([]); setEditor("local"); }} type="button"><i className="fa-solid fa-desktop" /> {t("localAdd")}</button></div>}
+                {providers.length > 0 && <div className="provider-actions"><button onClick={() => { setDraft({ id: "", name: "", baseUrl: "https://", api: "openai-completions", apiKey: "", models: [], local: false }); setManualModel(""); setManualContextWindow(""); setManualReasoning(false); setManualVision(false); setManualThinkingLevels([]); setEditor("provider"); }} type="button"><i className="fa-solid fa-plus" /> {t("providerAdd")}</button><button onClick={() => { setDraft({ id: "ollama", name: "Ollama", baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKey: "ollama", models: [], local: true }); setManualModel(""); setManualContextWindow(""); setManualReasoning(false); setManualVision(false); setManualThinkingLevels([]); setEditor("local"); }} type="button"><i className="fa-solid fa-desktop" /> {t("localAdd")}</button></div>}
                 {[...grouped.custom, ...grouped.builtIn].map((provider) => {
                   const providerEnabled = !settings.disabledModelProviders.includes(provider.id);
                   const expanded = expandedProviders.has(provider.id);
@@ -1410,7 +1494,7 @@ export function SettingsDialog({
                             <i className={`fa-solid fa-chevron-${expanded ? "up" : "down"}`} />
                           </button>
                         )}
-                        {provider.source === "custom" && <button aria-label="Edit" onClick={() => { setDraft({ id: provider.id, name: providerDisplayName(provider), baseUrl: provider.baseUrl ?? "", api: provider.api ?? "openai-completions", apiKey: "", models: provider.models, local: provider.baseUrl?.includes("localhost") ?? false }); const first = provider.models[0]; if (first) selectManualModel(first); else { setManualModel(""); setManualContextWindow(""); setManualReasoning(false); setManualThinkingLevels([]); } setEditor("provider"); }} type="button"><i className="fa-regular fa-pen-to-square" /></button>}
+                        {provider.source === "custom" && <button aria-label="Edit" onClick={() => { setDraft({ id: provider.id, name: providerDisplayName(provider), baseUrl: provider.baseUrl ?? "", api: provider.api ?? "openai-completions", apiKey: "", models: provider.models, local: provider.baseUrl?.includes("localhost") ?? false }); const first = provider.models[0]; if (first) selectManualModel(first); else { setManualModel(""); setManualContextWindow(""); setManualReasoning(false); setManualVision(false); setManualThinkingLevels([]); } setEditor("provider"); }} type="button"><i className="fa-regular fa-pen-to-square" /></button>}
                         {provider.authMethods.includes("api_key") && <button disabled={busy} onClick={() => void authenticate(provider, "api_key")} type="button">{t("apiKey")}</button>}
                         {provider.authMethods.includes("oauth") && <button disabled={busy} onClick={() => void authenticate(provider, "oauth")} type="button">{t("oauth")}</button>}
                         {provider.configured && <button disabled={busy} onClick={() => void logout(provider)} type="button">{t("logout")}</button>}
@@ -1475,9 +1559,10 @@ export function SettingsDialog({
             setManualModel(value);
             const known = draft.models.find((model) => model.id === value);
             if (known) selectManualModel(known);
-            else { setManualReasoning(false); setManualThinkingLevels([]); }
+            else { setManualReasoning(false); setManualVision(false); setManualThinkingLevels([]); }
           }} /><button disabled={!draft.baseUrl || busy} onClick={() => void discoverLocal()} type="button">{t("discover")}</button></div></label>
           <label>{t("contextWindow")}<input min="1" onChange={(e) => setManualContextWindow(e.target.value)} placeholder="e.g. 524288" step="1" type="number" value={manualContextWindow} /><small>{t("contextWindowDetected")}</small></label>
+          <label><span>{settings.locale === "en-US" ? "Vision input" : "视觉输入"}</span><span className="local-model-check"><input checked={manualVision} onChange={(event) => setManualVision(event.target.checked)} type="checkbox" /> {t("enabled")}</span><small>{settings.locale === "en-US" ? "Allows images to be attached to this model. Enable only when the serving backend loaded the model's vision components." : "允许向此模型附加图片；仅在推理服务已加载模型视觉组件时启用。"}</small></label>
           <label><span>{t("reasoning")}</span><span className="local-model-check"><input checked={manualReasoning} onChange={(event) => setManualReasoning(event.target.checked)} type="checkbox" /> {t("enabled")}</span><small>{t("reasoningDescription")}</small></label>
           <div aria-label={settings.locale === "en-US" ? "Supported reasoning levels" : "支持的推理等级"} className="discovered-models">
             {configurableThinkingLevels.map((level) => <button className={manualThinkingLevels.includes(level) ? "is-active" : undefined} key={level} onClick={() => {

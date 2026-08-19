@@ -13,6 +13,7 @@ import {
   type PiResourceChange,
   type ProjectSummary,
   type SessionSummary,
+  type ThinkingLevel,
 } from "./lib/desktop";
 import { SettingsDialog, type SettingsPage } from "./features/settings/SettingsDialog";
 import { useSettings } from "./features/settings/SettingsContext";
@@ -23,6 +24,19 @@ import { AgentKLogo } from "./components/AgentKLogo";
 import { activeBranchMessages } from "./features/conversation/sessionHistory";
 
 const DRAFT_SESSION_PATH = "__new__";
+const THINKING_LEVELS: ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+function isThinkingLevel(value: unknown): value is ThinkingLevel {
+  return typeof value === "string" && THINKING_LEVELS.includes(value as ThinkingLevel);
+}
 
 function enabledModelSelection(settings: ClientSettings, key: string | undefined) {
   if (!key) return undefined;
@@ -43,6 +57,78 @@ async function applyRuntimeModel(
     provider: selection.provider,
     modelId: selection.modelId,
   }, runtimeId);
+}
+
+async function ensureEnabledRuntimeModel(
+  runtimeId: string,
+  settings: ClientSettings,
+  preferredKey?: string,
+) {
+  const state = await desktop.command({ type: "get_state" }, runtimeId) as {
+    model?: { id?: unknown; provider?: unknown };
+  };
+  const currentProvider = typeof state.model?.provider === "string" ? state.model.provider : "";
+  const currentModelId = typeof state.model?.id === "string" ? state.model.id : "";
+  if (currentProvider && currentModelId && modelIsEnabled(settings, currentProvider, currentModelId))
+    return { key: `${currentProvider}/${currentModelId}`, modelId: currentModelId, provider: currentProvider };
+
+  const available = await desktop.command({ type: "get_available_models" }, runtimeId) as {
+    models?: Array<{ id?: unknown; provider?: unknown }>;
+  };
+  const models = (available.models ?? []).flatMap((model) => {
+    const provider = typeof model.provider === "string" ? model.provider : "";
+    const modelId = typeof model.id === "string" ? model.id : "";
+    return provider && modelId && modelIsEnabled(settings, provider, modelId)
+      ? [{ key: `${provider}/${modelId}`, modelId, provider }]
+      : [];
+  });
+  const preferred = [preferredKey, settings.defaultModel]
+    .flatMap((key) => enabledModelSelection(settings, key) ?? [])
+    .map((selection) => models.find((model) => model.key === selection.key))
+    .find((selection) => selection !== undefined);
+  const fallback = preferred ?? models[0];
+  await applyRuntimeModel(runtimeId, fallback);
+  return fallback;
+}
+
+async function applySupportedThinkingLevel(runtimeId: string, requested: ThinkingLevel) {
+  const [state, available] = await Promise.all([
+    desktop.command({ type: "get_state" }, runtimeId) as Promise<{
+      model?: { id?: unknown; provider?: unknown };
+    }>,
+    desktop.command({ type: "get_available_models" }, runtimeId) as Promise<{
+      models?: Array<{
+        id?: unknown;
+        provider?: unknown;
+        reasoning?: unknown;
+        thinkingLevelMap?: unknown;
+      }>;
+    }>,
+  ]);
+  const current = available.models?.find((model) =>
+    model.id === state.model?.id && model.provider === state.model?.provider,
+  );
+  const map = current?.thinkingLevelMap && typeof current.thinkingLevelMap === "object"
+    ? current.thinkingLevelMap as Partial<Record<ThinkingLevel, unknown>>
+    : undefined;
+  const supported = current?.reasoning === true
+    ? THINKING_LEVELS.filter((level) => {
+        const mapped = map?.[level];
+        if (mapped === null) return false;
+        if (level === "xhigh" || level === "max") return mapped !== undefined;
+        return true;
+      })
+    : ["off" as const];
+  const level = supported.includes(requested) ? requested : "off";
+  await desktop.command({
+    type: "set_thinking_level",
+    level,
+  }, runtimeId);
+  return level;
+}
+
+async function applyDefaultThinkingLevel(runtimeId: string, settings: ClientSettings) {
+  return applySupportedThinkingLevel(runtimeId, settings.defaultThinkingLevel);
 }
 
 type LocalModelRunUi = {
@@ -357,10 +443,12 @@ export function App() {
           : [];
         if (initialCwd && warmedRuntimeIds[0]) {
           await desktop.connect(initialCwd, undefined, warmedRuntimeIds[0]);
-          await applyRuntimeModel(
+          await ensureEnabledRuntimeModel(
             warmedRuntimeIds[0],
-            enabledModelSelection(persistedSettings, persistedSettings.defaultModel),
+            persistedSettings,
+            persistedSettings.defaultModel,
           );
+          await applyDefaultThinkingLevel(warmedRuntimeIds[0], persistedSettings);
         }
         // Start with an unpersisted draft. Prewarming only starts the Pi RPC
         // runtime; it does not write a JSONL file or materialize the session.
@@ -375,7 +463,15 @@ export function App() {
           };
           const ready = warmedRuntimeIds[0]
             ? Promise.resolve(warmedRuntimeIds[0])
-            : desktop.prepareSession(initialCwd);
+            : desktop.prepareSession(initialCwd).then(async (runtimeId) => {
+                await ensureEnabledRuntimeModel(
+                  runtimeId,
+                  persistedSettings,
+                  persistedSettings.defaultModel,
+                );
+                await applyDefaultThinkingLevel(runtimeId, persistedSettings);
+                return runtimeId;
+              });
           warmupRef.current = { cwd: initialCwd, ready };
           try {
             const runtimeId = await ready;
@@ -436,6 +532,41 @@ export function App() {
         session.path,
         knownRuntime,
       );
+      const selectedModel = await ensureEnabledRuntimeModel(
+        runtimeId,
+        settings,
+        settings.sessionModels[session.path],
+      );
+      const selectedThinkingLevel = settings.sessionThinkingLevels[session.path];
+      if (selectedThinkingLevel) {
+        await applySupportedThinkingLevel(runtimeId, selectedThinkingLevel);
+      }
+      const currentState = await desktop.command({ type: "get_state" }, runtimeId) as {
+        thinkingLevel?: unknown;
+      };
+      const actualThinkingLevel = isThinkingLevel(currentState.thinkingLevel)
+        ? currentState.thinkingLevel
+        : undefined;
+      const modelChanged = Boolean(
+        selectedModel && settings.sessionModels[session.path] !== selectedModel.key,
+      );
+      const thinkingChanged = Boolean(
+        actualThinkingLevel && settings.sessionThinkingLevels[session.path] !== actualThinkingLevel,
+      );
+      if (modelChanged || thinkingChanged)
+        await updateSettings({
+          ...(modelChanged && selectedModel
+            ? { sessionModels: { ...settings.sessionModels, [session.path]: selectedModel.key } }
+            : {}),
+          ...(thinkingChanged && actualThinkingLevel
+            ? {
+                sessionThinkingLevels: {
+                  ...settings.sessionThinkingLevels,
+                  [session.path]: actualThinkingLevel,
+                },
+              }
+            : {}),
+        });
       runtimeIds.current.set(session.path, runtimeId);
       const raw = (await desktop.command(
         { type: "get_entries" },
@@ -510,10 +641,12 @@ export function App() {
     // Start Pi while the user is composing. This creates no JSONL/session;
     // the real session is still materialized only on the first send.
     const ready = desktop.prepareSession(cwd).then(async (runtimeId) => {
-      await applyRuntimeModel(
+      await ensureEnabledRuntimeModel(
         runtimeId,
-        enabledModelSelection(settings, settings.defaultModel),
+        settings,
+        settings.defaultModel,
       );
+      await applyDefaultThinkingLevel(runtimeId, settings);
       return runtimeId;
     });
     warmupRef.current = { cwd, ready };
@@ -785,15 +918,17 @@ export function App() {
     setConnecting(true);
     try {
       const warmup = warmupRef.current;
-      const runtimeId =
-        draft.runtimeId ??
-        (warmup?.cwd === draft.cwd
-          ? await warmup.ready
-          : await desktop.prepareSession(draft.cwd));
+      let runtimeId = draft.runtimeId ?? (warmup?.cwd === draft.cwd ? await warmup.ready : undefined);
+      if (!runtimeId) {
+        runtimeId = await desktop.prepareSession(draft.cwd);
+        await ensureEnabledRuntimeModel(runtimeId, settings, settings.defaultModel);
+        await applyDefaultThinkingLevel(runtimeId, settings);
+      }
       const state = await desktop.createSession(runtimeId) as {
         model?: { id?: unknown; provider?: unknown };
         sessionFile?: string;
         sessionId?: string;
+        thinkingLevel?: unknown;
       };
       const selectedProvider = typeof state.model?.provider === "string"
         ? state.model.provider
@@ -841,7 +976,15 @@ export function App() {
       const sessionModels = { ...settings.sessionModels };
       delete sessionModels[DRAFT_SESSION_PATH];
       if (selectedModel) sessionModels[created.path] = selectedModel.key;
-      await updateSettings({ sessionModels });
+      const sessionThinkingLevels = { ...settings.sessionThinkingLevels };
+      const draftThinkingLevel = sessionThinkingLevels[DRAFT_SESSION_PATH];
+      delete sessionThinkingLevels[DRAFT_SESSION_PATH];
+      const selectedThinkingLevel = isThinkingLevel(state.thinkingLevel)
+        ? state.thinkingLevel
+        : draftThinkingLevel;
+      if (selectedThinkingLevel)
+        sessionThinkingLevels[created.path] = selectedThinkingLevel;
+      await updateSettings({ sessionModels, sessionThinkingLevels });
       runtimeIds.current.set(created.path, runtimeId);
       activeRef.current = materialized;
       setActive(materialized);
@@ -870,6 +1013,11 @@ export function App() {
         runtimeIds.current.delete(session.path);
       }
       await desktop.deleteSession(session.path);
+      const sessionModels = { ...settings.sessionModels };
+      const sessionThinkingLevels = { ...settings.sessionThinkingLevels };
+      delete sessionModels[session.path];
+      delete sessionThinkingLevels[session.path];
+      await updateSettings({ sessionModels, sessionThinkingLevels });
       const current = activeRef.current;
       if (current?.path === session.path) createSession(current.cwd);
       await reload();

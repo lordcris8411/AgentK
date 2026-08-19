@@ -16,7 +16,7 @@ export type ThemeMode = string;
 export type ResolvedTheme = "light" | "soft-light" | "dark";
 
 const fallback: ClientSettings = {
-  version: 15,
+  version: 17,
   theme: "light",
   locale: "zh-CN",
   permissionMode: "ask",
@@ -38,7 +38,9 @@ const fallback: ClientSettings = {
   disabledModels: [],
   pinnedWorkspaces: [],
   defaultModel: "",
+  defaultThinkingLevel: "off",
   sessionModels: {},
+  sessionThinkingLevels: {},
   leftPanelWidth: 304,
   rightPanelWidth: 420,
   fileExplorerWidth: 190,

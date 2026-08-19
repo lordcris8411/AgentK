@@ -33,6 +33,7 @@ import {
   saveProviderApiKey,
   setSessionPermission,
   migrateMisclassifiedVllm,
+  migrateReasoningOffValues,
   type ProviderDraft,
 } from "./settings.js";
 import { applyPiResourceChanges, getPiResources } from "./resources.js";
@@ -141,6 +142,7 @@ export class DesktopBackend {
     await this.files.initialize();
     await this.reloadLanguagePacks(settings.disabledLanguagePacks);
     await migrateMisclassifiedVllm();
+    await migrateReasoningOffValues();
     await cp(this.options.bundledExtensionsSource, this.bundledExtensionsDirectory, {
       recursive: true,
       force: true,

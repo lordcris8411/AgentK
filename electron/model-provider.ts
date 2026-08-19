@@ -4,7 +4,7 @@ import type { ThinkingLevelMap } from "./model-reasoning.js";
 
 export function configuredProviderModels(
   existingProvider: unknown,
-  models: Array<{ contextWindow?: number; id: string; name?: string; reasoning?: boolean; thinkingLevelMap?: ThinkingLevelMap }>,
+  models: Array<{ contextWindow?: number; id: string; name?: string; reasoning?: boolean; thinkingLevelMap?: ThinkingLevelMap; input?: Array<"text" | "image"> }>,
 ): JsonObject[] {
   const existingModels = new Map(
     asArray(asObject(existingProvider).models)
@@ -33,6 +33,7 @@ export function configuredProviderModels(
         ? value.reasoning
         : typeof existing.reasoning === "boolean" ? existing.reasoning : false,
       ...(value.thinkingLevelMap ? { thinkingLevelMap: value.thinkingLevelMap } : {}),
+      ...(value.input ? { input: value.input } : {}),
     };
   });
 }
