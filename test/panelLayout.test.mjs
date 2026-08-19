@@ -26,6 +26,17 @@ test("keeps both panel minimums and the workspace minimum", () => {
   });
 });
 
+test("left and right panel toggle buttons apply their layout immediately", async () => {
+  const [shell, theme] = await Promise.all([
+    source("src/components/layout/AppShell.tsx"),
+    source("src/styles/theme.css"),
+  ]);
+  assert.match(shell, /const PANEL_TOGGLE_LAYOUT_DELAY_MS = 0;/u);
+  assert.match(theme, /\.app-shell\s*\{[\s\S]*?transition:\s*none;/u);
+  assert.match(theme, /\.app-sidebar\s*\{[\s\S]*?transition:\s*none;/u);
+  assert.match(theme, /\.app-inspector-slot\s*\{[\s\S]*?transition:\s*none;/u);
+});
+
 test("all resizable inspector layout is backed by client settings", async () => {
   const [inspector, dock, settings] = await Promise.all([
     source("src/components/layout/InspectorPanel.tsx"),
@@ -33,14 +44,17 @@ test("all resizable inspector layout is backed by client settings", async () => 
     source("electron/settings.ts"),
   ]);
   assert.match(inspector, /useState\(settings\.fileExplorerWidth\)/);
+  assert.match(inspector, /useState\(settings\.fileExplorerCollapsed\)/);
   assert.match(inspector, /if \(!settingsReady \|\| explorerLayoutRestored\.current\) return/);
   assert.match(inspector, /updateSettings\(\{\s*fileExplorerWidth:/);
+  assert.match(inspector, /updateSettings\(\{ fileExplorerCollapsed: next \}\)/);
   assert.match(dock, /useState\(settings\.developmentDockHeight\)/);
   assert.match(dock, /if \(!settingsReady \|\| layoutRestored\.current\) return/);
   assert.match(dock, /developmentDockHeight: Math\.round\(heightRef\.current\)/);
   assert.match(dock, /developmentDockCollapsed: next/);
   assert.match(dock, /developmentDockTerminalVisible: next/);
   assert.match(settings, /fileExplorerWidth: 190/);
+  assert.match(settings, /fileExplorerCollapsed: false/);
   assert.match(settings, /developmentDockHeight: 280/);
 });
 
@@ -106,4 +120,16 @@ test("multiple Editors can float into independent windows and dock separately", 
   assert.match(theme, /body\.is-floating-editor-window/);
   assert.match(theme, /\.editor-content-surface\.is-floating/);
   assert.match(theme, /\.floating-editor-window-titlebar/);
+});
+
+test("file explorer collapse keeps a narrow restore control and gives the editor the remaining space", async () => {
+  const [inspector, theme] = await Promise.all([
+    source("src/components/layout/InspectorPanel.tsx"),
+    source("src/styles/theme.css"),
+  ]);
+  assert.match(inspector, /aria-expanded=\{!explorerCollapsed\}/);
+  assert.match(inspector, /is-explorer-collapsed/);
+  assert.match(inspector, /!explorerCollapsed \? <div[\s\S]*?role="separator"/u);
+  assert.match(theme, /\.editor-body\.is-explorer-collapsed\s*\{\s*grid-template-columns:\s*32px minmax\(0, 1fr\)/u);
+  assert.match(theme, /\.file-explorer\.is-collapsed > :not\(\.file-explorer-collapse\)\s*\{\s*display:\s*none/u);
 });

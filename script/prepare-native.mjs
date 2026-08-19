@@ -8,6 +8,10 @@ const root = join(import.meta.dirname, "..");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const npmCli = process.env.npm_execpath;
 
+function elapsed(startedAt) {
+  return `${((Date.now() - startedAt) / 1_000).toFixed(1)}s`;
+}
+
 function loadedNativeDirectory() {
   if (process.platform !== "darwin") return undefined;
   const resolved = spawnSync(
@@ -60,8 +64,10 @@ function nativeArtifactsReady() {
   return Boolean(directory && existsSync(join(directory, "spawn-helper")));
 }
 
+const preparationStartedAt = Date.now();
+console.log("[startup] Checking native terminal support...");
 if (!nativeArtifactsReady()) {
-  console.log("Preparing the reviewed node-pty native module...");
+  console.log("[startup] Rebuilding the reviewed node-pty native module...");
   const rebuildArgs = ["rebuild", "node-pty", "--ignore-scripts=false", "--foreground-scripts"];
   const rebuilt = spawnSync(
     npmCli ? process.execPath : npm,
@@ -81,3 +87,4 @@ if (!nativeArtifactsReady()) {
 }
 
 await makeSpawnHelpersExecutable();
+console.log(`[startup] Native terminal support ready (${elapsed(preparationStartedAt)}).`);

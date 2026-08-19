@@ -21,7 +21,23 @@ function run(command, args, options = {}) {
   });
 }
 
+function elapsed(startedAt) {
+  return `${((Date.now() - startedAt) / 1_000).toFixed(1)}s`;
+}
+
+async function runStep(label, command, args) {
+  const startedAt = Date.now();
+  console.log(`[startup] ${label}...`);
+  const child = run(command, args);
+  const code = await new Promise((resolve) => child.once("exit", resolve));
+  if (code === 0) console.log(`[startup] ${label} complete (${elapsed(startedAt)}).`);
+  else console.error(`[startup] ${label} failed after ${elapsed(startedAt)}.`);
+  return code === 0 ? 0 : Number(code) || 1;
+}
+
 async function waitForVite(child) {
+  const startedAt = Date.now();
+  console.log("[startup] Waiting for the renderer development server...");
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (child.exitCode !== null) throw new Error("Vite exited before it became ready");
     try {
@@ -31,7 +47,10 @@ async function waitForVite(child) {
       const response = await fetch("http://127.0.0.1:1420/", {
         signal: AbortSignal.timeout(1_000),
       });
-      if (response.ok) return;
+      if (response.ok) {
+        console.log(`[startup] Renderer development server ready (${elapsed(startedAt)}).`);
+        return;
+      }
     } catch {
       // Vite is still starting.
     }
@@ -45,16 +64,25 @@ if (!existsSync(electronExecutable)) {
   process.exit(1);
 }
 
-const compile = run(process.execPath, [tsc, "-p", "tsconfig.electron.json"]);
-const compileCode = await new Promise((resolve) => compile.once("exit", resolve));
+const compileCode = await runStep(
+  "Compiling the Electron main process",
+  process.execPath,
+  [tsc, "-p", "tsconfig.electron.json"],
+);
 if (compileCode !== 0) process.exit(Number(compileCode) || 1);
 
-const editorBuild = run(process.execPath, [join(root, "script", "build-editor-extensions.mjs")]);
-const editorBuildCode = await new Promise((resolve) => editorBuild.once("exit", resolve));
+const editorBuildCode = await runStep(
+  "Building Editor extensions",
+  process.execPath,
+  [join(root, "script", "build-editor-extensions.mjs")],
+);
 if (editorBuildCode !== 0) process.exit(Number(editorBuildCode) || 1);
 
-const languageServerBuild = run(process.execPath, [join(root, "script", "build-language-packs.mjs")]);
-const languageServerBuildCode = await new Promise((resolve) => languageServerBuild.once("exit", resolve));
+const languageServerBuildCode = await runStep(
+  "Building Language Packs",
+  process.execPath,
+  [join(root, "script", "build-language-packs.mjs")],
+);
 if (languageServerBuildCode !== 0) process.exit(Number(languageServerBuildCode) || 1);
 
 // Vite enables interactive shortcuts by putting inherited stdin into raw mode.
@@ -63,6 +91,7 @@ if (languageServerBuildCode !== 0) process.exit(Number(languageServerBuildCode) 
 // stderr for this launcher, so deliberately give it no console input handle.
 // The dedicated launcher closes Vite if this process disappears before its
 // normal finally block can run, preventing an orphan from retaining port 1420.
+console.log("[startup] Starting the renderer development server...");
 const viteProcess = run(process.execPath, [viteDev, String(process.pid)], {
   detached: !windows,
   stdio: ["ignore", "inherit", "inherit"],
@@ -122,7 +151,9 @@ try {
     AGENT_K_DEV_URL: "http://127.0.0.1:1420",
   };
   delete env.ELECTRON_RUN_AS_NODE;
+  console.log("[startup] Starting Electron...");
   electronProcess = run(electronExecutable, ["."], { detached: !windows, env });
+  console.log(`[startup] Electron started (PID ${electronProcess.pid ?? "unknown"}).`);
   const code = await new Promise((resolve) => electronProcess.once("exit", resolve));
   process.exitCode = Number(code) || 0;
 } catch (cause) {

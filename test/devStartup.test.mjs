@@ -15,6 +15,18 @@ test("development startup bounds each Vite readiness request", async () => {
   assert.match(launcher, /signal:\s*AbortSignal\.timeout\(1_000\)/u);
 });
 
+test("development startup reports each time-consuming phase", async () => {
+  const launcher = await readFile(resolve(root, "script", "electron-dev.mjs"), "utf8");
+  const nativePreparation = await readFile(resolve(root, "script", "prepare-native.mjs"), "utf8");
+  assert.match(nativePreparation, /\[startup\] Checking native terminal support/u);
+  assert.match(nativePreparation, /Native terminal support ready \(\$\{elapsed\(preparationStartedAt\)\}\)/u);
+  assert.match(launcher, /"Compiling the Electron main process"/u);
+  assert.match(launcher, /"Building Editor extensions"/u);
+  assert.match(launcher, /"Building Language Packs"/u);
+  assert.match(launcher, /\[startup\] Renderer development server ready \(\$\{elapsed\(startedAt\)\}\)/u);
+  assert.match(launcher, /\[startup\] Starting Electron/u);
+});
+
 test("desktop startup does not repeat Editor validation or wait for fonts", async () => {
   const app = await readFile(resolve(root, "src", "App.tsx"), "utf8");
   assert.doesNotMatch(app, /await desktop\.firstPartyFileFormatPlugins\(\)/u);

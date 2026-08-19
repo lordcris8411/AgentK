@@ -44,7 +44,7 @@ interface FrozenPanelContent {
 }
 
 const PANEL_POINTER_INTERVAL_MS = 1000 / 60;
-const PANEL_TOGGLE_LAYOUT_DELAY_MS = 260;
+const PANEL_TOGGLE_LAYOUT_DELAY_MS = 0;
 const WINDOW_RESIZE_LAYOUT_IDLE_MS = 120;
 const WINDOW_RESIZE_DIRECTIONS: WindowResizeDirection[] = [
   "North",

@@ -1297,7 +1297,7 @@ button:disabled {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  transition: grid-template-columns 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: none;
 }
 .panel-resizer {
   cursor: col-resize;
@@ -1349,10 +1349,7 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   min-width: 0;
   overflow: hidden;
   transform: translateX(0);
-  transition:
-    opacity 150ms ease,
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: opacity, transform;
+  transition: none;
 }
 .app-sidebar.is-hidden {
   opacity: 0;
@@ -1364,10 +1361,7 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   min-width: 0;
   overflow: hidden;
   transform: translateX(0);
-  transition:
-    opacity 150ms ease,
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: opacity, transform;
+  transition: none;
 }
 .app-inspector-slot.is-hidden {
   opacity: 0;
@@ -3531,7 +3525,7 @@ body.is-resizing-panels .composer {
 .inspector-search {
   box-sizing: border-box;
   display: flex;
-  margin: 0 8px 10px 0;
+  margin: 0 40px 10px 0;
   min-width: 0;
   position: relative;
   width: auto;
@@ -3715,6 +3709,9 @@ body.is-resizing-panels .composer {
   height: 0;
   min-height: 0;
   overflow: hidden;
+}
+.editor-body.is-explorer-collapsed {
+  grid-template-columns: 32px minmax(0, 1fr);
 }
 .project-console {
   background: var(--surface-panel, #f6f4f1);
@@ -4030,7 +4027,29 @@ body.is-resizing-debug-layout { cursor: grabbing; user-select: none; }
   min-height: 0;
   overflow: hidden;
   padding: 12px 0 0 8px;
+  position: relative;
 }
+.file-explorer.is-collapsed { padding-left: 0; }
+.file-explorer.is-collapsed > :not(.file-explorer-collapse) { display: none; }
+.file-explorer-collapse {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+  position: absolute;
+  right: 7px;
+  top: 12px;
+  width: 27px;
+  z-index: 2;
+}
+.file-explorer-collapse:hover { background: var(--surface-hover); color: var(--text-primary); }
+.file-explorer.is-collapsed .file-explorer-collapse { right: 2px; }
 .file-tree-scroll {
   flex: 1 1 0;
   min-height: 0;

@@ -44,6 +44,7 @@ const fallback: ClientSettings = {
   leftPanelWidth: 304,
   rightPanelWidth: 420,
   fileExplorerWidth: 190,
+  fileExplorerCollapsed: false,
   leftPanelHidden: false,
   rightPanelHidden: false,
   developmentDockHeight: 280,

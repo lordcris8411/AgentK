@@ -29,6 +29,7 @@ export interface ClientSettings {
   leftPanelWidth: number;
   rightPanelWidth: number;
   fileExplorerWidth: number;
+  fileExplorerCollapsed: boolean;
   leftPanelHidden: boolean;
   rightPanelHidden: boolean;
   developmentDockHeight: number;

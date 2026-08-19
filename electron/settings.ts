@@ -73,6 +73,7 @@ const DEFAULT_SETTINGS: ClientSettings = {
   leftPanelWidth: 304,
   rightPanelWidth: 420,
   fileExplorerWidth: 190,
+  fileExplorerCollapsed: false,
   leftPanelHidden: false,
   rightPanelHidden: false,
   developmentDockHeight: 280,
@@ -217,6 +218,8 @@ export function parseClientSettings(value: unknown): ClientSettings {
     settings.rightPanelWidth = Number(source.rightPanelWidth);
   if (Number(source.fileExplorerWidth) >= 110 && Number(source.fileExplorerWidth) <= 3000)
     settings.fileExplorerWidth = Number(source.fileExplorerWidth);
+  if (typeof source.fileExplorerCollapsed === "boolean")
+    settings.fileExplorerCollapsed = source.fileExplorerCollapsed;
   if (typeof source.leftPanelHidden === "boolean")
     settings.leftPanelHidden = source.leftPanelHidden;
   if (typeof source.rightPanelHidden === "boolean")
@@ -277,6 +280,7 @@ export async function saveClientSettings(
     settings.leftPanelWidth === original.leftPanelWidth &&
     settings.rightPanelWidth === original.rightPanelWidth &&
     settings.fileExplorerWidth === original.fileExplorerWidth &&
+    settings.fileExplorerCollapsed === original.fileExplorerCollapsed &&
     settings.leftPanelHidden === original.leftPanelHidden &&
     settings.rightPanelHidden === original.rightPanelHidden &&
     settings.developmentDockHeight === original.developmentDockHeight &&

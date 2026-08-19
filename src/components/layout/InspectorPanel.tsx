@@ -1091,6 +1091,7 @@ export function InspectorPanel({
   const latestEditorSelection = useRef("");
   const [filtering, setFiltering] = useState(false);
   const [explorerWidth, setExplorerWidth] = useState(settings.fileExplorerWidth);
+  const [explorerCollapsed, setExplorerCollapsed] = useState(settings.fileExplorerCollapsed);
   const [newFileDialogOpen, setNewFileDialogOpen] = useState(false);
   const [newFilePath, setNewFilePath] = useState("");
   const [createAsDirectory, setCreateAsDirectory] = useState(false);
@@ -1286,7 +1287,8 @@ export function InspectorPanel({
     explorerLayoutRestored.current = true;
     explorerWidthRef.current = settings.fileExplorerWidth;
     setExplorerWidth(settings.fileExplorerWidth);
-  }, [settings.fileExplorerWidth, settingsReady]);
+    setExplorerCollapsed(settings.fileExplorerCollapsed);
+  }, [settings.fileExplorerCollapsed, settings.fileExplorerWidth, settingsReady]);
   useEffect(() => {
     const stop = desktop.onEvent((event) => {
       if (event.type === "language_pack_confirmation_request") {
@@ -3262,13 +3264,32 @@ export function InspectorPanel({
         </div>
       ) : null}
       <div
-        className="editor-body"
+        className={`editor-body${explorerCollapsed ? " is-explorer-collapsed" : ""}`}
         ref={editorBodyRef}
         style={
           { "--explorer-width": `${explorerWidth}px` } as Record<string, string>
         }
       >
-        <aside className="file-explorer">
+        <aside className={`file-explorer${explorerCollapsed ? " is-collapsed" : ""}`}>
+          <button
+            aria-expanded={!explorerCollapsed}
+            aria-label={explorerCollapsed
+              ? (en ? "Expand file list" : "展开文件列表")
+              : (en ? "Collapse file list" : "收起文件列表")}
+            className="file-explorer-collapse"
+            onClick={() => {
+              const next = !explorerCollapsed;
+              setExplorerCollapsed(next);
+              void updateSettings({ fileExplorerCollapsed: next })
+                .catch((cause) => onError(`${en ? "Unable to save file list state" : "无法保存文件列表状态"}：${String(cause)}`));
+            }}
+            title={explorerCollapsed
+              ? (en ? "Expand file list" : "展开文件列表")
+              : (en ? "Collapse file list" : "收起文件列表")}
+            type="button"
+          >
+            <i aria-hidden="true" className={`fa-solid fa-chevron-${explorerCollapsed ? "right" : "left"}`} />
+          </button>
           <form
             className="inspector-search"
             onSubmit={(event) => {
@@ -3382,7 +3403,7 @@ export function InspectorPanel({
               )
             : null}
         </aside>
-        <div
+        {!explorerCollapsed ? <div
           aria-label={en ? "Resize file tree" : "调整文件树宽度"}
           className="editor-resizer"
           onMouseDown={(event) => {
@@ -3392,7 +3413,7 @@ export function InspectorPanel({
             window.dispatchEvent(new CustomEvent("agent-k-editor-layout-suspended", { detail: true }));
           }}
           role="separator"
-        />
+        /> : null}
         <section className="editor-area">
           <div className="tab-strip">
             {tabs.filter((tab) => !floatingEditors.has(tab.path)).map((tab) => (
