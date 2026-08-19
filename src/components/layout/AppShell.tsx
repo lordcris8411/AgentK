@@ -348,6 +348,7 @@ export function AppShell({ sidebar, inspector, children }: AppShellProps) {
       releaseHeavyPanelContents();
       resumeResponsiveMonacoLayouts();
       panelCommitFrame.current = undefined;
+      window.dispatchEvent(new Event("agent-k-panel-resize-finished"));
     };
     const updateDragPosition = (clientX: number) => {
       if (!drag.current) return;

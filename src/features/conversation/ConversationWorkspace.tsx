@@ -7,8 +7,10 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { layoutWithLines, prepareWithSegments } from "@chenglou/pretext";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
@@ -38,6 +40,7 @@ import {
 } from "../extensions/ExtensionUiContext";
 import { AgentKLogo } from "../../components/AgentKLogo";
 import { activeBranchMessages } from "./sessionHistory";
+import { LiveAssistantTextStore } from "./liveAssistantText";
 
 type ToolCall = { id?: string; name: string; args: Record<string, unknown> };
 const ASSISTANT_STREAM_FRAME_MS = 16;
@@ -247,6 +250,79 @@ type Item = {
   localImageUrls?: string[];
   localFiles?: Array<{ kind: "document" | "text"; name: string }>;
 };
+
+function useLiveAssistantText(
+  store: LiveAssistantTextStore,
+  id: string,
+  kind: "content" | "thinking",
+  fallback: string,
+): string {
+  return useSyncExternalStore(
+    store.subscribe,
+    () => store.text(id, kind, fallback),
+    () => fallback,
+  );
+}
+
+const THINKING_FONT = '11px "Cascadia Code", Consolas, monospace';
+const THINKING_LINE_HEIGHT = 17.05;
+
+function LiveThinkingText({
+  fallback,
+  id,
+  store,
+}: {
+  fallback: string;
+  id: string;
+  store: LiveAssistantTextStore;
+}) {
+  const text = useLiveAssistantText(store, id, "thinking", fallback);
+  const frameRef = useRef<HTMLPreElement>(null);
+  const [width, setWidth] = useState(0);
+  const prepared = useMemo(
+    () => prepareWithSegments(text, THINKING_FONT, { whiteSpace: "pre-wrap" }),
+    [text],
+  );
+  const layout = useMemo(
+    () => width > 0
+      ? layoutWithLines(prepared, width, THINKING_LINE_HEIGHT)
+      : undefined,
+    [prepared, width],
+  );
+
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const next = Math.max(0, Math.floor(entry?.contentRect.width ?? 0));
+      setWidth((current) => current === next ? current : next);
+    });
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <pre
+      className="pretext-thinking-text"
+      data-pretext-lines={layout?.lineCount}
+      ref={frameRef}
+      style={layout ? { height: `${layout.height}px` } : undefined}
+    >
+      {layout
+        ? layout.lines.map((line, index) => (
+            <span dir="auto" key={`${index}:${line.start.segmentIndex}:${line.start.graphemeIndex}`}>
+              {line.text || "\u200b"}
+            </span>
+          ))
+        : text}
+    </pre>
+  );
+}
+
+function assistantStructureKey(item: Item): string {
+  const { content: _content, thinking: _thinking, ...structure } = item;
+  return `${Boolean(item.content.trim())}:${Boolean(item.thinking)}:${JSON.stringify(structure)}`;
+}
 
 function mergeAssistantItem(previous: Item | undefined, next: Item): Item {
   if (!previous) return next;
@@ -1162,7 +1238,13 @@ function formatMessageTime(timestamp?: number) {
   const twoDigits = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())} ${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`;
 }
-function ActivityRow({ item }: { item: Item }) {
+function ActivityRow({
+  item,
+  liveAssistantText,
+}: {
+  item: Item;
+  liveAssistantText: LiveAssistantTextStore;
+}) {
   const en = useSettings().settings.locale === "en-US";
   const calls = item.toolCalls ?? [];
   const fileCalls = calls.filter(
@@ -1190,7 +1272,13 @@ function ActivityRow({ item }: { item: Item }) {
             {item.thinkingActive ? (en ? "Thinking" : "正在思考") : (en ? "Thought process" : "思考过程")}
             <span aria-hidden="true" className="activity-chevron" />
           </summary>
-          <pre>{item.thinking}</pre>
+          {item.thinkingActive ? (
+            <LiveThinkingText
+              fallback={item.thinking}
+              id={item.id}
+              store={liveAssistantText}
+            />
+          ) : <pre>{item.thinking}</pre>}
         </details>
       )}
       {item.tool && !hiddenResult && !isFileTool && (
@@ -1295,10 +1383,12 @@ function ActivityRow({ item }: { item: Item }) {
 }
 const ActivityGroup = memo(function ActivityGroup({
   items,
+  liveAssistantText,
   open,
   durationMs,
 }: {
   items: Item[];
+  liveAssistantText: LiveAssistantTextStore;
   open: boolean;
   durationMs?: number;
 }) {
@@ -1344,6 +1434,7 @@ const ActivityGroup = memo(function ActivityGroup({
               <ActivityRow
                 item={calls ? { ...item, toolCalls: calls } : item}
                 key={item.id}
+                liveAssistantText={liveAssistantText}
               />
             );
           })}
@@ -1354,6 +1445,7 @@ const ActivityGroup = memo(function ActivityGroup({
 }, (previous, next) =>
   previous.open === next.open &&
   previous.durationMs === next.durationMs &&
+  previous.liveAssistantText === next.liveAssistantText &&
   previous.items.length === next.items.length &&
   previous.items.every((item, index) => item === next.items[index]),
 );
@@ -1454,15 +1546,23 @@ function MarkdownCodeBlock({
 const ConversationMessage = memo(function ConversationMessage({
   en,
   item,
+  liveAssistantText,
   onContextMenu,
   onError,
 }: {
   en: boolean;
   item: Item;
+  liveAssistantText: LiveAssistantTextStore;
   onContextMenu(event: React.MouseEvent, item: Item): void;
   onError(message: string | undefined): void;
 }) {
   const browserId = useSettings().settings.browserId;
+  const liveContent = useLiveAssistantText(
+    liveAssistantText,
+    item.id,
+    "content",
+    item.content,
+  );
   return (
     <article
       className={`message message-${item.role}`}
@@ -1515,9 +1615,12 @@ const ConversationMessage = memo(function ConversationMessage({
           </div>
         )}
         {item.thinking && (
-          <ActivityRow item={{ ...item, content: "", toolCalls: [] }} />
+          <ActivityRow
+            item={{ ...item, content: "", toolCalls: [] }}
+            liveAssistantText={liveAssistantText}
+          />
         )}
-        {item.content && item.customType !== "agent-k-logo" && (
+        {liveContent && item.customType !== "agent-k-logo" && (
           <ReactMarkdown
             components={{
               pre: ({ children, className }) => (
@@ -1576,7 +1679,7 @@ const ConversationMessage = memo(function ConversationMessage({
             rehypePlugins={[rehypeKatex]}
             remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
           >
-            {linkifyFileReferences(item.content)}
+            {linkifyFileReferences(liveContent)}
           </ReactMarkdown>
         )}
         {item.role === "user" && item.rawContent ? (
@@ -1730,6 +1833,9 @@ export function ConversationWorkspace({
     id: string;
     message: Record<string, unknown>;
   } | undefined>(undefined);
+  const [liveAssistantText] = useState(() => new LiveAssistantTextStore());
+  const streamingAssistantItem = useRef<{ id: string; item: Item } | undefined>(undefined);
+  const streamingAssistantStructure = useRef<{ id: string; key: string } | undefined>(undefined);
   const assistantUpdateTimer = useRef<number | undefined>(undefined);
   const messageListRef = useRef<HTMLElement | null>(null);
   const scrollbarRef = useRef<HTMLDivElement | null>(null);
@@ -1784,29 +1890,53 @@ export function ConversationWorkspace({
       assistantUpdateTimer.current = undefined;
     }
   }, []);
-  const flushAssistantUpdate = useCallback(() => {
+  const flushAssistantUpdate = useCallback((forceCommit = false) => {
     if (assistantUpdateTimer.current !== undefined) {
       window.clearTimeout(assistantUpdateTimer.current);
       assistantUpdateTimer.current = undefined;
     }
     const pending = pendingAssistantUpdate.current;
     pendingAssistantUpdate.current = undefined;
-    if (!pending) return;
-    setItems((current) => {
+    if (pending) {
       const parsed = itemOf(pending.message, pending.id);
+      const previous = streamingAssistantItem.current?.id === pending.id
+        ? streamingAssistantItem.current.item
+        : undefined;
+      const merged = mergeAssistantItem(previous, parsed);
+      const item = {
+        ...merged,
+        thinkingActive: Boolean(merged.thinking) && !merged.content.trim(),
+      };
+      streamingAssistantItem.current = { id: pending.id, item };
+      liveAssistantText.publish(pending.id, item);
+    }
+    const streamed = streamingAssistantItem.current;
+    if (!streamed) return;
+    const structureKey = assistantStructureKey(streamed.item);
+    const previousStructure = streamingAssistantStructure.current;
+    if (
+      !forceCommit &&
+      previousStructure?.id === streamed.id &&
+      previousStructure.key === structureKey
+    ) return;
+    streamingAssistantStructure.current = { id: streamed.id, key: structureKey };
+    setItems((current) => {
       // Normal answer text ends the reasoning phase even when a provider omits
       // the corresponding lifecycle event.
-      const index = current.findIndex((entry) => entry.id === pending.id);
-      const merged = mergeAssistantItem(index < 0 ? undefined : current[index], parsed);
+      const index = current.findIndex((entry) => entry.id === streamed.id);
+      const merged = mergeAssistantItem(
+        index < 0 ? undefined : current[index],
+        streamed.item,
+      );
       const item = {
         ...merged,
         thinkingActive: Boolean(merged.thinking) && !merged.content.trim(),
       };
       return index < 0
         ? [...current, item]
-        : current.map((entry) => (entry.id === pending.id ? item : entry));
+        : current.map((entry) => (entry.id === streamed.id ? item : entry));
     });
-  }, []);
+  }, [liveAssistantText]);
   const queueAssistantUpdate = useCallback((
     message: Record<string, unknown>,
     id: string,
@@ -1985,6 +2115,9 @@ export function ConversationWorkspace({
     historySessionPathRef.current = session?.path;
     discardAssistantUpdate();
     streamingId.current = undefined;
+    streamingAssistantItem.current = undefined;
+    streamingAssistantStructure.current = undefined;
+    liveAssistantText.clear();
     manualCompactionRef.current = false;
     compactionAbortRequestedRef.current = false;
     setCompaction(undefined);
@@ -2538,7 +2671,7 @@ export function ConversationWorkspace({
         if (type === "agent_settled") {
           // Pi may settle without a final message_end event.  Treat either event as
           // the completion boundary for the streamed thinking block.
-          flushAssistantUpdate();
+          flushAssistantUpdate(true);
           setItems((current) =>
             current.map((item) =>
               item.thinkingActive ? { ...item, thinkingActive: false } : item,
@@ -2549,6 +2682,8 @@ export function ConversationWorkspace({
           setSubmitting(false);
           abortPendingRef.current = false;
           streamingId.current = undefined;
+          streamingAssistantItem.current = undefined;
+          streamingAssistantStructure.current = undefined;
           const modelError = pendingModelError.current;
           pendingModelError.current = undefined;
           if (modelError?.runtimeId === activeRuntimeId) {
@@ -2619,13 +2754,15 @@ export function ConversationWorkspace({
           }
         }
         if (type === "bridge_closed") {
-          flushAssistantUpdate();
+          flushAssistantUpdate(true);
           setRunning(false);
           setRunStartedAt(undefined);
           setSubmitting(false);
           setStopping(false);
           setCompaction(undefined);
           streamingId.current = undefined;
+          streamingAssistantItem.current = undefined;
+          streamingAssistantStructure.current = undefined;
           setItems((current) =>
             current.map((item) => ({
               ...item,
@@ -2675,15 +2812,25 @@ export function ConversationWorkspace({
             const id = streamingId.current;
             discardAssistantUpdate();
             streamingId.current = undefined;
+            const streamed = streamingAssistantItem.current?.id === id
+              ? streamingAssistantItem.current.item
+              : undefined;
+            const finalItem = {
+              ...mergeAssistantItem(streamed, itemOf(message, id)),
+              thinkingActive: false,
+            };
+            liveAssistantText.publish(id, finalItem);
+            streamingAssistantItem.current = undefined;
+            streamingAssistantStructure.current = undefined;
             setItems((current) => {
               const existing = current.find((entry) => entry.id === id);
-              const finalItem = {
-                ...mergeAssistantItem(existing, itemOf(message, id)),
+              const committedItem = {
+                ...mergeAssistantItem(existing, finalItem),
                 thinkingActive: false,
               };
               return current.some((entry) => entry.id === id)
-                ? current.map((entry) => entry.id === id ? finalItem : entry)
-                : [...current, finalItem];
+                ? current.map((entry) => entry.id === id ? committedItem : entry)
+                : [...current, committedItem];
             });
           } else if (message.role === "toolResult" && message.toolCallId) {
             const id = String(message.toolCallId);
@@ -2931,6 +3078,10 @@ export function ConversationWorkspace({
     const list = messageListRef.current;
     if (!list) return;
     const observer = new ResizeObserver(() => {
+      // AppShell applies panel widths directly while a splitter is moving.
+      // Avoid forcing a full conversation layout for each pointer sample; the
+      // explicit resize-finished event performs one authoritative update.
+      if (document.body.classList.contains("is-resizing-panels")) return;
       // Expanding a thought/details block changes a message's height, not the
       // scroll container's border box. Keep both the scroll position and the
       // custom thumb in sync with that internal resize.
@@ -2947,10 +3098,19 @@ export function ConversationWorkspace({
     observeMessages();
     const mutations = new MutationObserver(observeMessages);
     mutations.observe(list, { childList: true });
+    const finishPanelResize = () => {
+      if (stickToBottom.current) {
+        list.scrollTop = list.scrollHeight;
+        setShowJumpToLatest(false);
+      }
+      scheduleScrollMetrics(list);
+    };
+    window.addEventListener("agent-k-panel-resize-finished", finishPanelResize);
     scheduleScrollMetrics(list);
     return () => {
       observer.disconnect();
       mutations.disconnect();
+      window.removeEventListener("agent-k-panel-resize-finished", finishPanelResize);
       if (scrollMetricsFrame.current !== undefined) {
         window.cancelAnimationFrame(scrollMetricsFrame.current);
         scrollMetricsFrame.current = undefined;
@@ -3415,8 +3575,10 @@ export function ConversationWorkspace({
     // Do not announce an idle session until Pi acknowledges `abort`. The RPC
     // response is sent only after AgentSession.waitForIdle(), which also closes
     // an in-flight local-model request instead of letting it restart llama.cpp.
-    discardAssistantUpdate();
+    flushAssistantUpdate(true);
     streamingId.current = undefined;
+    streamingAssistantItem.current = undefined;
+    streamingAssistantStructure.current = undefined;
     setItems((current) =>
       current.map((item) => ({
         ...item,
@@ -3878,6 +4040,7 @@ export function ConversationWorkspace({
                   )}
                   items={entry.items}
                   key={`activity-${entry.items[0]?.id ?? index}`}
+                  liveAssistantText={liveAssistantText}
                   open={isLiveActivity}
                 />
               );
@@ -3973,6 +4136,7 @@ export function ConversationWorkspace({
                 en={en}
                 item={entry.item}
                 key={entry.item.id}
+                liveAssistantText={liveAssistantText}
                 onContextMenu={openMessageContextMenu}
                 onError={onError}
               />

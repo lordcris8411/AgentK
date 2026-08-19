@@ -2319,6 +2319,19 @@ body.is-resizing .panel-resize-preview { opacity: 0; }
   padding: 0 0 0 18px;
   white-space: pre-wrap;
 }
+.thinking-block pre.pretext-thinking-text {
+  box-sizing: content-box;
+  overflow: hidden;
+  overflow-wrap: normal;
+  white-space: pre;
+}
+.pretext-thinking-text > span {
+  display: block;
+  height: 17.05px;
+  line-height: 17.05px;
+  min-height: 17.05px;
+  white-space: pre;
+}
 .tool-card {
   background: transparent;
   border: 0;

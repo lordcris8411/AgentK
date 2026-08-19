@@ -14,6 +14,14 @@ const electronMainSource = await readFile(
   new URL("../electron/main.ts", import.meta.url),
   "utf8",
 );
+const appShellSource = await readFile(
+  new URL("../src/components/layout/AppShell.tsx", import.meta.url),
+  "utf8",
+);
+const packageJson = JSON.parse(await readFile(
+  new URL("../package.json", import.meta.url),
+  "utf8",
+));
 
 test("assistant streaming updates use a 16 ms frame window end to end", () => {
   assert.match(workspaceSource, /const ASSISTANT_STREAM_FRAME_MS = 16;/);
@@ -25,6 +33,33 @@ test("assistant streaming updates use a 16 ms frame window end to end", () => {
   assert.match(
     electronMainSource,
     /setTimeout\(\s*\(\) => flushAssistantEvent\(runtimeKey\),\s*ASSISTANT_STREAM_FRAME_MS,/s,
+  );
+});
+
+test("live assistant text uses isolated Pretext layout", () => {
+  assert.equal(packageJson.dependencies["@chenglou/pretext"], "0.0.8");
+  assert.match(
+    workspaceSource,
+    /import \{ layoutWithLines, prepareWithSegments \} from "@chenglou\/pretext";/,
+  );
+  assert.match(workspaceSource, /useSyncExternalStore\(/);
+  assert.match(workspaceSource, /layoutWithLines\(prepared, width, THINKING_LINE_HEIGHT\)/);
+  assert.match(workspaceSource, /if \(\s*!forceCommit &&[\s\S]*?previousStructure\.key === structureKey[\s\S]*?\) return;/);
+  assert.match(themeSource, /\.thinking-block pre\.pretext-thinking-text\s*{[^}]*overflow:\s*hidden;/s);
+});
+
+test("panel resizing defers conversation layout until the splitter settles", () => {
+  assert.match(
+    workspaceSource,
+    /if \(document\.body\.classList\.contains\("is-resizing-panels"\)\) return;/,
+  );
+  assert.match(
+    appShellSource,
+    /window\.dispatchEvent\(new Event\("agent-k-panel-resize-finished"\)\);/,
+  );
+  assert.match(
+    workspaceSource,
+    /window\.addEventListener\("agent-k-panel-resize-finished", finishPanelResize\);/,
   );
 });
 
