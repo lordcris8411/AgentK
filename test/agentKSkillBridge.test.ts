@@ -54,6 +54,26 @@ test("documents Agent K host capabilities through Skills instead of legacy tools
   assert.doesNotMatch(contents.at(-2) ?? "", /cpp-language-server|native-debugger/u);
 });
 
+test("publishes exact action ids and typed required arguments for every bundled Language Pack", async () => {
+  for (const pack of ["cpp", "csharp", "typescript-javascript"]) {
+    const manifest = JSON.parse(await readFile(join(root, `language-packs/${pack}/agent-k.language-pack.json`), "utf8")) as {
+      actions: Array<{ id: string; parameters: { properties?: Record<string, { type?: string }>; required?: string[] } }>;
+      skills: Array<{ markdown: string }>;
+    };
+    const documentation = manifest.skills[0]?.markdown ?? "";
+    const standalone = await readFile(join(root, `language-packs/${pack}/SKILL.md`), "utf8");
+
+    for (const action of manifest.actions) {
+      assert.ok(documentation.includes(`\`${action.id}\``), `${pack} embedded Skill: ${action.id}`);
+      assert.ok(standalone.includes(`\`${action.id}\``), `${pack} standalone Skill: ${action.id}`);
+      for (const required of action.parameters.required ?? [])
+        assert.ok(action.parameters.properties?.[required]?.type, `${pack} ${action.id}: ${required}`);
+    }
+    assert.match(documentation, /use `language\.symbols`, not `symbols`/u);
+    assert.match(documentation, /use `language\.hover`, not `hover` or `semantic\.hover`/u);
+  }
+});
+
 test("bundles dedicated guidance for creating callable Pi Skills", async () => {
   const source = await readFile(join(root, "skills/create-pi-skill/SKILL.md"), "utf8");
 

@@ -75,6 +75,12 @@ function inside(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
   return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`));
 }
+
+export function resolveTypeScriptWorkspaceFile(workspace: string, file: string): string {
+  const resolved = resolve(workspace, file);
+  if (!inside(workspace, resolved)) throw new Error("Language action file escapes the workspace");
+  return resolved;
+}
 function hash(value: string | Buffer): string { return createHash("sha256").update(value).digest("hex"); }
 async function fileHash(path: string): Promise<string> { return hash(await readFile(path)); }
 
@@ -236,8 +242,7 @@ export class TypeScriptService {
     if (!action.startsWith("language.")) throw new Error(`Unsupported TypeScript/JavaScript Language Pack action: ${action}`);
     const entry = this.projects.get(workspace); if (!entry || entry.status !== "ready") throw new Error("TypeScript/JavaScript project is not ready");
     if (action === "language.diagnostics") return [...entry.diagnostics.entries()].map(([file, diagnostics]) => ({ file, diagnostics }));
-    const file = typeof input.file === "string" ? resolve(workspace, input.file) : undefined;
-    if (file && !inside(workspace, file)) throw new Error("Language action file escapes the workspace");
+    const file = typeof input.file === "string" ? resolveTypeScriptWorkspaceFile(workspace, input.file) : undefined;
     const uri = file ? pathToFileURL(file).href : undefined; const textDocument = uri ? { uri } : undefined; const position = input.position;
     const methods: Record<string, [string, unknown]> = {
       "language.definition": ["textDocument/definition", { textDocument, position }],
@@ -256,13 +261,14 @@ export class TypeScriptService {
   private async executeProjectAction(workspace: string, action: "build" | "run" | "test", input: Record<string, unknown>): Promise<Record<string, unknown>> {
     const toolchain = await this.managedToolchain(); const node = this.nodeExecutable(toolchain);
     const output = join(this.cachePath, "build", hash(workspace).slice(0, 16)); await mkdir(output, { recursive: true });
+    const requestedFile = typeof input.file === "string" ? resolveTypeScriptWorkspaceFile(workspace, input.file) : undefined;
     const packagePath = join(workspace, "package.json");
     const packageJson = existsSync(packagePath)
       ? JSON.parse(await readFile(packagePath, "utf8")) as unknown
       : undefined;
     const packageScript = packageScriptForAction(packageJson, action);
     let args: string[]; let cwd = output; let artifacts: string[] = [];
-    if (packageScript && !(action === "run" && typeof input.file === "string")) {
+    if (packageScript && !(action === "run" && requestedFile)) {
       args = [this.npmCli(toolchain), "run", packageScript];
       cwd = workspace;
     } else if (action === "build") {
@@ -270,8 +276,8 @@ export class TypeScriptService {
       if (!config) throw new Error("JavaScript package does not declare a 'build' script in package.json and has no tsconfig.json or jsconfig.json");
       args = [join(toolchain, "packages", "node_modules", "typescript", "bin", "tsc"), "-p", join(workspace, config), "--outDir", output, "--incremental", "--tsBuildInfoFile", join(output, "tsconfig.tsbuildinfo")];
       artifacts = [output];
-    } else if (action === "test") args = ["--test", typeof input.file === "string" ? resolve(workspace, input.file) : workspace];
-    else { if (typeof input.file !== "string") throw new Error("run requires a workspace-relative file or a package.json 'start' script"); const file = resolve(workspace, input.file); if (!inside(workspace, file)) throw new Error("Run file escapes the workspace"); args = [file, ...(Array.isArray(input.args) ? input.args.filter((value): value is string => typeof value === "string") : [])]; }
+    } else if (action === "test") args = ["--test", requestedFile ?? workspace];
+    else { if (!requestedFile) throw new Error("run requires a workspace-relative file or a package.json 'start' script"); args = [requestedFile, ...(Array.isArray(input.args) ? input.args.filter((value): value is string => typeof value === "string") : [])]; }
     const started = Date.now();
     try {
       const result = await runProcess(node, args, { cwd, env: this.environment(join(this.cachePath, "home"), node), timeout: 300_000 });

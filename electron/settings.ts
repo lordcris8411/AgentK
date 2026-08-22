@@ -3,11 +3,12 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import { shell } from "electron";
-import { configuredProviderModels } from "./model-provider.js";
+import { configuredProviderModels, isManagedProviderOverride, mergedProviderModels } from "./model-provider.js";
 import type { PiLaunch } from "./pi-runtime.js";
 import type { ClientSettings, JsonObject } from "./types.js";
 import { discoveredModels, enrichOllamaModelCapabilities, localModelsEndpoint, type ProviderModelDraft } from "./model-discovery.js";
 import { normalizedThinkingLevelMap, THINKING_LEVELS, type ThinkingLevel, type ThinkingLevelMap } from "./model-reasoning.js";
+import { remoteProviderModelState } from "./remote-model-catalog.js";
 import { loginOpenAICodex, macTerminalLoginArguments } from "./provider-login.js";
 import {
   asArray,
@@ -766,16 +767,18 @@ export async function providerCatalog(available: unknown): Promise<JsonObject[]>
   const directory = piAgentDirectory();
   const auth = await jsonObject(join(directory, "auth.json"));
   const custom = asObject((await jsonObject(join(directory, "models.json"))).providers);
+  const remotelyManaged = await remoteProviderModelState();
   const catalog: JsonObject[] = BUILTIN_PROVIDERS.map(([id, name, apiKey, oauth]) => {
     const value = asObject(custom[id]);
     const configuredModels = asArray(value.models).map(asObject).filter((model) => typeof model.id === "string");
+    const managedOnly = isManagedProviderOverride(value, remotelyManaged[id]);
     const result: JsonObject = {
       id,
       name: asString(value.name) ?? name,
-      source: Object.hasOwn(custom, id) ? "custom" : "builtin",
+      source: Object.hasOwn(custom, id) && !managedOnly ? "custom" : "builtin",
       configured: Object.hasOwn(auth, id) || modelsByProvider.has(id),
       authMethods: [apiKey ? "api_key" : undefined, oauth ? "oauth" : undefined].filter(Boolean),
-      models: configuredModels.length ? configuredModels : modelsByProvider.get(id) ?? [],
+      models: mergedProviderModels(modelsByProvider.get(id) ?? [], configuredModels),
     };
     if (typeof value.baseUrl === "string") result.baseUrl = value.baseUrl;
     if (typeof value.api === "string") result.api = value.api;

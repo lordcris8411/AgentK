@@ -5,6 +5,19 @@ description: Use Agent K's managed TypeScript/JavaScript language extension for 
 
 # TypeScript/JavaScript language service
 
+Call `agent_k` with `capability: "language"`,
+`packId: "agent-k.typescript-javascript"`, and one exact action ID:
+`project.list`, `project.load`, `project.status`, `project.restart`,
+`project.unload`, `language.diagnostics`, `language.definition`,
+`language.references`, `language.hover`, `language.symbols`,
+`language.completion`, `language.rename`, `language.format`,
+`language.organize-imports`, `build`, `run`, `test`, `debug.configurations`,
+`debug.start`, `debug.attach`, or `debug.stop`. Never use shortened aliases such
+as `symbols`, `hover`, or `semantic.hover`. Put values in `arguments`, call
+`project.status` first, and pass `workspace` and `file` as workspace-relative
+paths. Semantic positions are zero-based `{ line: number, character: number }`
+objects.
+
 Agent K recognizes a TypeScript/JavaScript project when its directory contains
 `tsconfig.json`, `jsconfig.json`, or `package.json`. Load that directory from the
 file-tree project menu or **Active TypeScript/JavaScript projects** command.

@@ -37,3 +37,24 @@ export function configuredProviderModels(
     };
   });
 }
+
+export function mergedProviderModels(runtimeModels: JsonObject[], configuredModels: JsonObject[]): JsonObject[] {
+  const merged = new Map(runtimeModels.flatMap((model) => {
+    const id = asString(model.id);
+    return id ? [[id, model] as const] : [];
+  }));
+  for (const model of configuredModels) {
+    const id = asString(model.id);
+    if (id) merged.set(id, { ...merged.get(id), ...model });
+  }
+  return [...merged.values()];
+}
+
+export function isManagedProviderOverride(provider: unknown, managedModelIds: unknown): boolean {
+  const value = asObject(provider);
+  const models = asArray(value.models).map(asObject).filter((model) => Boolean(asString(model.id)));
+  const managed = new Set(asArray(managedModelIds).filter((id): id is string => typeof id === "string"));
+  return managed.size > 0
+    && Object.keys(value).every((key) => key === "models")
+    && models.every((model) => managed.has(String(model.id)));
+}

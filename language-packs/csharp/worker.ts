@@ -76,6 +76,12 @@ function inside(root: string, candidate: string): boolean {
   return value === "" || (!isAbsolute(value) && value !== ".." && !value.startsWith(`..${sep}`));
 }
 
+export function resolveCSharpWorkspaceFile(workspace: string, file: string): string {
+  const resolved = resolve(workspace, file);
+  if (!inside(workspace, resolved)) throw new Error("Language action file escapes the workspace");
+  return resolved;
+}
+
 export async function directCSharpProjects(root: string): Promise<string[]> {
   return (await readdir(root, { withFileTypes: true }))
     .filter((entry) => entry.isFile() && (/\.sln$/iu.test(entry.name) || /\.csproj$/iu.test(entry.name)))
@@ -288,7 +294,7 @@ export class CSharpService {
     const entry = this.projects.get(resolve(workspace!));
     if (!entry || entry.status !== "ready") throw new Error("C# project is not ready");
     if (action === "language.diagnostics") return [...entry.diagnostics.entries()].map(([file, diagnostics]) => ({ file, diagnostics }));
-    const file = typeof input.file === "string" ? resolve(workspace!, input.file) : undefined;
+    const file = typeof input.file === "string" ? resolveCSharpWorkspaceFile(workspace!, input.file) : undefined;
     const uri = file ? pathToFileURL(file).href : undefined; const position = input.position;
     const textDocument = uri ? { uri } : undefined;
     const methods: Record<string, [string, unknown]> = {

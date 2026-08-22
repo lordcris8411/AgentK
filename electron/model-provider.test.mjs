@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { configuredProviderModels } from "../.electron-dist/model-provider.js";
+import {
+  configuredProviderModels,
+  isManagedProviderOverride,
+  mergedProviderModels,
+} from "../.electron-dist/model-provider.js";
 import {
   explicitReasoningLevels,
   explicitReasoningOffValue,
@@ -33,6 +37,32 @@ test("provider edits preserve model metadata and keep unverified new models out 
     name: "new-model",
     reasoning: false,
   });
+});
+
+test("remote catalog additions augment built-in models instead of replacing them", () => {
+  assert.deepEqual(mergedProviderModels([
+    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", reasoning: true },
+    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", reasoning: true },
+  ], [
+    { id: "deepseek-v4-flash-vision-exp", name: "DeepSeek V4 Flash Vision EXP", input: ["text", "image"] },
+  ]), [
+    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", reasoning: true },
+    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", reasoning: true },
+    { id: "deepseek-v4-flash-vision-exp", name: "DeepSeek V4 Flash Vision EXP", input: ["text", "image"] },
+  ]);
+});
+
+test("an AgentK-only catalog overlay keeps a built-in provider in its original group", () => {
+  assert.equal(isManagedProviderOverride({
+    models: [{ id: "deepseek-v4-flash-vision-exp" }],
+  }, ["deepseek-v4-flash-vision-exp"]), true);
+  assert.equal(isManagedProviderOverride({
+    baseUrl: "https://proxy.example/v1",
+    models: [{ id: "deepseek-v4-flash-vision-exp" }],
+  }, ["deepseek-v4-flash-vision-exp"]), false);
+  assert.equal(isManagedProviderOverride({
+    models: [{ id: "manual-preview" }, { id: "deepseek-v4-flash-vision-exp" }],
+  }, ["deepseek-v4-flash-vision-exp"]), false);
 });
 
 test("extracts only explicitly documented reasoning levels", () => {

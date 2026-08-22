@@ -5,6 +5,17 @@ description: Use Agent K's private C# project lifecycle, semantic csharp-ls supp
 
 # Agent K C# project tools
 
+Call `agent_k` with `capability: "language"`, `packId: "agent-k.csharp"`, and
+one exact action ID: `project.list`, `project.load`, `project.status`,
+`project.restart`, `project.unload`, `language.diagnostics`,
+`language.definition`, `language.references`, `language.hover`,
+`language.symbols`, `language.completion`, `language.rename`, `language.format`,
+`build`, `run`, `test`, `debug.configurations`, `debug.start`, `debug.attach`, or
+`debug.stop`. Never use shortened aliases such as `symbols`, `hover`, or
+`semantic.hover`. Put values in `arguments`, call `project.status` first, and
+pass `workspace`, `file`, and `project` as workspace-relative paths. Semantic
+positions are zero-based `{ line: number, character: number }` objects.
+
 A C# workspace is a directory with a `.sln` or `.csproj` direct child. Use Agent
 K's C# project manager to load it once, inspect status, restart, unload, cancel
 preparation, view the bounded protocol trace, or run **Build**.
@@ -13,7 +24,7 @@ Treat only `status: ready` as success. In particular, a resolved load or status
 result containing `status: failed` is a failed lifecycle operation and its
 `error` must be reported.
 
-Once ready, prefer the text Editor's managed semantic operations for:
+Once ready, use the corresponding `language.*` action for:
 
 - diagnostics
 - definition and references

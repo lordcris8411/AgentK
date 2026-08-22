@@ -1,4 +1,4 @@
-import Editor, { DiffEditor } from "@monaco-editor/react";
+import Editor, { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
 import { defineAgentKTheme } from "../../lib/monacoTheme";
 import { registerResponsiveMonacoEditor } from "../../lib/responsiveMonaco";
 import { useMemo, useState } from "react";
@@ -67,5 +67,18 @@ export function ReviewPanel({ calls, root, onClose, onError }: { calls: ReviewCa
     const unregister = registerResponsiveMonacoEditor(editor);
     editor.onDidDispose(unregister);
   };
-  return <section aria-label="审阅变更" className="review-panel"><header><div><p>审阅</p><h2>已编辑 {calls.length} 个文件</h2></div><button aria-label="关闭审阅" onClick={onClose} type="button">×</button></header><div className="review-body"><nav>{calls.map((entry, index) => <button className={index === selected ? "active" : ""} key={`${entry.name}-${pathOf(entry)}-${index}`} onClick={() => setSelected(index)} type="button"><span>{entry.name === "write" ? "新建" : "编辑"}</span>{pathOf(entry).split(/[\\/]/).pop()}</button>)}</nav><main>{call && <><div className="review-file-header"><strong>{pathOf(call)}</strong>{call.name === "edit" && (canUndo ? <button disabled={reverted.has(selected)} onClick={() => void undoEdit()} type="button">{reverted.has(selected) ? "已撤销" : "撤销此编辑"}</button> : <span className="review-note">外部资源仅支持审阅</span>)}</div><div className={call.name === "write" ? "review-editor is-write" : "review-editor"}>{call.name === "write" ? <Editor beforeMount={defineAgentKTheme} height="100%" language={languageFor(pathOf(call))} onMount={registerLayout} options={{ automaticLayout: false, inertialScroll: true, minimap: { enabled: false }, mouseWheelScrollSensitivity: 1.5, readOnly: true, scrollbar: { alwaysConsumeMouseWheel: false, handleMouseWheel: true }, scrollBeyondLastLine: false, smoothScrolling: true, wordWrap: "on" }} theme={editorTheme} value={versions.modified} /> : <DiffEditor beforeMount={defineAgentKTheme} height="100%" language={languageFor(pathOf(call))} modified={versions.modified} onMount={registerLayout} options={{ automaticLayout: false, diffWordWrap: "on", inertialScroll: true, minimap: { enabled: false }, mouseWheelScrollSensitivity: 1.5, readOnly: true, renderSideBySide: false, scrollbar: { alwaysConsumeMouseWheel: false, handleMouseWheel: true }, scrollBeyondLastLine: false, smoothScrolling: true, wordWrap: "on" }} original={versions.original} theme={editorTheme} />}</div>{call.name === "write" && <p className="review-note">整文件写入可在此审阅；为避免覆盖后续修改，首版不提供自动撤销。</p>}</>}</main></div></section>;
+  const registerDiffLayout: DiffOnMount = (editor) => {
+    const unregister = registerResponsiveMonacoEditor(editor);
+    const models = editor.getModel();
+    editor.onDidDispose(() => {
+      unregister();
+      // @monaco-editor/react 4.7 disposes these before the diff widget. Keep
+      // them alive through widget teardown, then release them without leaking.
+      queueMicrotask(() => {
+        models?.original.dispose();
+        models?.modified.dispose();
+      });
+    });
+  };
+  return <section aria-label="审阅变更" className="review-panel"><header><div><p>审阅</p><h2>已编辑 {calls.length} 个文件</h2></div><button aria-label="关闭审阅" onClick={onClose} type="button">×</button></header><div className="review-body"><nav>{calls.map((entry, index) => <button className={index === selected ? "active" : ""} key={`${entry.name}-${pathOf(entry)}-${index}`} onClick={() => setSelected(index)} type="button"><span>{entry.name === "write" ? "新建" : "编辑"}</span>{pathOf(entry).split(/[\\/]/).pop()}</button>)}</nav><main>{call && <><div className="review-file-header"><strong>{pathOf(call)}</strong>{call.name === "edit" && (canUndo ? <button disabled={reverted.has(selected)} onClick={() => void undoEdit()} type="button">{reverted.has(selected) ? "已撤销" : "撤销此编辑"}</button> : <span className="review-note">外部资源仅支持审阅</span>)}</div><div className={call.name === "write" ? "review-editor is-write" : "review-editor"}>{call.name === "write" ? <Editor beforeMount={defineAgentKTheme} height="100%" language={languageFor(pathOf(call))} onMount={registerLayout} options={{ automaticLayout: false, inertialScroll: true, minimap: { enabled: false }, mouseWheelScrollSensitivity: 1.5, readOnly: true, scrollbar: { alwaysConsumeMouseWheel: false, handleMouseWheel: true }, scrollBeyondLastLine: false, smoothScrolling: true, wordWrap: "on" }} theme={editorTheme} value={versions.modified} /> : <DiffEditor beforeMount={defineAgentKTheme} height="100%" keepCurrentModifiedModel keepCurrentOriginalModel language={languageFor(pathOf(call))} modified={versions.modified} onMount={registerDiffLayout} options={{ automaticLayout: false, diffWordWrap: "on", inertialScroll: true, minimap: { enabled: false }, mouseWheelScrollSensitivity: 1.5, readOnly: true, renderSideBySide: false, scrollbar: { alwaysConsumeMouseWheel: false, handleMouseWheel: true }, scrollBeyondLastLine: false, smoothScrolling: true, wordWrap: "on" }} original={versions.original} theme={editorTheme} />}</div>{call.name === "write" && <p className="review-note">整文件写入可在此审阅；为避免覆盖后续修改，首版不提供自动撤销。</p>}</>}</main></div></section>;
 }

@@ -54,9 +54,10 @@ import {
   agentKStarshipConfig,
   windowsTerminalInitialization,
 } from "./terminal-profile.js";
-import { asArray, asObject, asString, atomicWrite, isPathInside, randomId } from "./utils.js";
+import { asArray, asObject, asString, atomicWrite, errorMessage, isPathInside, randomId } from "./utils.js";
 import { mergeWorkspaceWatchKind, type WorkspaceWatchKind } from "./workspace-watch.js";
 import { inferModelReasoning } from "./model-reasoning.js";
+import { syncRemoteProviderModels } from "./remote-model-catalog.js";
 import { mountedVolumes } from "./mounted-volumes.js";
 import { KAppProcessManager } from "./k-app-processes.js";
 import {
@@ -319,6 +320,11 @@ export class DesktopBackend {
     if (command === "get_provider_balance")
       return providerBalance(requiredString(args.providerId, "providerId"));
     if (command === "get_codex_quota") return codexQuota();
+    if (command === "open_in_file_manager")
+      return this.files.openInFileManager(
+        requiredString(args.root, "root"),
+        requiredString(args.path, "path"),
+      );
     const pool = this.requirePool();
     switch (command) {
       case "get_runtime_info":
@@ -404,8 +410,27 @@ export class DesktopBackend {
       case "open_provider_login":
         return openProviderLogin(requiredString(args.providerId, "providerId"), this.requirePiLaunch());
       case "reload_pi_runtimes":
+        try {
+          const available = await pool.commandConnected(
+            { type: "get_available_models" },
+            homedir(),
+          );
+          const synchronization = await syncRemoteProviderModels(available);
+          if (synchronization.errors.length) {
+            this.options.emit({
+              type: "model_catalog_sync_failed",
+              message: synchronization.errors.join("\n"),
+            });
+          }
+        } catch (cause) {
+          this.options.emit({
+            type: "model_catalog_sync_failed",
+            message: errorMessage(cause),
+          });
+        }
         await pool.reload();
         await this.reloadLanguagePacks((await loadClientSettings(this.options.appDataPath)).disabledLanguagePacks);
+        this.options.emit({ type: "model_catalog_changed" });
         return;
       case "get_pi_resources":
         return getPiResources(
@@ -756,8 +781,6 @@ export class DesktopBackend {
         );
       case "stop_project_console":
         return this.stopProjectConsole(requiredString(args.id, "id"));
-      case "open_in_file_manager":
-        return this.files.openInFileManager(requiredString(args.root, "root"), requiredString(args.path, "path"));
       case "search_files":
         return this.files.search(requiredString(args.root, "root"), requiredString(args.query, "query"));
       case "advanced_search_files":

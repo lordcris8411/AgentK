@@ -3,11 +3,11 @@ import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import test from "node:test";
-import { extractOfficialNodeArchive, isolatedRuntimePath, JS_DEBUG_VERSION, NODE_VERSION, nodeArchive, npmScriptShell, packageScriptForAction, runProcess, systemTarExecutable, TYPESCRIPT_LANGUAGE_SERVER_VERSION, TYPESCRIPT_VERSION } from "./worker.ts";
+import { extractOfficialNodeArchive, isolatedRuntimePath, JS_DEBUG_VERSION, NODE_VERSION, nodeArchive, npmScriptShell, packageScriptForAction, resolveTypeScriptWorkspaceFile, runProcess, systemTarExecutable, TYPESCRIPT_LANGUAGE_SERVER_VERSION, TYPESCRIPT_VERSION } from "./worker.ts";
 
 async function download(url: string, path: string): Promise<void> {
   const response = await fetch(url);
@@ -38,6 +38,12 @@ test("routes package lifecycle actions through declared npm scripts", () => {
   assert.equal(packageScriptForAction(packageJson, "test"), "test");
   assert.equal(packageScriptForAction({ scripts: { build: "" } }, "build"), undefined);
   assert.equal(packageScriptForAction({}, "build"), undefined);
+});
+
+test("rejects TypeScript run and test files outside the selected workspace", () => {
+  const workspace = resolve("workspace", "typescript");
+  assert.equal(resolveTypeScriptWorkspaceFile(workspace, join("test", "app.test.ts")), join(workspace, "test", "app.test.ts"));
+  assert.throws(() => resolveTypeScriptWorkspaceFile(workspace, join("..", "outside.test.js")), /escapes the workspace/u);
 });
 
 test("exposes only the selected Node and npm directories to package scripts", () => {

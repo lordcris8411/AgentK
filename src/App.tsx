@@ -697,6 +697,8 @@ export function App() {
         setBusyMessage(undefined);
     };
     const stop = desktop.onEvent((event) => {
+      if (event.type === "model_catalog_changed" || event.type === "local_models_changed")
+        window.dispatchEvent(new Event("agent-k-model-catalog-changed"));
       if (event.type === "local_model_run_progress") {
         const transactionId = typeof event.transactionId === "string" ? event.transactionId : undefined;
         const modelName = typeof event.modelName === "string" ? event.modelName : undefined;

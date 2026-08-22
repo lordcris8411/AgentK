@@ -17,6 +17,16 @@ const desktopSettingsSource = () => readFile(
   "utf8",
 );
 
+const backendSource = () => readFile(
+  new URL("../electron/backend.ts", import.meta.url),
+  "utf8",
+);
+
+const appSource = () => readFile(
+  new URL("../src/App.tsx", import.meta.url),
+  "utf8",
+);
+
 test("provider settings reload the runtime before reading the provider catalog", async () => {
   const settings = await source();
   assert.match(
@@ -40,6 +50,26 @@ test("external Pi login is detected and activates the refreshed runtime", async 
     settings,
     /provider\?\.configured[\s\S]*?desktop\.reloadPiRuntimes\(\)/,
   );
+});
+
+test("model catalog changes refresh settings and conversation selectors", async () => {
+  const [settings, conversation, backend, app] = await Promise.all([
+    source(),
+    conversationSource(),
+    backendSource(),
+    appSource(),
+  ]);
+  assert.match(backend, /case "reload_pi_runtimes":[\s\S]*?model_catalog_changed/u);
+  assert.match(app, /model_catalog_changed" \|\| event\.type === "local_models_changed"[\s\S]*?agent-k-model-catalog-changed/u);
+  assert.match(settings, /addEventListener\("agent-k-model-catalog-changed", changed\)[\s\S]*?addEventListener\("agent-k-model-changed", changed\)/u);
+  assert.match(conversation, /addEventListener\("agent-k-model-changed", refreshModelName\)[\s\S]*?addEventListener\("agent-k-model-catalog-changed", refreshModelName\)/u);
+  assert.match(conversation, /if \(!current\) window\.dispatchEvent\(new Event\("agent-k-model-catalog-changed"\)\)/u);
+});
+
+test("late model catalog responses cannot overwrite a newer refresh", async () => {
+  const [settings, conversation] = await Promise.all([source(), conversationSource()]);
+  assert.match(settings, /generation = \+\+catalogRefreshGenerationRef\.current[\s\S]*?generation !== catalogRefreshGenerationRef\.current/u);
+  assert.match(conversation, /generation = \+\+modelRefreshGenerationRef\.current[\s\S]*?generation === modelRefreshGenerationRef\.current/u);
 });
 
 test("Codex quota authentication failures stay out of the IPC error channel", async () => {

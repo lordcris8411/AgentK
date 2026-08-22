@@ -563,6 +563,13 @@ export class FileService {
     const target = path ? await realpath(await workspacePath(root, path)) : root;
     if (!isPathInside(root, target)) throw new Error("Path is outside the active project");
     if ((await stat(target)).isDirectory()) {
+      // Electron's Linux shell integration may keep openPath pending while the
+      // desktop opener runs. A detached launch acknowledges the IPC request as
+      // soon as xdg-open starts instead of tying its reply to that process.
+      if (process.platform === "linux" && commandExists("xdg-open")) {
+        await launchExternalProcess("xdg-open", [target], root);
+        return;
+      }
       const error = await shell.openPath(target);
       if (error) throw new Error(error);
     } else shell.showItemInFolder(target);

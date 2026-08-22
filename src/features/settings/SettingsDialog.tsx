@@ -209,6 +209,7 @@ export function SettingsDialog({
   const providersRef = useRef<ProviderCatalogItem[]>([]);
   const editedProviderIdRef = useRef<string | undefined>(undefined);
   const lastCatalogRefreshRef = useRef(0);
+  const catalogRefreshGenerationRef = useRef(0);
   const providerLoginPollRef = useRef(false);
   const providerDisplayName = (provider: Pick<ProviderCatalogItem, "id" | "name" | "source">) =>
     provider.source === "builtin" && provider.id === "ollama" ? "Ollama"
@@ -343,6 +344,7 @@ export function SettingsDialog({
       .map((model) => ({ ...model, provider: provider.id }))));
   };
   const refresh = async (forceCatalog = true) => {
+    const generation = ++catalogRefreshGenerationRef.current;
     setBusy(true);
     setError(undefined);
     try {
@@ -352,18 +354,24 @@ export function SettingsDialog({
       const catalog = refreshCatalog
         ? await desktop.providerCatalog()
         : providersRef.current;
+      if (generation !== catalogRefreshGenerationRef.current) return;
       applyProviderCatalog(catalog);
     } catch (cause) {
-      setError(String(cause));
+      if (generation === catalogRefreshGenerationRef.current) setError(String(cause));
     } finally {
-      setBusy(false);
+      if (generation === catalogRefreshGenerationRef.current) setBusy(false);
     }
   };
   useEffect(() => {
+    if (!open || page !== "models") return;
     const changed = () => void refresh(true);
     window.addEventListener("agent-k-model-catalog-changed", changed);
-    return () => window.removeEventListener("agent-k-model-catalog-changed", changed);
-  }, []);
+    window.addEventListener("agent-k-model-changed", changed);
+    return () => {
+      window.removeEventListener("agent-k-model-catalog-changed", changed);
+      window.removeEventListener("agent-k-model-changed", changed);
+    };
+  }, [open, page]);
   const reloadModelConfiguration = async () => {
     await desktop.reloadPiRuntimes();
     // Pi reads models.json only on startup. Query the catalog after the pool
@@ -519,7 +527,9 @@ export function SettingsDialog({
       try {
         const catalog = await desktop.providerCatalog();
         if (cancelled) return;
+        catalogRefreshGenerationRef.current += 1;
         applyProviderCatalog(catalog);
+        setBusy(false);
         const provider = catalog.find((item) => item.id === providerId);
         if (!provider?.configured) return;
         setPendingProviderLogin((current) => current === providerId ? undefined : current);

@@ -11,6 +11,7 @@ import {
   managedArchives,
   privateChildEnvironment,
   privateProjectPaths,
+  resolveCSharpWorkspaceFile,
   type CSharpProject,
 } from "./worker.ts";
 
@@ -48,6 +49,12 @@ test("recognizes only .sln and .csproj direct children", async (context) => {
   await writeFile(join(root, "Library.CSPROJ"), "");
   await writeFile(join(root, "nested", "Ignored.csproj"), "");
   assert.deepEqual((await directCSharpProjects(root)).map((path) => relative(root, path)).sort(), ["Example.sln", "Library.CSPROJ"]);
+});
+
+test("rejects C# semantic files outside the selected workspace", () => {
+  const workspace = resolve("workspace", "csharp");
+  assert.equal(resolveCSharpWorkspaceFile(workspace, join("src", "Program.cs")), join(workspace, "src", "Program.cs"));
+  assert.throws(() => resolveCSharpWorkspaceFile(workspace, join("..", "other", "Program.cs")), /escapes the workspace/u);
 });
 
 test("constructs a child-only private dotnet environment and project-specific generated paths", () => {

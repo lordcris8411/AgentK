@@ -16,7 +16,7 @@ import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import type { CodexQuota, CodexQuotaWindow, LanguagePackProject, SessionSummary } from "../../lib/desktop";
+import type { CodexQuota, CodexQuotaWindow, LanguagePack, LanguagePackProject, SessionSummary } from "../../lib/desktop";
 import { desktop } from "../../lib/desktop";
 import { stopDampedScrolling } from "../../lib/dampedScrolling";
 import { desktopWindow, platform } from "../../lib/platform";
@@ -66,7 +66,7 @@ function projectBelongsToWorkspace(project: LanguagePackProject, cwd: string): b
   return root === workspace || root.startsWith(`${workspace}/`);
 }
 
-function languageServiceContext(projects: LanguagePackProject[], cwd: string): string {
+function languageServiceContext(projects: LanguagePackProject[], packs: LanguagePack[], cwd: string): string {
   const active = projects.filter((project) =>
     (project.status === "ready" || project.status === "indexing") &&
     projectBelongsToWorkspace(project, cwd),
@@ -74,9 +74,13 @@ function languageServiceContext(projects: LanguagePackProject[], cwd: string): s
   if (!active.length) return "";
   return `<agent_k_language_services>
 Authoritative Agent K Language Pack state for this request:
-${active.map((project) => `- ${project.packName} pack ${JSON.stringify(project.packId)} has workspace ${JSON.stringify(project.name)} loaded with status ${project.status}${project.indexProgress ? ` (${project.indexProgress})` : ""}.`).join("\n")}
+${active.map((project) => {
+    const pack = packs.find((candidate) => candidate.id === project.packId);
+    const actions = pack?.actions.map((action) => action.id).join(", ");
+    return `- ${project.packName} pack ${JSON.stringify(project.packId)} has workspace ${JSON.stringify(project.name)} loaded with status ${project.status}${project.indexProgress ? ` (${project.indexProgress})` : ""}.${actions ? ` Exact declared action IDs: ${actions}.` : ""}`;
+  }).join("\n")}
 
-For language semantics, build, run, test, or debug work, load the matching pack Skill and call agent_k with capability "language", the listed packId, and a declared standard action. Call project.status before other actions and pass workspace-relative paths only. Do not replace a semantic Language Pack query with text search.
+For language semantics, build, run, test, or debug work, load the matching pack Skill and call agent_k with capability "language", the listed packId, and one exact declared action ID above. Never shorten an ID or invent an alias: for example, use language.symbols rather than symbols and language.hover rather than hover or semantic.hover. Call project.status before other actions and pass workspace-relative paths only. Do not replace a semantic Language Pack query with text search.
 </agent_k_language_services>`;
 }
 
@@ -1762,6 +1766,7 @@ export function ConversationWorkspace({
   // (usually runtime-less draft) session and accept events from every worker.
   const activeRuntimeIdRef = useRef(session?.runtimeId);
   activeRuntimeIdRef.current = session?.runtimeId;
+  const modelRefreshGenerationRef = useRef(0);
   const englishLocaleRef = useRef(en);
   englishLocaleRef.current = en;
   const [draft, setDraftState] = useState("");
@@ -2221,6 +2226,7 @@ export function ConversationWorkspace({
       return;
     }
     const refreshModelName = () => {
+      const generation = ++modelRefreshGenerationRef.current;
       void Promise.all([
         desktop.command({ type: "get_state" }, session?.runtimeId),
         desktop.command({ type: "get_available_models" }, session?.runtimeId),
@@ -2262,7 +2268,7 @@ export function ConversationWorkspace({
             ? undefined
             : (stats as { contextUsage?: { tokens?: unknown } })
               .contextUsage?.tokens;
-          if (!cancelled) {
+          if (!cancelled && generation === modelRefreshGenerationRef.current) {
             setRunning(isStreaming === true);
             setAvailableModels(models);
             setCurrentModelKey(
@@ -2301,15 +2307,18 @@ export function ConversationWorkspace({
           }
         })
         .catch(() => {
-          if (!cancelled)
+          if (!cancelled && generation === modelRefreshGenerationRef.current)
             setModelName(en ? "No model selected" : "未选择模型");
         });
     };
     refreshModelName();
     window.addEventListener("agent-k-model-changed", refreshModelName);
+    window.addEventListener("agent-k-model-catalog-changed", refreshModelName);
     return () => {
       cancelled = true;
+      modelRefreshGenerationRef.current += 1;
       window.removeEventListener("agent-k-model-changed", refreshModelName);
+      window.removeEventListener("agent-k-model-catalog-changed", refreshModelName);
     };
   }, [connected, en, session?.runtimeId, settings.disabledModelProviders, settings.disabledModels]);
   useEffect(() => {
@@ -3204,6 +3213,7 @@ export function ConversationWorkspace({
     }
     if (name === "model") {
       if (!argumentsText) {
+        window.dispatchEvent(new Event("agent-k-model-catalog-changed"));
         setModelMenu(true);
         return true;
       }
@@ -3507,7 +3517,7 @@ export function ConversationWorkspace({
         fileFormatContext
           ? `<agent_k_file_format>\nThe active Agent K ${fileFormatContext.name} editor is showing ${JSON.stringify(fileFormatContext.path)}. Load the matching Agent K Editor Skill and call agent_k with capability "file-editor". Put the selected action at the top level and its values in arguments. The bridge supports open for a workspace file path, run-web-project for a project directory with an npm dev script, capture-preview for the currently visible HTML or web-project preview, and get-preview-console for the current web-project preview. For the active editor,${fileFormatContext.capabilities.length ? ` use only one of these additional capabilities:\n${fileFormatContext.capabilities.map((capability) => `- ${capability.id}: ${capability.description}${capability.parameters ? `; arguments ${JSON.stringify(capability.parameters)}` : ""}`).join("\n")}` : " no additional editor actions are available."}\n</agent_k_file_format>`
           : "",
-        languageServiceContext(languageProjects, session.cwd),
+        languageServiceContext(languageProjects, languagePacks, session.cwd),
       ].filter(Boolean);
       return additions.length
         ? `${message}${message.trim() ? "\n\n" : ""}${additions.join("\n\n")}`
@@ -4435,7 +4445,7 @@ export function ConversationWorkspace({
       <form
         className={`composer${composerDragActive ? " is-dragging" : ""}${
           running || submitting || compaction ? " is-working" : ""
-        }${showBilling && !billingHidden ? " has-billing" : ""}`}
+        }`}
         onDragEnter={(event) => {
           if (
             Array.from(event.dataTransfer.items).some((item) => item.kind === "file")
@@ -4817,10 +4827,40 @@ export function ConversationWorkspace({
               ))}
             </section>
           ))}
+        {showBilling && !billingHidden && billing && (
+          <section
+            className="composer-provider-usage composer-deepseek-usage"
+            title={en ? "Usage and balance for this session" : "本会话用量与余额"}
+          >
+            <header>
+              <span className="provider-usage-brand">
+                <i aria-hidden="true" className="fa-solid fa-microchip" />
+                {deepSeekModel ?? (billingProvider === "openrouter" ? "OpenRouter" : "DeepSeek")}
+              </span>
+              <small>{en ? "Session usage" : "会话用量"}</small>
+              {deepSeekModel && (
+                <em>{en ? "Cost" : "费用"} ¥{billing.cost < 0.01 ? billing.cost.toFixed(4) : billing.cost.toFixed(2)}</em>
+              )}
+            </header>
+            <div className="provider-usage-metrics">
+              <span><i aria-hidden="true" className="fa-solid fa-arrow-right-to-bracket" /><small>{en ? "Input" : "输入"}</small><strong>{formatContextTokens(billing.input)}</strong></span>
+              <span><i aria-hidden="true" className="fa-solid fa-database" /><small>{en ? "Hit" : "命中"}</small><strong>{formatContextTokens(billing.cache)}</strong></span>
+              <span><i aria-hidden="true" className="fa-solid fa-arrow-right-from-bracket" /><small>{en ? "Output" : "输出"}</small><strong>{formatContextTokens(billing.output)}</strong></span>
+              <span><i aria-hidden="true" className="fa-solid fa-chart-pie" /><small>{en ? "Cache" : "缓存"}</small><strong>{(billing.cacheRate * 100).toFixed(0)}%</strong></span>
+              {billingProvider && (
+                <span title={providerBalanceError}>
+                  <i aria-hidden="true" className="fa-solid fa-wallet" />
+                  <small>{en ? "Balance" : "余额"}</small>
+                  <strong>{providerBalance ?? (en ? "Unavailable" : "不可用")}</strong>
+                </span>
+              )}
+            </div>
+          </section>
+        )}
         {codexProvider && !billingHidden && (
           <section
             aria-live="polite"
-            className="composer-codex-quota"
+            className="composer-provider-usage composer-codex-quota"
             title={codexQuotaError}
           >
             <header>
@@ -4938,11 +4978,14 @@ export function ConversationWorkspace({
               aria-expanded={modelMenu}
               aria-haspopup="listbox"
               className="composer-model"
-              disabled={!connected || Boolean(compaction) || availableModels.length === 0}
+              disabled={!connected || Boolean(compaction)}
               onClick={() => {
                 setAccessMenu(false);
                 setThinkingMenu(false);
-                setModelMenu((current) => !current);
+                setModelMenu((current) => {
+                  if (!current) window.dispatchEvent(new Event("agent-k-model-catalog-changed"));
+                  return !current;
+                });
               }}
               title={en ? "Switch model" : "切换模型"}
               type="button"
@@ -5025,17 +5068,6 @@ export function ConversationWorkspace({
           </button>
         </div>
       </form>
-      {showBilling && !billingHidden && billing && (
-        <div className="conversation-billing" title={en ? "Usage and balance for this session" : "本会话用量与余额"}>
-          <span><i aria-hidden="true" className="fa-solid fa-microchip" /> {deepSeekModel ?? (billingProvider === "openrouter" ? "OpenRouter" : "DeepSeek")}</span>
-          <span><i aria-hidden="true" className="fa-solid fa-arrow-right-to-bracket" /> {en ? "Input" : "输入"} {formatContextTokens(billing.input)}</span>
-          <span><i aria-hidden="true" className="fa-solid fa-database" /> {en ? "Hit" : "命中"} {formatContextTokens(billing.cache)}</span>
-          <span><i aria-hidden="true" className="fa-solid fa-arrow-right-from-bracket" /> {en ? "Output" : "输出"} {formatContextTokens(billing.output)}</span>
-          <span><i aria-hidden="true" className="fa-solid fa-chart-pie" /> {en ? "Cache" : "缓存"} {(billing.cacheRate * 100).toFixed(0)}%</span>
-          {deepSeekModel && <span><i aria-hidden="true" className="fa-solid fa-receipt" /> {en ? "Session" : "会话"} ¥{billing.cost < 0.01 ? billing.cost.toFixed(4) : billing.cost.toFixed(2)}</span>}
-          {billingProvider && <span title={providerBalanceError}><i aria-hidden="true" className="fa-solid fa-wallet" /> {en ? "Balance" : "余额"} {providerBalance ?? (en ? "Unavailable" : "不可用")}</span>}
-        </div>
-      )}
     </div>
   );
 }
